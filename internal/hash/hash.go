@@ -1,0 +1,132 @@
+package hash
+
+import (
+	"crypto/sha256"
+	"encoding/hex"
+	"fmt"
+	"io"
+	"os"
+)
+
+const (
+	// ChunkSize defines how many bytes to read from start and end of file
+	// 64KB is enough to detect most file changes while being fast
+	ChunkSize = 64 * 1024
+)
+
+// FileHash represents a computed file hash with metadata
+type FileHash struct {
+	Hash     string
+	Size     int64
+	ModTime  int64 // Unix timestamp
+	FilePath string
+}
+
+// ComputeFileHash computes a fast hash for a file using:
+// - File size
+// - First ChunkSize bytes
+// - Last ChunkSize bytes
+// - Modification time (as additional signal)
+//
+// This approach is much faster than hashing the entire file while still
+// detecting most changes (file replacement, re-encoding, different version).
+func ComputeFileHash(filePath string) (*FileHash, error) {
+	file, err := os.Open(filePath)
+	if err != nil {
+		return nil, fmt.Errorf("failed to open file: %w", err)
+	}
+	defer file.Close()
+
+	// Get file info
+	info, err := file.Stat()
+	if err != nil {
+		return nil, fmt.Errorf("failed to stat file: %w", err)
+	}
+
+	size := info.Size()
+	modTime := info.ModTime().Unix()
+
+	// Create SHA256 hasher
+	hasher := sha256.New()
+
+	// Write size to hash
+	fmt.Fprintf(hasher, "size:%d|", size)
+
+	// Write modification time to hash (optional signal)
+	fmt.Fprintf(hasher, "mtime:%d|", modTime)
+
+	// Read first ChunkSize bytes
+	firstChunk := make([]byte, ChunkSize)
+	n, err := file.Read(firstChunk)
+	if err != nil && err != io.EOF {
+		return nil, fmt.Errorf("failed to read first chunk: %w", err)
+	}
+	hasher.Write(firstChunk[:n])
+
+	// If file is larger than ChunkSize, also read last ChunkSize bytes
+	if size > ChunkSize {
+		// Seek to ChunkSize bytes before end
+		seekPos := size - ChunkSize
+		if seekPos < ChunkSize {
+			// File is between ChunkSize and 2*ChunkSize, read from where first chunk ended
+			seekPos = ChunkSize
+		}
+
+		_, err = file.Seek(seekPos, io.SeekStart)
+		if err != nil {
+			return nil, fmt.Errorf("failed to seek to end: %w", err)
+		}
+
+		lastChunk := make([]byte, ChunkSize)
+		n, err = file.Read(lastChunk)
+		if err != nil && err != io.EOF {
+			return nil, fmt.Errorf("failed to read last chunk: %w", err)
+		}
+		hasher.Write(lastChunk[:n])
+	}
+
+	// Compute final hash
+	hashBytes := hasher.Sum(nil)
+	hashString := hex.EncodeToString(hashBytes)
+
+	return &FileHash{
+		Hash:     hashString,
+		Size:     size,
+		ModTime:  modTime,
+		FilePath: filePath,
+	}, nil
+}
+
+// ComputeMultiFileHash computes a combined hash for multiple files (e.g., all episodes in a season)
+// This is useful for detecting if any file in a folder changed
+func ComputeMultiFileHash(filePaths []string) (string, error) {
+	if len(filePaths) == 0 {
+		return "", fmt.Errorf("no files provided")
+	}
+
+	hasher := sha256.New()
+
+	for _, path := range filePaths {
+		fileHash, err := ComputeFileHash(path)
+		if err != nil {
+			// Skip files that can't be read (they might be deleted)
+			continue
+		}
+
+		// Add individual hash to combined hash
+		hasher.Write([]byte(fileHash.Hash))
+	}
+
+	hashBytes := hasher.Sum(nil)
+	return hex.EncodeToString(hashBytes), nil
+}
+
+// HasChanged checks if a file's hash has changed by comparing with stored hash
+func HasChanged(filePath string, storedHash string) (bool, error) {
+	currentHash, err := ComputeFileHash(filePath)
+	if err != nil {
+		return false, err
+	}
+
+	return currentHash.Hash != storedHash, nil
+}

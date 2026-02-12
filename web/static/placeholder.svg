@@ -1,0 +1,37 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 300 450" fill="none">
+  <rect width="300" height="450" fill="#1a1a1a"/>
+  <rect x="1" y="1" width="298" height="448" stroke="#333" stroke-width="2" fill="none"/>
+
+  <!-- Film reel icon -->
+  <g transform="translate(150, 180)">
+    <!-- Outer circle -->
+    <circle cx="0" cy="0" r="60" stroke="#444" stroke-width="3" fill="none"/>
+    <!-- Inner circle -->
+    <circle cx="0" cy="0" r="20" stroke="#444" stroke-width="3" fill="none"/>
+    <!-- Spokes -->
+    <line x1="0" y1="-20" x2="0" y2="-60" stroke="#444" stroke-width="3"/>
+    <line x1="0" y1="20" x2="0" y2="60" stroke="#444" stroke-width="3"/>
+    <line x1="-20" y1="0" x2="-60" y2="0" stroke="#444" stroke-width="3"/>
+    <line x1="20" y1="0" x2="60" y2="0" stroke="#444" stroke-width="3"/>
+    <!-- Diagonal spokes -->
+    <line x1="-14" y1="-14" x2="-42" y2="-42" stroke="#444" stroke-width="3"/>
+    <line x1="14" y1="14" x2="42" y2="42" stroke="#444" stroke-width="3"/>
+    <line x1="-14" y1="14" x2="-42" y2="42" stroke="#444" stroke-width="3"/>
+    <line x1="14" y1="-14" x2="42" y2="-42" stroke="#444" stroke-width="3"/>
+    <!-- Film holes -->
+    <circle cx="0" cy="-40" r="8" fill="#333"/>
+    <circle cx="0" cy="40" r="8" fill="#333"/>
+    <circle cx="-40" cy="0" r="8" fill="#333"/>
+    <circle cx="40" cy="0" r="8" fill="#333"/>
+    <circle cx="-28" cy="-28" r="8" fill="#333"/>
+    <circle cx="28" cy="28" r="8" fill="#333"/>
+    <circle cx="-28" cy="28" r="8" fill="#333"/>
+    <circle cx="28" cy="-28" r="8" fill="#333"/>
+  </g>
+
+  <!-- Question mark -->
+  <text x="150" y="320" font-family="system-ui, sans-serif" font-size="48" font-weight="bold" fill="#555" text-anchor="middle">?</text>
+
+  <!-- "No Poster" text -->
+  <text x="150" y="380" font-family="system-ui, sans-serif" font-size="18" fill="#555" text-anchor="middle">No Poster</text>
+</svg>

@@ -1,0 +1,239 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>EpisodeX</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+    <div id="alerts-container" class="alerts-container"></div>
+
+    <header class="header">
+        <div class="header-inner">
+            <a href="/" class="logo" onclick="navigateTo('series'); return false;">
+                <span class="logo-icon">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <rect x="2" y="3" width="20" height="14" rx="2"/>
+                        <path d="M8 21h8"/>
+                        <path d="M12 17v4"/>
+                        <polygon points="10,7 10,13 15,10" fill="currentColor" stroke="none"/>
+                    </svg>
+                </span>
+                <span class="logo-text">Episode<span class="logo-accent">X</span></span>
+            </a>
+
+            <nav class="nav">
+                <a href="/" class="nav-link active" data-page="series">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <rect x="3" y="3" width="7" height="7" rx="1"/>
+                        <rect x="14" y="3" width="7" height="7" rx="1"/>
+                        <rect x="3" y="14" width="7" height="7" rx="1"/>
+                        <rect x="14" y="14" width="7" height="7" rx="1"/>
+                    </svg>
+                    <span>Series</span>
+                </a>
+                <a href="/updates" class="nav-link" data-page="updates">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <circle cx="12" cy="12" r="10"/>
+                        <path d="M12 6v6l4 2"/>
+                    </svg>
+                    <span>Updates</span>
+                    <span class="nav-badge" id="updates-badge" style="display: none;">0</span>
+                </a>
+            </nav>
+
+            <div class="header-actions">
+                <button class="btn btn-icon" id="scan-trigger" title="Scan Now">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <path d="M21 12a9 9 0 11-9-9"/>
+                        <polyline points="21,3 21,9 15,9"/>
+                    </svg>
+                </button>
+                <button class="btn btn-primary" id="add-series-btn">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <line x1="12" y1="5" x2="12" y2="19"/>
+                        <line x1="5" y1="12" x2="19" y2="12"/>
+                    </svg>
+                    <span>Add Series</span>
+                </button>
+            </div>
+        </div>
+    </header>
+
+    <main class="main">
+        <!-- Series List -->
+        <section id="page-series" class="page active">
+            <div class="stats-bar">
+                <div class="stat">
+                    <span class="stat-value" id="stat-total">0</span>
+                    <span class="stat-label">Total</span>
+                </div>
+                <div class="stat">
+                    <span class="stat-value" id="stat-continuing">0</span>
+                    <span class="stat-label">Continuing</span>
+                </div>
+                <div class="stat">
+                    <span class="stat-value" id="stat-ended">0</span>
+                    <span class="stat-label">Ended</span>
+                </div>
+                <div class="stat">
+                    <span class="stat-value" id="stat-seasons">0</span>
+                    <span class="stat-label">Seasons</span>
+                </div>
+            </div>
+
+            <div class="filters-bar">
+                <div class="search-box">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <circle cx="11" cy="11" r="8"/>
+                        <path d="M21 21l-4.35-4.35"/>
+                    </svg>
+                    <input type="text" id="search-input" placeholder="Search...">
+                </div>
+
+                <div class="filter-group">
+                    <button class="filter-btn active" data-filter="all">All</button>
+                    <button class="filter-btn" data-filter="continuing">Continuing</button>
+                    <button class="filter-btn" data-filter="ended">Ended</button>
+                </div>
+
+                <select id="sort-select" class="sort-select">
+                    <option value="recent">Recent</option>
+                    <option value="title">A-Z</option>
+                    <option value="title-desc">Z-A</option>
+                </select>
+            </div>
+
+            <div class="series-grid" id="series-grid"></div>
+
+            <div class="empty-state" id="empty-state" style="display: none;">
+                <div class="empty-icon">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+                        <rect x="2" y="3" width="20" height="14" rx="2"/>
+                        <path d="M8 21h8"/>
+                        <path d="M12 17v4"/>
+                    </svg>
+                </div>
+                <h3>No series yet</h3>
+                <p>Add a series or wait for auto-scan</p>
+                <button class="btn btn-primary" id="empty-add-btn">Add Series</button>
+            </div>
+
+            <div class="loading-state" id="loading-state">
+                <div class="loader"></div>
+            </div>
+        </section>
+
+        <!-- Series Detail -->
+        <section id="page-series-detail" class="page">
+            <div class="page-header">
+                <button class="btn btn-icon" id="back-to-series">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <path d="M19 12H5"/>
+                        <polyline points="12 19 5 12 12 5"/>
+                    </svg>
+                </button>
+                <h2 id="detail-series-title">Series Name</h2>
+                <button class="btn btn-danger" id="delete-series-btn">Delete</button>
+            </div>
+
+            <div class="series-detail-layout">
+                <div class="series-detail-sidebar">
+                    <img id="detail-series-poster" src="" alt="" class="series-detail-poster">
+                    <p id="detail-original-title" class="series-original-title"></p>
+                    <span id="detail-series-status" class="series-status-badge">Continuing</span>
+                </div>
+
+                <div class="series-detail-content">
+                    <h3>Seasons</h3>
+                    <div class="seasons-grid" id="seasons-grid"></div>
+                </div>
+            </div>
+        </section>
+
+        <!-- Add Series (Search) -->
+        <section id="page-add-series" class="page">
+            <div class="page-header">
+                <button class="btn btn-icon" id="back-from-add">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <path d="M19 12H5"/>
+                        <polyline points="12 19 5 12 12 5"/>
+                    </svg>
+                </button>
+                <h2>Add Series</h2>
+            </div>
+
+            <div class="search-box search-box-large">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <circle cx="11" cy="11" r="8"/>
+                    <path d="M21 21l-4.35-4.35"/>
+                </svg>
+                <input type="text" id="tvdb-search-input" placeholder="Search TVDB...">
+            </div>
+
+            <div class="search-results" id="search-results"></div>
+        </section>
+
+        <!-- Updates -->
+        <section id="page-updates" class="page">
+            <div class="page-header">
+                <h2>New Seasons</h2>
+                <button class="btn btn-secondary" id="check-updates-btn">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <path d="M21 12a9 9 0 11-9-9"/>
+                        <polyline points="21,3 21,9 15,9"/>
+                    </svg>
+                    Check
+                </button>
+            </div>
+
+            <div class="updates-list" id="updates-list"></div>
+
+            <div class="empty-state" id="updates-empty" style="display: none;">
+                <div class="empty-icon">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+                        <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/>
+                        <polyline points="22 4 12 14.01 9 11.01"/>
+                    </svg>
+                </div>
+                <h3>All caught up</h3>
+                <p>No new seasons available</p>
+            </div>
+        </section>
+    </main>
+
+    <!-- Match Modal -->
+    <div class="modal" id="match-modal">
+        <div class="modal-backdrop" onclick="closeMatchModal()"></div>
+        <div class="modal-content modal-large">
+            <div class="modal-header">
+                <h3>Match with TVDB</h3>
+                <button class="btn btn-icon" onclick="closeMatchModal()">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <line x1="18" y1="6" x2="6" y2="18"/>
+                        <line x1="6" y1="6" x2="18" y2="18"/>
+                    </svg>
+                </button>
+            </div>
+            <div class="modal-body">
+                <div class="search-box search-box-large">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <circle cx="11" cy="11" r="8"/>
+                        <path d="M21 21l-4.35-4.35"/>
+                    </svg>
+                    <input type="text" id="match-search-input" placeholder="Search TVDB...">
+                </div>
+                <div class="match-results" id="match-results"></div>
+            </div>
+        </div>
+    </div>
+
+    <div class="toast-container" id="toast-container"></div>
+
+    <script src="/static/app.js"></script>
+</body>
+</html>
