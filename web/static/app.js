@@ -318,7 +318,7 @@ function renderSeasons(series, seasons) {
         } else {
             // Owned season - clickable card with optional voice badge
             const voiceBadge = season.voice_actor_name
-                ? `<span class="voice-badge">${season.voice_actor_name}</span>`
+                ? `<span class="voice-badge">${esc(season.voice_actor_name)}</span>`
                 : '';
             return `
                 <div class="season-card owned" data-season="${season.season_number}" onclick="navigate('/series/${series.id}/season/${season.season_number}')">

@@ -36,6 +36,12 @@ func New(dbPath string) (*DB, error) {
 
 	db := &DB{DB: sqlDB}
 
+	// Enable foreign key enforcement (required per-connection in SQLite)
+	if _, err := sqlDB.Exec("PRAGMA foreign_keys = ON"); err != nil {
+		sqlDB.Close() //nolint:errcheck
+		return nil, fmt.Errorf("failed to enable foreign keys: %w", err)
+	}
+
 	// Pre-migrations: add new columns to existing tables BEFORE creating indexes
 	// This is needed because the schema has indexes on new columns
 	db.preMigrations()

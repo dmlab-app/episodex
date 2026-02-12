@@ -58,6 +58,15 @@ var (
 		regexp.MustCompile(`^[Ss](\d{1,2})$`),
 		regexp.MustCompile(`^(\d{1,2})$`),
 	}
+
+	// extractTitleFromName patterns
+	reExtractSeasonSuffix = regexp.MustCompile(`(?i)\s*[Ss]\d{1,2}.*$`)
+	reExtractJunkSuffix   = regexp.MustCompile(`(?i)\s*(WEB[-\s]?DL|WEB[-\s]?Rip|BluRay|BDRip|1080p|2160p|720p|480p|HDR|DV|x264|x265|HEVC|H\.?264|H\.?265|LostFilm|LF|Rus|Eng|DD\d+\.\d+|Atmos|DDP).*$`)
+
+	// parseEpisodeNumber patterns
+	reEpisodeSE = regexp.MustCompile(`(?i)[Ss]\d{1,2}[Ee](\d{1,3})`)
+	reEpisodeX  = regexp.MustCompile(`(?i)\d{1,2}[xX](\d{1,3})`)
+	reEpisodeEP = regexp.MustCompile(`(?i)ep?(\d{1,3})`)
 )
 
 // Scanner scans media folders for TV series
@@ -218,16 +227,14 @@ func extractTitleFromName(name string) string {
 	cleaned := strings.ReplaceAll(name, ".", " ")
 
 	// Remove season patterns
-	seasonPattern := regexp.MustCompile(`(?i)\s*[Ss]\d{1,2}.*$`)
-	cleaned = seasonPattern.ReplaceAllString(cleaned, "")
+	cleaned = reExtractSeasonSuffix.ReplaceAllString(cleaned, "")
 
 	// Remove quality and other junk patterns at the end
-	junkPattern := regexp.MustCompile(`(?i)\s*(WEB[-\s]?DL|WEB[-\s]?Rip|BluRay|BDRip|1080p|2160p|720p|480p|HDR|DV|x264|x265|HEVC|H\.?264|H\.?265|LostFilm|LF|Rus|Eng|DD\d+\.\d+|Atmos|DDP).*$`)
-	cleaned = junkPattern.ReplaceAllString(cleaned, "")
+	cleaned = reExtractJunkSuffix.ReplaceAllString(cleaned, "")
 
 	// Trim and normalize spaces
 	cleaned = strings.TrimSpace(cleaned)
-	cleaned = regexp.MustCompile(`\s+`).ReplaceAllString(cleaned, " ")
+	cleaned = reMultiSpace.ReplaceAllString(cleaned, " ")
 
 	return cleaned
 }
@@ -311,14 +318,7 @@ func hasVideoFiles(path string) bool {
 
 // parseEpisodeNumber extracts episode number from filename
 func parseEpisodeNumber(filename string) int {
-	// Patterns to match: S01E05, s01e05, 1x05, etc.
-	patterns := []*regexp.Regexp{
-		regexp.MustCompile(`(?i)[Ss]\d{1,2}[Ee](\d{1,3})`), // S01E05
-		regexp.MustCompile(`(?i)\d{1,2}[xX](\d{1,3})`),     // 1x05
-		regexp.MustCompile(`(?i)ep?(\d{1,3})`),             // E05, ep05
-	}
-
-	for _, pattern := range patterns {
+	for _, pattern := range []*regexp.Regexp{reEpisodeSE, reEpisodeX, reEpisodeEP} {
 		matches := pattern.FindStringSubmatch(filename)
 		if len(matches) >= 2 {
 			num, err := strconv.Atoi(matches[1])

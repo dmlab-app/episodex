@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -1405,8 +1406,8 @@ func (s *Server) handleRescanSeason(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Check if season exists in seasons table
-	var folderPath string
+	// Check if season exists and has a folder path
+	var folderPath *string
 	err = s.db.QueryRow(`
 		SELECT folder_path FROM seasons
 		WHERE series_id = ? AND season_number = ?
@@ -1414,6 +1415,10 @@ func (s *Server) handleRescanSeason(w http.ResponseWriter, r *http.Request) {
 
 	if err != nil {
 		s.respondError(w, http.StatusNotFound, "season not found")
+		return
+	}
+	if folderPath == nil {
+		s.respondError(w, http.StatusBadRequest, "season has no folder path")
 		return
 	}
 
@@ -1436,6 +1441,9 @@ func (s *Server) handleRescanSeason(w http.ResponseWriter, r *http.Request) {
 
 // handleGenerateAudioPreview generates a 30-second preview of an audio track
 func (s *Server) handleGenerateAudioPreview(w http.ResponseWriter, r *http.Request) {
+	seriesID := chi.URLParam(r, "id")
+	seasonNum := chi.URLParam(r, "num")
+
 	var req struct {
 		FilePath   string `json:"file_path"`
 		TrackIndex int    `json:"track_index"`
@@ -1443,6 +1451,24 @@ func (s *Server) handleGenerateAudioPreview(w http.ResponseWriter, r *http.Reque
 
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		s.respondError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+
+	// Validate file path is within the season's folder to prevent path traversal
+	var folderPath *string
+	err := s.db.QueryRow(`
+		SELECT folder_path FROM seasons
+		WHERE series_id = ? AND season_number = ?
+	`, seriesID, seasonNum).Scan(&folderPath)
+	if err != nil || folderPath == nil {
+		s.respondError(w, http.StatusNotFound, "season not found or no folder path")
+		return
+	}
+
+	absFolder, _ := filepath.Abs(*folderPath)
+	absFile, _ := filepath.Abs(req.FilePath)
+	if !strings.HasPrefix(absFile, absFolder+string(filepath.Separator)) {
+		s.respondError(w, http.StatusBadRequest, "file path is outside season folder")
 		return
 	}
 
@@ -1496,10 +1522,15 @@ func (s *Server) handleProcessAudioStream(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	// Validate series ID before database query
+	// Validate series ID and season number before database query
 	sid, err := strconv.Atoi(seriesID)
 	if err != nil {
 		s.respondError(w, http.StatusBadRequest, "invalid series ID")
+		return
+	}
+	snum, err := strconv.Atoi(seasonNum)
+	if err != nil {
+		s.respondError(w, http.StatusBadRequest, "invalid season number")
 		return
 	}
 
@@ -1508,7 +1539,7 @@ func (s *Server) handleProcessAudioStream(w http.ResponseWriter, r *http.Request
 	err = s.db.QueryRow(`
 		SELECT folder_path FROM seasons
 		WHERE series_id = ? AND season_number = ?
-	`, sid, seasonNum).Scan(&folderPath)
+	`, sid, snum).Scan(&folderPath)
 
 	if err != nil || folderPath == nil {
 		s.respondError(w, http.StatusNotFound, "season not found or no folder path")
@@ -1610,7 +1641,7 @@ func (s *Server) handleProcessAudioStream(w http.ResponseWriter, r *http.Request
 		_, err = s.db.Exec(`
 			INSERT INTO processed_files (file_path, series_id, season_number, track_kept, processed_at)
 			VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP)
-		`, filePath, sid, seasonNum, req.TrackID)
+		`, filePath, sid, snum, req.TrackID)
 
 		if err != nil {
 			slog.Error("Failed to log processed file", "file", filePath, "error", err)
