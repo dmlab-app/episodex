@@ -16,6 +16,50 @@ import (
 	"github.com/episodex/episodex/internal/tvdb"
 )
 
+// Pre-compiled regexps for performance (used in hot path during folder scan)
+var (
+	reSeasonS       = regexp.MustCompile(`(?i)[Ss](\d{1,2})`)
+	reSeasonWord    = regexp.MustCompile(`(?i)[Ss]eason\s*(\d{1,2})`)
+	reSeasonEnd     = regexp.MustCompile(`(?i)\s*[Ss]\d{1,2}$`)
+	reSeasonWordEnd = regexp.MustCompile(`(?i)\s*[Ss]eason\s*\d{1,2}$`)
+	reSeasonMid     = regexp.MustCompile(`(?i)\s+[Ss]\d{1,2}\s+`)
+	reSeasonWordMid = regexp.MustCompile(`(?i)\s+[Ss]eason\s*\d{1,2}\s+`)
+	reMultiSpace    = regexp.MustCompile(`\s+`)
+
+	reQualityPatterns = []*regexp.Regexp{
+		regexp.MustCompile(`(?i)\s*\bHDR\b`),
+		regexp.MustCompile(`(?i)\s*\bDV\b`),
+		regexp.MustCompile(`(?i)\s*\bDolby\s*Vision\b`),
+		regexp.MustCompile(`(?i)\s*\b4K\b`),
+		regexp.MustCompile(`(?i)\s*\b2160p\b`),
+		regexp.MustCompile(`(?i)\s*\b1080p\b`),
+		regexp.MustCompile(`(?i)\s*\b720p\b`),
+		regexp.MustCompile(`(?i)\s*\b480p\b`),
+		regexp.MustCompile(`(?i)\s*\bWEB-?DL\b`),
+		regexp.MustCompile(`(?i)\s*\bWEB-?Rip\b`),
+		regexp.MustCompile(`(?i)\s*\bWEB\b`),
+		regexp.MustCompile(`(?i)\s*\bBluRay\b`),
+		regexp.MustCompile(`(?i)\s*\bBDRip\b`),
+		regexp.MustCompile(`(?i)\s*\bx264\b`),
+		regexp.MustCompile(`(?i)\s*\bx265\b`),
+		regexp.MustCompile(`(?i)\s*\bH\.?264\b`),
+		regexp.MustCompile(`(?i)\s*\bH\.?265\b`),
+		regexp.MustCompile(`(?i)\s*\bHEVC\b`),
+		regexp.MustCompile(`(?i)\s*\bAtmos\b`),
+		regexp.MustCompile(`(?i)\s*\bDDP\d+\.?\d*\b`),
+		regexp.MustCompile(`(?i)\s*\bLostFilm\b`),
+		regexp.MustCompile(`(?i)\s*\bLF\b`),
+		regexp.MustCompile(`(?i)\s*\bRus\b`),
+		regexp.MustCompile(`(?i)\s*\bEng\b`),
+	}
+
+	reParseSeasonFolder = []*regexp.Regexp{
+		regexp.MustCompile(`^[Ss]eason\s*(\d{1,2})$`),
+		regexp.MustCompile(`^[Ss](\d{1,2})$`),
+		regexp.MustCompile(`^(\d{1,2})$`),
+	}
+)
+
 // Scanner scans media folders for TV series
 type Scanner struct {
 	db        *database.DB
@@ -191,12 +235,7 @@ func extractTitleFromName(name string) string {
 // extractSeasonNumber manually extracts season number from folder name
 func extractSeasonNumber(name string) int {
 	// Match patterns like S01, S02, S37, etc.
-	patterns := []*regexp.Regexp{
-		regexp.MustCompile(`(?i)[Ss](\d{1,2})`),         // S01, S02, s37, etc.
-		regexp.MustCompile(`(?i)[Ss]eason\s*(\d{1,2})`), // Season 1, season 02, etc.
-	}
-
-	for _, pattern := range patterns {
+	for _, pattern := range []*regexp.Regexp{reSeasonS, reSeasonWord} {
 		matches := pattern.FindStringSubmatch(name)
 		if len(matches) >= 2 {
 			num, err := strconv.Atoi(matches[1])
@@ -215,65 +254,25 @@ func cleanSeriesTitle(title string) string {
 	cleaned := strings.ReplaceAll(title, ".", " ")
 
 	// Remove season patterns like "S01", "S02", "Season 1", etc.
-	seasonPatterns := []*regexp.Regexp{
-		regexp.MustCompile(`(?i)\s*[Ss]\d{1,2}$`),           // S01, s01 at end
-		regexp.MustCompile(`(?i)\s*[Ss]eason\s*\d{1,2}$`),   // Season 1, season 01 at end
-		regexp.MustCompile(`(?i)\s+[Ss]\d{1,2}\s+`),         // S01 in middle
-		regexp.MustCompile(`(?i)\s+[Ss]eason\s*\d{1,2}\s+`), // Season 1 in middle
-	}
-
-	for _, pattern := range seasonPatterns {
+	for _, pattern := range []*regexp.Regexp{reSeasonEnd, reSeasonWordEnd, reSeasonMid, reSeasonWordMid} {
 		cleaned = pattern.ReplaceAllString(cleaned, " ")
 	}
 
 	// Remove quality tags and release group tags
-	qualityPatterns := []*regexp.Regexp{
-		regexp.MustCompile(`(?i)\s*\bHDR\b`),
-		regexp.MustCompile(`(?i)\s*\bDV\b`),
-		regexp.MustCompile(`(?i)\s*\bDolby\s*Vision\b`),
-		regexp.MustCompile(`(?i)\s*\b4K\b`),
-		regexp.MustCompile(`(?i)\s*\b2160p\b`),
-		regexp.MustCompile(`(?i)\s*\b1080p\b`),
-		regexp.MustCompile(`(?i)\s*\b720p\b`),
-		regexp.MustCompile(`(?i)\s*\b480p\b`),
-		regexp.MustCompile(`(?i)\s*\bWEB-?DL\b`),
-		regexp.MustCompile(`(?i)\s*\bWEB-?Rip\b`),
-		regexp.MustCompile(`(?i)\s*\bWEB\b`),
-		regexp.MustCompile(`(?i)\s*\bBluRay\b`),
-		regexp.MustCompile(`(?i)\s*\bBDRip\b`),
-		regexp.MustCompile(`(?i)\s*\bx264\b`),
-		regexp.MustCompile(`(?i)\s*\bx265\b`),
-		regexp.MustCompile(`(?i)\s*\bH\.?264\b`),
-		regexp.MustCompile(`(?i)\s*\bH\.?265\b`),
-		regexp.MustCompile(`(?i)\s*\bHEVC\b`),
-		regexp.MustCompile(`(?i)\s*\bAtmos\b`),
-		regexp.MustCompile(`(?i)\s*\bDDP\d+\.?\d*\b`),
-		regexp.MustCompile(`(?i)\s*\bLostFilm\b`),
-		regexp.MustCompile(`(?i)\s*\bLF\b`),
-		regexp.MustCompile(`(?i)\s*\bRus\b`),
-		regexp.MustCompile(`(?i)\s*\bEng\b`),
-	}
-
-	for _, pattern := range qualityPatterns {
+	for _, pattern := range reQualityPatterns {
 		cleaned = pattern.ReplaceAllString(cleaned, "")
 	}
 
 	// Trim and normalize spaces
 	cleaned = strings.TrimSpace(cleaned)
-	cleaned = regexp.MustCompile(`\s+`).ReplaceAllString(cleaned, " ")
+	cleaned = reMultiSpace.ReplaceAllString(cleaned, " ")
 
 	return cleaned
 }
 
 // parseSeasonFolder extracts season number from folder name
 func parseSeasonFolder(name string) int {
-	patterns := []*regexp.Regexp{
-		regexp.MustCompile(`^[Ss]eason\s*(\d{1,2})$`),
-		regexp.MustCompile(`^[Ss](\d{1,2})$`),
-		regexp.MustCompile(`^(\d{1,2})$`),
-	}
-
-	for _, pattern := range patterns {
+	for _, pattern := range reParseSeasonFolder {
 		matches := pattern.FindStringSubmatch(name)
 		if len(matches) >= 2 {
 			num, err := strconv.Atoi(matches[1])

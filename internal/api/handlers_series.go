@@ -52,18 +52,31 @@ func (s *Server) handleSyncSeriesFromTVDB(w http.ResponseWriter, r *http.Request
 		}
 	}
 
-	// Convert arrays to JSON
-	genresJSON, err := json.Marshal(extended.Genres)
+	// Convert arrays to JSON (store as string arrays for consistency)
+	genreNames := make([]string, len(extended.Genres))
+	for i, g := range extended.Genres {
+		genreNames[i] = g.Name
+	}
+	networkNames := make([]string, len(extended.Networks))
+	for i, n := range extended.Networks {
+		networkNames[i] = n.Name
+	}
+	studioNames := make([]string, len(extended.Studios))
+	for i, st := range extended.Studios {
+		studioNames[i] = st.Name
+	}
+
+	genresJSON, err := json.Marshal(genreNames)
 	if err != nil {
 		slog.Error("Failed to marshal genres", "error", err)
 		genresJSON = []byte("[]")
 	}
-	networksJSON, err := json.Marshal(extended.Networks)
+	networksJSON, err := json.Marshal(networkNames)
 	if err != nil {
 		slog.Error("Failed to marshal networks", "error", err)
 		networksJSON = []byte("[]")
 	}
-	studiosJSON, err := json.Marshal(extended.Studios)
+	studiosJSON, err := json.Marshal(studioNames)
 	if err != nil {
 		slog.Error("Failed to marshal studios", "error", err)
 		studiosJSON = []byte("[]")

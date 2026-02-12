@@ -219,6 +219,11 @@ func (s *Server) handleListSeries(w http.ResponseWriter, _ *http.Request) {
 		series = append(series, item)
 	}
 
+	if err := rows.Err(); err != nil {
+		s.respondError(w, http.StatusInternalServerError, "error reading series")
+		return
+	}
+
 	s.respondJSON(w, http.StatusOK, series)
 }
 
@@ -444,6 +449,11 @@ func (s *Server) handleGetSeries(w http.ResponseWriter, r *http.Request) {
 		seasons = append(seasons, season)
 	}
 
+	if err := rows.Err(); err != nil {
+		s.respondError(w, http.StatusInternalServerError, "error reading seasons")
+		return
+	}
+
 	// Get top 10 characters
 	characters := []map[string]interface{}{}
 	charactersQuery := `
@@ -651,8 +661,15 @@ func (s *Server) handleMatchSeries(w http.ResponseWriter, r *http.Request) {
 		// Another series already has this TVDB ID - merge seasons into existing and delete duplicate
 		slog.Info("Merging duplicate series", "from_id", id, "to_id", existingSeriesID, "tvdb_id", req.TVDBId)
 
-		// Move all seasons from current series to existing one
-		_, err = s.db.Exec(`
+		tx, err := s.db.Begin()
+		if err != nil {
+			s.respondError(w, http.StatusInternalServerError, "failed to start transaction")
+			return
+		}
+		defer tx.Rollback() //nolint:errcheck
+
+		// Move non-overlapping seasons from current series to existing one
+		_, err = tx.Exec(`
 			UPDATE seasons
 			SET series_id = ?
 			WHERE series_id = ? AND season_number NOT IN (
@@ -666,13 +683,23 @@ func (s *Server) handleMatchSeries(w http.ResponseWriter, r *http.Request) {
 		}
 
 		// Delete remaining duplicate seasons (if any overlap)
-		_, _ = s.db.Exec("DELETE FROM seasons WHERE series_id = ?", id)
+		_, err = tx.Exec("DELETE FROM seasons WHERE series_id = ?", id)
+		if err != nil {
+			slog.Error("Failed to delete duplicate seasons", "error", err)
+			s.respondError(w, http.StatusInternalServerError, "failed to merge seasons")
+			return
+		}
 
 		// Delete the duplicate series
-		_, err = s.db.Exec("DELETE FROM series WHERE id = ?", id)
+		_, err = tx.Exec("DELETE FROM series WHERE id = ?", id)
 		if err != nil {
 			slog.Error("Failed to delete duplicate series", "error", err)
 			s.respondError(w, http.StatusInternalServerError, "failed to delete duplicate")
+			return
+		}
+
+		if err := tx.Commit(); err != nil {
+			s.respondError(w, http.StatusInternalServerError, "failed to commit merge")
 			return
 		}
 
@@ -766,6 +793,11 @@ func (s *Server) handleGetAlerts(w http.ResponseWriter, _ *http.Request) {
 			"created_at": createdAt,
 			"dismissed":  dismissed,
 		})
+	}
+
+	if err := rows.Err(); err != nil {
+		s.respondError(w, http.StatusInternalServerError, "error reading alerts")
+		return
 	}
 
 	s.respondJSON(w, http.StatusOK, alerts)
@@ -908,6 +940,11 @@ func (s *Server) handleGetUpdates(w http.ResponseWriter, _ *http.Request) {
 		updates = append(updates, update)
 	}
 
+	if err := rows.Err(); err != nil {
+		s.respondError(w, http.StatusInternalServerError, "error reading updates")
+		return
+	}
+
 	s.respondJSON(w, http.StatusOK, updates)
 }
 
@@ -948,6 +985,11 @@ func (s *Server) handleCheckUpdates(w http.ResponseWriter, _ *http.Request) {
 			toCheck = append(toCheck, sc)
 		}
 		rows.Close() //nolint:errcheck
+
+		if err := rows.Err(); err != nil {
+			slog.Error("Error iterating series for TVDB check", "error", err)
+			return
+		}
 
 		var checked, updated, errored int
 
@@ -1008,32 +1050,18 @@ func (s *Server) handleCheckUpdates(w http.ResponseWriter, _ *http.Request) {
 func (s *Server) handleListSeasons(w http.ResponseWriter, r *http.Request) {
 	seriesID := chi.URLParam(r, "id")
 
-	// Get series info including TVDB ID and poster
+	// Get series info including poster
 	var totalSeasons int
-	var tvdbID *int
 	var seriesPosterURL *string
-	err := s.db.QueryRow(`SELECT total_seasons, tvdb_id, poster_url FROM series WHERE id = ?`, seriesID).Scan(&totalSeasons, &tvdbID, &seriesPosterURL)
+	err := s.db.QueryRow(`SELECT total_seasons, poster_url FROM series WHERE id = ?`, seriesID).Scan(&totalSeasons, &seriesPosterURL)
 	if err != nil {
 		s.respondError(w, http.StatusNotFound, "series not found")
 		return
 	}
 
-	// Fetch season details from TVDB if available
-	tvdbSeasons := make(map[int]string) // map season number -> image URL
-	if tvdbID != nil && s.tvdbClient != nil {
-		details, err := s.tvdbClient.GetSeriesDetailsWithRussian(*tvdbID)
-		if err == nil {
-			for _, season := range details.Seasons {
-				if season.Image != "" {
-					tvdbSeasons[season.Number] = season.Image
-				}
-			}
-		}
-	}
-
-	// Get owned seasons from seasons table with voice actor JOIN
+	// Get owned seasons from seasons table with voice actor JOIN (includes cached poster_url)
 	query := `
-		SELECT sn.season_number, sn.folder_path, sn.is_owned, sn.voice_actor_id, va.name, sn.discovered_at
+		SELECT sn.season_number, sn.folder_path, sn.is_owned, sn.voice_actor_id, va.name, sn.discovered_at, sn.poster_url
 		FROM seasons sn
 		LEFT JOIN voice_actors va ON sn.voice_actor_id = va.id
 		WHERE sn.series_id = ?
@@ -1051,12 +1079,12 @@ func (s *Server) handleListSeasons(w http.ResponseWriter, r *http.Request) {
 	ownedSeasons := make(map[int]map[string]interface{})
 	for rows.Next() {
 		var seasonNum int
-		var folderPath, voiceActorName *string
+		var folderPath, voiceActorName, seasonPosterURL *string
 		var isOwned bool
 		var voiceActorID *int
 		var discoveredAt *time.Time
 
-		if err := rows.Scan(&seasonNum, &folderPath, &isOwned, &voiceActorID, &voiceActorName, &discoveredAt); err != nil {
+		if err := rows.Scan(&seasonNum, &folderPath, &isOwned, &voiceActorID, &voiceActorName, &discoveredAt, &seasonPosterURL); err != nil {
 			continue
 		}
 
@@ -1078,14 +1106,19 @@ func (s *Server) handleListSeasons(w http.ResponseWriter, r *http.Request) {
 			season["discovered_at"] = *discoveredAt
 		}
 
-		// Add season image from TVDB
-		if img, ok := tvdbSeasons[seasonNum]; ok && img != "" {
-			season["image"] = img
+		// Use cached season poster, fall back to series poster
+		if seasonPosterURL != nil && *seasonPosterURL != "" {
+			season["image"] = *seasonPosterURL
 		} else if seriesPosterURL != nil {
 			season["image"] = *seriesPosterURL
 		}
 
 		ownedSeasons[seasonNum] = season
+	}
+
+	if err := rows.Err(); err != nil {
+		s.respondError(w, http.StatusInternalServerError, "error reading seasons")
+		return
 	}
 
 	// Build response with all seasons (owned and missing)
@@ -1111,10 +1144,7 @@ func (s *Server) handleListSeasons(w http.ResponseWriter, r *http.Request) {
 				"owned":         false,
 			}
 
-			// Add season image from TVDB for locked seasons
-			if img, ok := tvdbSeasons[i]; ok && img != "" {
-				lockedSeason["image"] = img
-			} else if seriesPosterURL != nil {
+			if seriesPosterURL != nil {
 				lockedSeason["image"] = *seriesPosterURL
 			}
 
@@ -1349,6 +1379,11 @@ func (s *Server) handleListVoices(w http.ResponseWriter, _ *http.Request) {
 		})
 	}
 
+	if err := rows.Err(); err != nil {
+		s.respondError(w, http.StatusInternalServerError, "error reading voices")
+		return
+	}
+
 	s.respondJSON(w, http.StatusOK, voices)
 }
 
@@ -1461,22 +1496,22 @@ func (s *Server) handleProcessAudioStream(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	// Get folder path from seasons table
-	var folderPath *string
-	err := s.db.QueryRow(`
-		SELECT folder_path FROM seasons
-		WHERE series_id = ? AND season_number = ?
-	`, seriesID, seasonNum).Scan(&folderPath)
-
-	if err != nil || folderPath == nil {
-		s.respondError(w, http.StatusNotFound, "season not found or no folder path")
-		return
-	}
-
-	// Validate series ID before starting SSE stream
+	// Validate series ID before database query
 	sid, err := strconv.Atoi(seriesID)
 	if err != nil {
 		s.respondError(w, http.StatusBadRequest, "invalid series ID")
+		return
+	}
+
+	// Get folder path from seasons table
+	var folderPath *string
+	err = s.db.QueryRow(`
+		SELECT folder_path FROM seasons
+		WHERE series_id = ? AND season_number = ?
+	`, sid, seasonNum).Scan(&folderPath)
+
+	if err != nil || folderPath == nil {
+		s.respondError(w, http.StatusNotFound, "season not found or no folder path")
 		return
 	}
 
@@ -1485,6 +1520,12 @@ func (s *Server) handleProcessAudioStream(w http.ResponseWriter, r *http.Request
 	w.Header().Set("Cache-Control", "no-cache")
 	w.Header().Set("Connection", "keep-alive")
 	w.Header().Set("X-Accel-Buffering", "no")
+
+	// Disable write timeout for SSE — audio processing can take minutes
+	rc := http.NewResponseController(w)
+	if err := rc.SetWriteDeadline(time.Time{}); err != nil {
+		slog.Warn("Failed to disable write deadline for SSE", "error", err)
+	}
 
 	flusher, ok := w.(http.Flusher)
 	if !ok {

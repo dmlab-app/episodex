@@ -233,21 +233,21 @@ async function loadSeriesDetail(seriesId) {
 
         // Metadata tags
         const tagsEl = document.getElementById('detail-tags');
-        let tagsHTML = `<span id="detail-series-status" class="series-status-badge ${series.status || 'unknown'}">${series.status || 'unknown'}</span>`;
-        if (series.year) tagsHTML += `<span class="meta-tag">${series.year}</span>`;
-        if (series.content_rating) tagsHTML += `<span class="meta-tag">${series.content_rating}</span>`;
-        if (series.runtime) tagsHTML += `<span class="meta-tag">${series.runtime} min</span>`;
+        let tagsHTML = `<span id="detail-series-status" class="series-status-badge ${esc(series.status || 'unknown')}">${esc(series.status || 'unknown')}</span>`;
+        if (series.year) tagsHTML += `<span class="meta-tag">${esc(series.year)}</span>`;
+        if (series.content_rating) tagsHTML += `<span class="meta-tag">${esc(series.content_rating)}</span>`;
+        if (series.runtime) tagsHTML += `<span class="meta-tag">${esc(series.runtime)} min</span>`;
         if (series.rating) tagsHTML += `<span class="meta-tag meta-tag-star">${series.rating.toFixed(1)}</span>`;
         if (series.genres && series.genres.length > 0) {
             series.genres.forEach(g => {
                 const name = typeof g === 'string' ? g : (g.name || g);
-                tagsHTML += `<span class="meta-tag">${name}</span>`;
+                tagsHTML += `<span class="meta-tag">${esc(name)}</span>`;
             });
         }
         if (series.networks && series.networks.length > 0) {
             series.networks.forEach(n => {
                 const name = typeof n === 'string' ? n : (n.name || n);
-                tagsHTML += `<span class="meta-tag meta-tag-network">${name}</span>`;
+                tagsHTML += `<span class="meta-tag meta-tag-network">${esc(name)}</span>`;
             });
         }
         tagsEl.innerHTML = tagsHTML;
@@ -269,10 +269,10 @@ async function loadSeriesDetail(seriesId) {
             charsRow.innerHTML = series.characters.map(c => `
                 <div class="character-card">
                     <div class="character-avatar">
-                        <img src="${posterSrc(c.image_url)}" alt="${c.character_name || ''}" loading="lazy">
+                        <img src="${posterSrc(c.image_url)}" alt="${esc(c.character_name || '')}" loading="lazy">
                     </div>
-                    <div class="character-name">${c.character_name || ''}</div>
-                    <div class="character-actor">${c.actor_name || ''}</div>
+                    <div class="character-name">${esc(c.character_name || '')}</div>
+                    <div class="character-actor">${esc(c.actor_name || '')}</div>
                 </div>
             `).join('');
         } else {
@@ -782,10 +782,10 @@ async function loadUpdates() {
             return `
             <div class="update-card" onclick="navigate('/series/${u.id}')">
                 <div class="update-poster">
-                    <img src="${posterSrc(u.poster_url)}" alt="${u.title}">
+                    <img src="${posterSrc(u.poster_url)}" alt="${esc(u.title)}">
                 </div>
                 <div class="update-info">
-                    <h4 class="update-title">${u.title}</h4>
+                    <h4 class="update-title">${esc(u.title)}</h4>
                     <p class="update-detail"><span class="update-season">${newCount} new season${newCount !== 1 ? 's' : ''}</span> \u2014 ${seasonDetail}</p>
                 </div>
             </div>
