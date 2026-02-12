@@ -1,3 +1,4 @@
+// Package hash provides file hashing utilities for change detection.
 package hash
 
 import (
@@ -35,7 +36,7 @@ func ComputeFileHash(filePath string) (*FileHash, error) {
 	if err != nil {
 		return nil, fmt.Errorf("failed to open file: %w", err)
 	}
-	defer file.Close()
+	defer file.Close() //nolint:errcheck
 
 	// Get file info
 	info, err := file.Stat()
@@ -50,10 +51,10 @@ func ComputeFileHash(filePath string) (*FileHash, error) {
 	hasher := sha256.New()
 
 	// Write size to hash
-	fmt.Fprintf(hasher, "size:%d|", size)
+	fmt.Fprintf(hasher, "size:%d|", size) //nolint:errcheck
 
 	// Write modification time to hash (optional signal)
-	fmt.Fprintf(hasher, "mtime:%d|", modTime)
+	fmt.Fprintf(hasher, "mtime:%d|", modTime) //nolint:errcheck
 
 	// Read first ChunkSize bytes
 	firstChunk := make([]byte, ChunkSize)
@@ -122,7 +123,7 @@ func ComputeMultiFileHash(filePaths []string) (string, error) {
 }
 
 // HasChanged checks if a file's hash has changed by comparing with stored hash
-func HasChanged(filePath string, storedHash string) (bool, error) {
+func HasChanged(filePath, storedHash string) (bool, error) {
 	currentHash, err := ComputeFileHash(filePath)
 	if err != nil {
 		return false, err

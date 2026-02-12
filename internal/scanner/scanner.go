@@ -1,3 +1,4 @@
+// Package scanner provides media folder scanning and series discovery.
 package scanner
 
 import (
@@ -8,10 +9,11 @@ import (
 	"strconv"
 	"strings"
 
+	ptn "github.com/middelink/go-parse-torrent-name"
+
 	"github.com/episodex/episodex/internal/database"
 	"github.com/episodex/episodex/internal/hash"
 	"github.com/episodex/episodex/internal/tvdb"
-	ptn "github.com/middelink/go-parse-torrent-name"
 )
 
 // Scanner scans media folders for TV series
@@ -24,8 +26,8 @@ type Scanner struct {
 // SeriesInfo holds parsed series information
 type SeriesInfo struct {
 	Title  string
-	Season int
 	Path   string
+	Season int
 }
 
 // New creates a new Scanner
@@ -128,7 +130,7 @@ func (s *Scanner) scanSeasonFolders(seriesName, seriesPath string) []SeriesInfo 
 	}
 
 	// Parse series name using the torrent library, fallback to raw name if parsing fails
-	cleanName := seriesName
+	var cleanName string
 	if info, err := ptn.Parse(seriesName); err == nil && info.Title != "" {
 		cleanName = info.Title
 	} else {
@@ -190,8 +192,8 @@ func extractTitleFromName(name string) string {
 func extractSeasonNumber(name string) int {
 	// Match patterns like S01, S02, S37, etc.
 	patterns := []*regexp.Regexp{
-		regexp.MustCompile(`(?i)[Ss](\d{1,2})`),          // S01, S02, s37, etc.
-		regexp.MustCompile(`(?i)[Ss]eason\s*(\d{1,2})`),  // Season 1, season 02, etc.
+		regexp.MustCompile(`(?i)[Ss](\d{1,2})`),         // S01, S02, s37, etc.
+		regexp.MustCompile(`(?i)[Ss]eason\s*(\d{1,2})`), // Season 1, season 02, etc.
 	}
 
 	for _, pattern := range patterns {
@@ -214,10 +216,10 @@ func cleanSeriesTitle(title string) string {
 
 	// Remove season patterns like "S01", "S02", "Season 1", etc.
 	seasonPatterns := []*regexp.Regexp{
-		regexp.MustCompile(`(?i)\s*[Ss]\d{1,2}$`),              // S01, s01 at end
-		regexp.MustCompile(`(?i)\s*[Ss]eason\s*\d{1,2}$`),      // Season 1, season 01 at end
-		regexp.MustCompile(`(?i)\s+[Ss]\d{1,2}\s+`),            // S01 in middle
-		regexp.MustCompile(`(?i)\s+[Ss]eason\s*\d{1,2}\s+`),    // Season 1 in middle
+		regexp.MustCompile(`(?i)\s*[Ss]\d{1,2}$`),           // S01, s01 at end
+		regexp.MustCompile(`(?i)\s*[Ss]eason\s*\d{1,2}$`),   // Season 1, season 01 at end
+		regexp.MustCompile(`(?i)\s+[Ss]\d{1,2}\s+`),         // S01 in middle
+		regexp.MustCompile(`(?i)\s+[Ss]eason\s*\d{1,2}\s+`), // Season 1 in middle
 	}
 
 	for _, pattern := range seasonPatterns {
@@ -274,8 +276,10 @@ func parseSeasonFolder(name string) int {
 	for _, pattern := range patterns {
 		matches := pattern.FindStringSubmatch(name)
 		if len(matches) >= 2 {
-			num, _ := strconv.Atoi(matches[1])
-			return num
+			num, err := strconv.Atoi(matches[1])
+			if err == nil {
+				return num
+			}
 		}
 	}
 
@@ -339,11 +343,12 @@ func (s *Scanner) processSeriesInfo(info SeriesInfo) error {
 		slog.Info("Searching TVDB for series", "title", info.Title)
 
 		results, err := s.tvdb.SearchSeries(info.Title)
-		if err != nil {
+		switch {
+		case err != nil:
 			slog.Warn("TVDB search failed", "title", info.Title, "error", err)
-		} else if len(results) == 0 {
+		case len(results) == 0:
 			slog.Warn("Series not found in TVDB", "title", info.Title)
-		} else {
+		default:
 			// Use the first (best) match
 			tvdbSeries := results[0]
 			tvdbID = tvdbSeries.TVDBId

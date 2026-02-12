@@ -57,7 +57,7 @@ func (db *DB) GetMediaFilesBySeason(seriesID int64, seasonNumber int) ([]MediaFi
 	if err != nil {
 		return nil, fmt.Errorf("failed to query media files: %w", err)
 	}
-	defer rows.Close()
+	defer rows.Close() //nolint:errcheck
 
 	var files []MediaFile
 	for rows.Next() {
@@ -173,9 +173,9 @@ func (db *DB) InvalidateCachedDataForSeason(seriesID int64, seasonNumber int) er
 	}
 
 	// Invalidate each file
-	for _, file := range files {
-		if err := db.InvalidateCachedData(file.FilePath); err != nil {
-			slog.Error("Failed to invalidate file", "path", file.FilePath, "error", err)
+	for i := range files {
+		if err := db.InvalidateCachedData(files[i].FilePath); err != nil {
+			slog.Error("Failed to invalidate file", "path", files[i].FilePath, "error", err)
 		}
 	}
 
@@ -185,7 +185,7 @@ func (db *DB) InvalidateCachedDataForSeason(seriesID int64, seasonNumber int) er
 }
 
 // CheckFileChanged checks if a file's hash has changed and invalidates cache if needed
-func (db *DB) CheckFileChanged(filePath string, currentHash string) (bool, error) {
+func (db *DB) CheckFileChanged(filePath, currentHash string) (bool, error) {
 	existing, err := db.GetMediaFileByPath(filePath)
 	if err != nil {
 		return false, err
@@ -228,7 +228,7 @@ func (db *DB) GetStaleMediaFiles(staleDuration time.Duration) ([]MediaFile, erro
 	if err != nil {
 		return nil, fmt.Errorf("failed to query stale media files: %w", err)
 	}
-	defer rows.Close()
+	defer rows.Close() //nolint:errcheck
 
 	var files []MediaFile
 	for rows.Next() {

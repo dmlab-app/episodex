@@ -1,7 +1,8 @@
+// Package audio provides MKV audio track analysis and processing.
 package audio
 
 import (
-	"crypto/md5"
+	"crypto/sha256"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -12,7 +13,7 @@ import (
 )
 
 // AudioCutter handles audio track operations on MKV files
-type AudioCutter struct {
+type AudioCutter struct { //nolint:revive // name is used across the codebase
 	mkvmergePath string
 	ffmpegPath   string
 	tempDir      string
@@ -21,7 +22,7 @@ type AudioCutter struct {
 // New creates a new AudioCutter
 func New() *AudioCutter {
 	tempDir := filepath.Join(os.TempDir(), "episodex-audio")
-	os.MkdirAll(tempDir, 0755)
+	_ = os.MkdirAll(tempDir, 0o750)
 
 	return &AudioCutter{
 		mkvmergePath: "mkvmerge", // Assumes mkvmerge is in PATH
@@ -31,26 +32,26 @@ func New() *AudioCutter {
 }
 
 // AudioTrack represents an audio track in an MKV file
-type AudioTrack struct {
-	ID       int    `json:"id"`
+type AudioTrack struct { //nolint:revive // name is used across the codebase
 	Type     string `json:"type"`
 	Codec    string `json:"codec"`
 	Language string `json:"language"`
 	Name     string `json:"name"`
+	ID       int    `json:"id"`
 	Default  bool   `json:"default"`
 }
 
 // MKVInfo represents the structure of mkvmerge -J output
 type MKVInfo struct {
 	Tracks []struct {
-		ID         int    `json:"id"`
 		Type       string `json:"type"`
 		Codec      string `json:"codec"`
 		Properties struct {
-			Language    string `json:"language"`
-			TrackName   string `json:"track_name"`
+			Language     string `json:"language"`
+			TrackName    string `json:"track_name"`
 			DefaultTrack bool   `json:"default_track"`
 		} `json:"properties"`
+		ID int `json:"id"`
 	} `json:"tracks"`
 }
 
@@ -62,7 +63,7 @@ func (ac *AudioCutter) GetAudioTracks(filePath string) ([]AudioTrack, error) {
 	}
 
 	// Run mkvmerge -J to get file info
-	cmd := exec.Command(ac.mkvmergePath, "-J", filePath)
+	cmd := exec.Command(ac.mkvmergePath, "-J", filePath) //nolint:gosec // controlled input
 	output, err := cmd.Output()
 	if err != nil {
 		return nil, fmt.Errorf("failed to run mkvmerge: %w", err)
@@ -162,7 +163,7 @@ func (ac *AudioCutter) RemoveAudioTracks(filePath string, keepTrackID int) error
 	var trackArgs []string
 
 	// Get all tracks (not just audio)
-	cmd := exec.Command(ac.mkvmergePath, "-J", filePath)
+	cmd := exec.Command(ac.mkvmergePath, "-J", filePath) //nolint:gosec // controlled input
 	output, err := cmd.Output()
 	if err != nil {
 		return fmt.Errorf("failed to run mkvmerge: %w", err)
@@ -196,7 +197,7 @@ func (ac *AudioCutter) RemoveAudioTracks(filePath string, keepTrackID int) error
 	}
 
 	// Execute mkvmerge
-	mkvCmd := exec.Command(ac.mkvmergePath, trackArgs...)
+	mkvCmd := exec.Command(ac.mkvmergePath, trackArgs...) //nolint:gosec // controlled input
 	if output, err := mkvCmd.CombinedOutput(); err != nil {
 		return fmt.Errorf("mkvmerge failed: %w, output: %s", err, string(output))
 	}
@@ -214,16 +215,13 @@ func (ac *AudioCutter) RemoveAudioTracks(filePath string, keepTrackID int) error
 }
 
 // ProcessFolder processes all MKV files in a folder, keeping only the specified audio track
-func (ac *AudioCutter) ProcessFolder(folderPath string, keepTrackID int) ([]string, []string, error) {
+func (ac *AudioCutter) ProcessFolder(folderPath string, keepTrackID int) (processed, failed []string, err error) {
 	if _, err := os.Stat(folderPath); os.IsNotExist(err) {
 		return nil, nil, fmt.Errorf("folder does not exist: %s", folderPath)
 	}
 
-	var processed []string
-	var failed []string
-
 	// Walk through folder
-	err := filepath.Walk(folderPath, func(path string, info os.FileInfo, err error) error {
+	err = filepath.Walk(folderPath, func(path string, info os.FileInfo, err error) error {
 		if err != nil {
 			return err
 		}
@@ -249,13 +247,13 @@ func (ac *AudioCutter) ProcessFolder(folderPath string, keepTrackID int) ([]stri
 
 // GeneratePreview generates a 30-second audio preview from an MKV file
 // Returns a hash that can be used to retrieve the preview file
-func (ac *AudioCutter) GeneratePreview(filePath string, trackIndex int, duration int) (string, error) {
+func (ac *AudioCutter) GeneratePreview(filePath string, trackIndex, duration int) (string, error) {
 	if _, err := os.Stat(filePath); os.IsNotExist(err) {
 		return "", fmt.Errorf("file does not exist: %s", filePath)
 	}
 
 	// Create hash for caching
-	hash := fmt.Sprintf("%x", md5.Sum([]byte(fmt.Sprintf("%s_%d", filePath, trackIndex))))
+	hash := fmt.Sprintf("%x", sha256.Sum256([]byte(fmt.Sprintf("%s_%d", filePath, trackIndex))))
 	outputFile := filepath.Join(ac.tempDir, hash+".mp3")
 
 	// Check if preview already exists
@@ -267,7 +265,7 @@ func (ac *AudioCutter) GeneratePreview(filePath string, trackIndex int, duration
 	// -ss 60: start at 1 minute
 	// -t duration: extract for specified duration
 	// -map 0:a:trackIndex: select audio track by index
-	cmd := exec.Command(ac.ffmpegPath,
+	cmd := exec.Command(ac.ffmpegPath, //nolint:gosec // controlled input
 		"-y",
 		"-i", filePath,
 		"-ss", "60",
@@ -312,7 +310,7 @@ func (ac *AudioCutter) CleanupOldPreviews() error {
 
 		// Remove files older than 24 hours
 		if info.ModTime().Before(time.Now().Add(-24 * time.Hour)) {
-			os.Remove(file)
+			os.Remove(file) //nolint:errcheck // removal failure is non-critical
 		}
 	}
 

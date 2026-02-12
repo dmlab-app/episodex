@@ -1,3 +1,4 @@
+// Package api provides HTTP handlers for the EpisodeX REST API.
 package api
 
 import (
@@ -9,13 +10,14 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/go-chi/chi/v5"
+	"github.com/go-chi/chi/v5/middleware"
+	"github.com/go-chi/cors"
+
 	"github.com/episodex/episodex/internal/audio"
 	"github.com/episodex/episodex/internal/database"
 	"github.com/episodex/episodex/internal/scanner"
 	"github.com/episodex/episodex/internal/tvdb"
-	"github.com/go-chi/chi/v5"
-	"github.com/go-chi/chi/v5/middleware"
-	"github.com/go-chi/cors"
 )
 
 // Server represents the API server
@@ -71,22 +73,22 @@ func (s *Server) setupRoutes() {
 	s.router.Route("/api", func(r chi.Router) {
 		// Series endpoints (placeholder)
 		r.Route("/series", func(r chi.Router) {
-			r.Get("/", s.handleListSeries)          // GET /api/series
-			r.Post("/", s.handleCreateSeries)       // POST /api/series
-			r.Get("/{id}", s.handleGetSeries)       // GET /api/series/:id
-			r.Delete("/{id}", s.handleDeleteSeries) // DELETE /api/series/:id
-			r.Post("/{id}/match", s.handleMatchSeries) // POST /api/series/:id/match
+			r.Get("/", s.handleListSeries)                   // GET /api/series
+			r.Post("/", s.handleCreateSeries)                // POST /api/series
+			r.Get("/{id}", s.handleGetSeries)                // GET /api/series/:id
+			r.Delete("/{id}", s.handleDeleteSeries)          // DELETE /api/series/:id
+			r.Post("/{id}/match", s.handleMatchSeries)       // POST /api/series/:id/match
 			r.Post("/{id}/sync", s.handleSyncSeriesFromTVDB) // POST /api/series/:id/sync
 
 			// Seasons endpoints
 			r.Route("/{id}/seasons", func(r chi.Router) {
-				r.Get("/", s.handleListSeasons)                             // GET /api/series/:id/seasons
-				r.Get("/{num}", s.handleGetSeason)                          // GET /api/series/:id/seasons/:num
-				r.Put("/{num}", s.handleUpdateSeason)                       // PUT /api/series/:id/seasons/:num
-				r.Post("/{num}/rescan", s.handleRescanSeason)               // POST /api/series/:id/seasons/:num/rescan
-				r.Get("/{num}/audio", s.handleGetAudioTracks)               // GET /api/series/:id/seasons/:num/audio
+				r.Get("/", s.handleListSeasons)                              // GET /api/series/:id/seasons
+				r.Get("/{num}", s.handleGetSeason)                           // GET /api/series/:id/seasons/:num
+				r.Put("/{num}", s.handleUpdateSeason)                        // PUT /api/series/:id/seasons/:num
+				r.Post("/{num}/rescan", s.handleRescanSeason)                // POST /api/series/:id/seasons/:num/rescan
+				r.Get("/{num}/audio", s.handleGetAudioTracks)                // GET /api/series/:id/seasons/:num/audio
 				r.Post("/{num}/audio/preview", s.handleGenerateAudioPreview) // POST /api/series/:id/seasons/:num/audio/preview
-				r.Post("/{num}/audio/process", s.handleProcessAudioStream)  // POST /api/series/:id/seasons/:num/audio/process (SSE)
+				r.Post("/{num}/audio/process", s.handleProcessAudioStream)   // POST /api/series/:id/seasons/:num/audio/process (SSE)
 			})
 		})
 
@@ -104,7 +106,7 @@ func (s *Server) setupRoutes() {
 		r.Post("/scan/trigger", s.handleTriggerScan) // POST /api/scan/trigger
 
 		// Updates endpoints
-		r.Get("/updates", s.handleGetUpdates)       // GET /api/updates
+		r.Get("/updates", s.handleGetUpdates)          // GET /api/updates
 		r.Post("/updates/check", s.handleCheckUpdates) // POST /api/updates/check
 
 		// Search endpoint
@@ -148,7 +150,7 @@ func (s *Server) Handler() http.Handler {
 }
 
 // handleHealth handles health check endpoint
-func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
+func (s *Server) handleHealth(w http.ResponseWriter, _ *http.Request) {
 	// Check database connection
 	if err := s.db.Ping(); err != nil {
 		s.respondError(w, http.StatusServiceUnavailable, "database unavailable")
@@ -163,7 +165,7 @@ func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 }
 
 // Series handlers
-func (s *Server) handleListSeries(w http.ResponseWriter, r *http.Request) {
+func (s *Server) handleListSeries(w http.ResponseWriter, _ *http.Request) {
 	query := `
 		SELECT s.id, s.tvdb_id, s.title, s.original_title, s.poster_url, s.status, s.total_seasons, s.created_at,
 			(SELECT COUNT(*) FROM seasons sn WHERE sn.series_id = s.id AND sn.is_owned = 1) as watched_seasons
@@ -176,7 +178,7 @@ func (s *Server) handleListSeries(w http.ResponseWriter, r *http.Request) {
 		s.respondError(w, http.StatusInternalServerError, "failed to fetch series")
 		return
 	}
-	defer rows.Close()
+	defer rows.Close() //nolint:errcheck
 
 	series := []map[string]interface{}{}
 	for rows.Next() {
@@ -235,8 +237,10 @@ func (s *Server) handleCreateSeries(w http.ResponseWriter, r *http.Request) {
 	var title, originalTitle, posterURL, status string
 	var totalSeasons int
 
-	// If TVDB ID provided, fetch metadata from TVDB
-	if req.TVDBId != nil && *req.TVDBId > 0 {
+	// Determine creation mode based on request
+	switch {
+	case req.TVDBId != nil && *req.TVDBId > 0:
+		// TVDB ID provided, fetch metadata from TVDB
 		if s.tvdbClient == nil {
 			s.respondError(w, http.StatusServiceUnavailable, "TVDB client not configured")
 			return
@@ -266,10 +270,15 @@ func (s *Server) handleCreateSeries(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
-		seriesID, _ = result.LastInsertId()
+		var idErr error
+		seriesID, idErr = result.LastInsertId()
+		if idErr != nil {
+			s.respondError(w, http.StatusInternalServerError, "failed to get series ID")
+			return
+		}
 		slog.Info("Created series from TVDB", "id", seriesID, "tvdb_id", *req.TVDBId, "title", title)
 
-	} else if req.Title != "" {
+	case req.Title != "":
 		// Manual entry without TVDB metadata
 		title = req.Title
 		status = "unknown"
@@ -283,10 +292,15 @@ func (s *Server) handleCreateSeries(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
-		seriesID, _ = result.LastInsertId()
+		var idErr error
+		seriesID, idErr = result.LastInsertId()
+		if idErr != nil {
+			s.respondError(w, http.StatusInternalServerError, "failed to get series ID")
+			return
+		}
 		slog.Info("Created manual series", "id", seriesID, "title", title)
 
-	} else {
+	default:
 		s.respondError(w, http.StatusBadRequest, "either tvdb_id or title is required")
 		return
 	}
@@ -317,9 +331,9 @@ func (s *Server) handleGetSeries(w http.ResponseWriter, r *http.Request) {
 
 	// Get series info with full metadata
 	var seriesInfo struct {
-		ID               int
-		TVDBId           *int
-		Title            string
+		CreatedAt        time.Time
+		LastAired        *string
+		Runtime          *int
 		OriginalTitle    *string
 		Slug             *string
 		Overview         *string
@@ -327,18 +341,18 @@ func (s *Server) handleGetSeries(w http.ResponseWriter, r *http.Request) {
 		BackdropURL      *string
 		Status           *string
 		FirstAired       *string
-		LastAired        *string
-		Year             *int
-		Runtime          *int
+		TVDBId           *int
+		Studios          *string
 		Rating           *float64
+		Year             *int
 		ContentRating    *string
 		OriginalCountry  *string
 		OriginalLanguage *string
 		Genres           *string
 		Networks         *string
-		Studios          *string
+		Title            string
 		TotalSeasons     int
-		CreatedAt        time.Time
+		ID               int
 	}
 
 	query := `
@@ -395,7 +409,7 @@ func (s *Server) handleGetSeries(w http.ResponseWriter, r *http.Request) {
 		s.respondError(w, http.StatusInternalServerError, "failed to fetch seasons")
 		return
 	}
-	defer rows.Close()
+	defer rows.Close() //nolint:errcheck
 
 	seasons := []map[string]interface{}{}
 	for rows.Next() {
@@ -441,7 +455,7 @@ func (s *Server) handleGetSeries(w http.ResponseWriter, r *http.Request) {
 	`
 	charRows, err := s.db.Query(charactersQuery, id)
 	if err == nil {
-		defer charRows.Close()
+		defer charRows.Close() //nolint:errcheck
 		for charRows.Next() {
 			var characterName, actorName, imageURL *string
 			var sortOrder *int
@@ -470,7 +484,8 @@ func (s *Server) handleGetSeries(w http.ResponseWriter, r *http.Request) {
 	backdropURL := seriesInfo.BackdropURL
 	if posterURL == nil || *posterURL == "" {
 		var url *string
-		_ = s.db.QueryRow(`
+		//nolint:errcheck // artwork fallback is best-effort
+		s.db.QueryRow(`
 			SELECT url FROM artworks
 			WHERE series_id = ? AND type = 'poster'
 			ORDER BY score DESC, is_primary DESC
@@ -482,7 +497,8 @@ func (s *Server) handleGetSeries(w http.ResponseWriter, r *http.Request) {
 	}
 	if backdropURL == nil || *backdropURL == "" {
 		var url *string
-		_ = s.db.QueryRow(`
+		//nolint:errcheck // artwork fallback is best-effort
+		s.db.QueryRow(`
 			SELECT url FROM artworks
 			WHERE series_id = ? AND type = 'background'
 			ORDER BY score DESC, is_primary DESC
@@ -585,7 +601,11 @@ func (s *Server) handleDeleteSeries(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	rows, _ := result.RowsAffected()
+	rows, err := result.RowsAffected()
+	if err != nil {
+		s.respondError(w, http.StatusInternalServerError, "failed to verify deletion")
+		return
+	}
 	if rows == 0 {
 		s.respondError(w, http.StatusNotFound, "series not found")
 		return
@@ -624,12 +644,12 @@ func (s *Server) handleMatchSeries(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Check if this TVDB ID is already used by another series
-	var existingSeriesId int
+	var existingSeriesID int
 	var existingTitle string
-	err = s.db.QueryRow("SELECT id, title FROM series WHERE tvdb_id = ? AND id != ?", req.TVDBId, id).Scan(&existingSeriesId, &existingTitle)
+	err = s.db.QueryRow("SELECT id, title FROM series WHERE tvdb_id = ? AND id != ?", req.TVDBId, id).Scan(&existingSeriesID, &existingTitle)
 	if err == nil {
 		// Another series already has this TVDB ID - merge seasons into existing and delete duplicate
-		slog.Info("Merging duplicate series", "from_id", id, "to_id", existingSeriesId, "tvdb_id", req.TVDBId)
+		slog.Info("Merging duplicate series", "from_id", id, "to_id", existingSeriesID, "tvdb_id", req.TVDBId)
 
 		// Move all seasons from current series to existing one
 		_, err = s.db.Exec(`
@@ -638,7 +658,7 @@ func (s *Server) handleMatchSeries(w http.ResponseWriter, r *http.Request) {
 			WHERE series_id = ? AND season_number NOT IN (
 				SELECT season_number FROM seasons WHERE series_id = ?
 			)
-		`, existingSeriesId, id, existingSeriesId)
+		`, existingSeriesID, id, existingSeriesID)
 		if err != nil {
 			slog.Error("Failed to move seasons", "error", err)
 			s.respondError(w, http.StatusInternalServerError, "failed to merge seasons")
@@ -656,15 +676,15 @@ func (s *Server) handleMatchSeries(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
-		slog.Info("Merged and deleted duplicate series", "deleted_id", id, "merged_into", existingSeriesId, "title", existingTitle)
+		slog.Info("Merged and deleted duplicate series", "deleted_id", id, "merged_into", existingSeriesID, "title", existingTitle)
 
 		// Return the existing series info
 		s.respondJSON(w, http.StatusOK, map[string]interface{}{
-			"id":       existingSeriesId,
-			"tvdb_id":  req.TVDBId,
-			"title":    existingTitle,
-			"merged":   true,
-			"message":  fmt.Sprintf("Seasons merged into '%s'", existingTitle),
+			"id":      existingSeriesID,
+			"tvdb_id": req.TVDBId,
+			"title":   existingTitle,
+			"merged":  true,
+			"message": fmt.Sprintf("Seasons merged into '%s'", existingTitle),
 		})
 		return
 	}
@@ -712,7 +732,7 @@ func (s *Server) handleMatchSeries(w http.ResponseWriter, r *http.Request) {
 	s.respondJSON(w, http.StatusOK, response)
 }
 
-func (s *Server) handleGetAlerts(w http.ResponseWriter, r *http.Request) {
+func (s *Server) handleGetAlerts(w http.ResponseWriter, _ *http.Request) {
 	query := `
 		SELECT id, type, message, created_at, dismissed
 		FROM system_alerts
@@ -726,7 +746,7 @@ func (s *Server) handleGetAlerts(w http.ResponseWriter, r *http.Request) {
 		s.respondError(w, http.StatusInternalServerError, "failed to fetch alerts")
 		return
 	}
-	defer rows.Close()
+	defer rows.Close() //nolint:errcheck
 
 	alerts := []map[string]interface{}{}
 	for rows.Next() {
@@ -761,7 +781,11 @@ func (s *Server) handleDismissAlert(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	rows, _ := result.RowsAffected()
+	rows, err := result.RowsAffected()
+	if err != nil {
+		s.respondError(w, http.StatusInternalServerError, "failed to verify dismissal")
+		return
+	}
 	if rows == 0 {
 		s.respondError(w, http.StatusNotFound, "alert not found")
 		return
@@ -776,7 +800,9 @@ func (s *Server) handleDismissAlert(w http.ResponseWriter, r *http.Request) {
 func (s *Server) respondJSON(w http.ResponseWriter, status int, data interface{}) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
-	json.NewEncoder(w).Encode(data)
+	if err := json.NewEncoder(w).Encode(data); err != nil {
+		slog.Error("Failed to encode JSON response", "error", err)
+	}
 }
 
 func (s *Server) respondError(w http.ResponseWriter, status int, message string) {
@@ -786,7 +812,7 @@ func (s *Server) respondError(w http.ResponseWriter, status int, message string)
 }
 
 // Scan handler
-func (s *Server) handleTriggerScan(w http.ResponseWriter, r *http.Request) {
+func (s *Server) handleTriggerScan(w http.ResponseWriter, _ *http.Request) {
 	slog.Info("Manual scan triggered")
 
 	go func() {
@@ -802,7 +828,7 @@ func (s *Server) handleTriggerScan(w http.ResponseWriter, r *http.Request) {
 }
 
 // Updates handlers
-func (s *Server) handleGetUpdates(w http.ResponseWriter, r *http.Request) {
+func (s *Server) handleGetUpdates(w http.ResponseWriter, _ *http.Request) {
 	// Query series that have unwatched seasons (total_seasons > owned count)
 	query := `
 		SELECT s.id, s.tvdb_id, s.title, s.original_title, s.poster_url, s.status,
@@ -818,7 +844,7 @@ func (s *Server) handleGetUpdates(w http.ResponseWriter, r *http.Request) {
 		s.respondError(w, http.StatusInternalServerError, "failed to fetch updates")
 		return
 	}
-	defer rows.Close()
+	defer rows.Close() //nolint:errcheck
 
 	updates := []map[string]interface{}{}
 	for rows.Next() {
@@ -861,7 +887,7 @@ func (s *Server) handleGetUpdates(w http.ResponseWriter, r *http.Request) {
 	s.respondJSON(w, http.StatusOK, updates)
 }
 
-func (s *Server) handleCheckUpdates(w http.ResponseWriter, r *http.Request) {
+func (s *Server) handleCheckUpdates(w http.ResponseWriter, _ *http.Request) {
 	slog.Info("Manual TVDB check triggered")
 
 	if s.tvdbClient == nil {
@@ -883,7 +909,7 @@ func (s *Server) handleCheckUpdates(w http.ResponseWriter, r *http.Request) {
 			slog.Error("Failed to fetch series for TVDB check", "error", err)
 			return
 		}
-		defer rows.Close()
+		defer rows.Close() //nolint:errcheck
 
 		var checked, updated, errored int
 
@@ -962,8 +988,7 @@ func (s *Server) handleListSeasons(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Fetch season details from TVDB if available
-	var tvdbSeasons map[int]string // map season number -> image URL
-	tvdbSeasons = make(map[int]string)
+	tvdbSeasons := make(map[int]string) // map season number -> image URL
 	if tvdbID != nil && s.tvdbClient != nil {
 		details, err := s.tvdbClient.GetSeriesDetailsWithRussian(*tvdbID)
 		if err == nil {
@@ -989,7 +1014,7 @@ func (s *Server) handleListSeasons(w http.ResponseWriter, r *http.Request) {
 		s.respondError(w, http.StatusInternalServerError, "failed to fetch seasons")
 		return
 	}
-	defer rows.Close()
+	defer rows.Close() //nolint:errcheck
 
 	// Build map of owned seasons
 	ownedSeasons := make(map[int]map[string]interface{})
@@ -1068,7 +1093,6 @@ func (s *Server) handleListSeasons(w http.ResponseWriter, r *http.Request) {
 
 	s.respondJSON(w, http.StatusOK, seasons)
 }
-
 
 // Search handler
 func (s *Server) handleSearch(w http.ResponseWriter, r *http.Request) {
@@ -1273,13 +1297,13 @@ func (s *Server) handleUpdateSeason(w http.ResponseWriter, r *http.Request) {
 }
 
 // handleListVoices returns all voice actor studios
-func (s *Server) handleListVoices(w http.ResponseWriter, r *http.Request) {
+func (s *Server) handleListVoices(w http.ResponseWriter, _ *http.Request) {
 	rows, err := s.db.Query(`SELECT id, name FROM voice_actors ORDER BY name`)
 	if err != nil {
 		s.respondError(w, http.StatusInternalServerError, "failed to fetch voices")
 		return
 	}
-	defer rows.Close()
+	defer rows.Close() //nolint:errcheck
 
 	voices := []map[string]interface{}{}
 	for rows.Next() {
@@ -1442,11 +1466,16 @@ func (s *Server) handleProcessAudioStream(w http.ResponseWriter, r *http.Request
 		"type":  "start",
 		"total": len(files),
 	}
-	fmt.Fprintf(w, "data: %s\n\n", mustJSON(startEvent))
+	fmt.Fprintf(w, "data: %s\n\n", mustJSON(startEvent)) //nolint:errcheck
 	flusher.Flush()
 
 	// Process files
-	sid, _ := strconv.Atoi(seriesID)
+	sid, err := strconv.Atoi(seriesID)
+	if err != nil {
+		slog.Error("Invalid series ID", "series_id", seriesID, "error", err)
+		s.respondError(w, http.StatusBadRequest, "invalid series ID")
+		return
+	}
 	successCount := 0
 	errorCount := 0
 	skippedCount := 0
@@ -1454,7 +1483,7 @@ func (s *Server) handleProcessAudioStream(w http.ResponseWriter, r *http.Request
 	for idx, filePath := range files {
 		// Check if already processed
 		var alreadyProcessed bool
-		s.db.QueryRow(`SELECT COUNT(*) > 0 FROM processed_files WHERE file_path = ?`, filePath).Scan(&alreadyProcessed)
+		_ = s.db.QueryRow(`SELECT COUNT(*) > 0 FROM processed_files WHERE file_path = ?`, filePath).Scan(&alreadyProcessed)
 
 		if alreadyProcessed {
 			skippedCount++
@@ -1466,7 +1495,7 @@ func (s *Server) handleProcessAudioStream(w http.ResponseWriter, r *http.Request
 				"current": idx + 1,
 				"total":   len(files),
 			}
-			fmt.Fprintf(w, "data: %s\n\n", mustJSON(event))
+			fmt.Fprintf(w, "data: %s\n\n", mustJSON(event)) //nolint:errcheck
 			flusher.Flush()
 			continue
 		}
@@ -1478,7 +1507,7 @@ func (s *Server) handleProcessAudioStream(w http.ResponseWriter, r *http.Request
 			"current": idx + 1,
 			"total":   len(files),
 		}
-		fmt.Fprintf(w, "data: %s\n\n", mustJSON(progressEvent))
+		fmt.Fprintf(w, "data: %s\n\n", mustJSON(progressEvent)) //nolint:errcheck
 		flusher.Flush()
 
 		// Process file
@@ -1493,7 +1522,7 @@ func (s *Server) handleProcessAudioStream(w http.ResponseWriter, r *http.Request
 				"current": idx + 1,
 				"total":   len(files),
 			}
-			fmt.Fprintf(w, "data: %s\n\n", mustJSON(event))
+			fmt.Fprintf(w, "data: %s\n\n", mustJSON(event)) //nolint:errcheck
 			flusher.Flush()
 			continue
 		}
@@ -1516,7 +1545,7 @@ func (s *Server) handleProcessAudioStream(w http.ResponseWriter, r *http.Request
 			"current": idx + 1,
 			"total":   len(files),
 		}
-		fmt.Fprintf(w, "data: %s\n\n", mustJSON(event))
+		fmt.Fprintf(w, "data: %s\n\n", mustJSON(event)) //nolint:errcheck
 		flusher.Flush()
 	}
 
@@ -1527,7 +1556,7 @@ func (s *Server) handleProcessAudioStream(w http.ResponseWriter, r *http.Request
 		"errors":  errorCount,
 		"skipped": skippedCount,
 	}
-	fmt.Fprintf(w, "data: %s\n\n", mustJSON(completeEvent))
+	fmt.Fprintf(w, "data: %s\n\n", mustJSON(completeEvent)) //nolint:errcheck
 	flusher.Flush()
 }
 

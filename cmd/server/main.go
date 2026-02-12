@@ -1,3 +1,4 @@
+// Package main is the entry point for the EpisodeX server.
 package main
 
 import (
@@ -41,7 +42,7 @@ func main() {
 		slog.Error("Failed to initialize database", "error", err)
 		os.Exit(1)
 	}
-	defer db.Close()
+	defer db.Close() //nolint:errcheck
 
 	// Initialize backup manager
 	backupManager := database.NewBackupManager(db, cfg.DBPath, cfg.BackupPath, cfg.BackupRetention)
@@ -70,7 +71,7 @@ func main() {
 	sch.AddTask(scheduler.Task{
 		Name:     "database_backup",
 		Schedule: &scheduler.DailySchedule{Hour: cfg.BackupHour},
-		Handler: func(ctx context.Context) error {
+		Handler: func(_ context.Context) error {
 			return backupManager.Backup()
 		},
 	})
@@ -79,7 +80,7 @@ func main() {
 	sch.AddTask(scheduler.Task{
 		Name:     "media_scan",
 		Schedule: &scheduler.IntervalSchedule{Interval: time.Duration(cfg.ScanIntervalHours) * time.Hour},
-		Handler: func(ctx context.Context) error {
+		Handler: func(_ context.Context) error {
 			return mediaScanner.Scan()
 		},
 	})
@@ -88,7 +89,7 @@ func main() {
 	sch.AddTask(scheduler.Task{
 		Name:     "tvdb_check",
 		Schedule: &scheduler.DailySchedule{Hour: cfg.TVDBCheckHour},
-		Handler: func(ctx context.Context) error {
+		Handler: func(_ context.Context) error {
 			if tvdbClient == nil {
 				slog.Info("TVDB check skipped - client not configured")
 				return nil
@@ -105,7 +106,7 @@ func main() {
 			if err != nil {
 				return err
 			}
-			defer rows.Close()
+			defer rows.Close() //nolint:errcheck
 
 			var checked, updated int
 
@@ -144,10 +145,12 @@ func main() {
 					newSeasons := newTotalSeasons - totalSeasons
 					message := "New seasons available for " + title
 
-					_, err = db.Exec(`
+					if _, err = db.Exec(`
 						INSERT INTO system_alerts (type, message, created_at, dismissed)
 						VALUES (?, ?, CURRENT_TIMESTAMP, 0)
-					`, "new_seasons", message)
+					`, "new_seasons", message); err != nil {
+						slog.Error("Failed to create alert", "series_id", id, "error", err)
+					}
 
 					_ = newSeasons // Use the variable to avoid compiler warning
 

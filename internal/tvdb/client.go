@@ -1,3 +1,4 @@
+// Package tvdb provides a client for the TVDB API.
 package tvdb
 
 import (
@@ -16,10 +17,10 @@ const (
 
 // Client represents a TVDB API client
 type Client struct {
-	apiKey     string
-	token      string
 	httpClient *http.Client
 	tokenExp   time.Time
+	apiKey     string
+	token      string
 }
 
 // NewClient creates a new TVDB API client
@@ -51,7 +52,7 @@ func (c *Client) Login() error {
 	if err != nil {
 		return fmt.Errorf("failed to login to TVDB: %w", err)
 	}
-	defer resp.Body.Close()
+	defer resp.Body.Close() //nolint:errcheck
 
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(resp.Body)
@@ -88,7 +89,7 @@ func (c *Client) ensureToken() error {
 }
 
 // makeRequest makes an authenticated request to TVDB API
-func (c *Client) makeRequest(method, path string, body interface{}) (*http.Response, error) {
+func (c *Client) makeRequest(method, path string, body interface{}) (*http.Response, error) { //nolint:unparam
 	if err := c.ensureToken(); err != nil {
 		return nil, err
 	}
@@ -121,14 +122,14 @@ func (c *Client) makeRequest(method, path string, body interface{}) (*http.Respo
 
 // SeriesSearchResult represents a search result from TVDB
 type SeriesSearchResult struct {
-	TVDBId       int    `json:"tvdb_id"`
-	Name         string `json:"name"`
-	Image        string `json:"image"`
-	Year         string `json:"year"`
-	Status       string `json:"status"`
-	Overview     string `json:"overview"`
-	PrimaryType  string `json:"primary_type"`
-	FirstAired   string `json:"first_aired"`
+	Name        string `json:"name"`
+	Image       string `json:"image"`
+	Year        string `json:"year"`
+	Status      string `json:"status"`
+	Overview    string `json:"overview"`
+	PrimaryType string `json:"primary_type"`
+	FirstAired  string `json:"first_aired"`
+	TVDBId      int    `json:"tvdb_id"`
 }
 
 // SearchSeries searches for series by name
@@ -137,7 +138,7 @@ func (c *Client) SearchSeries(query string) ([]SeriesSearchResult, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer resp.Body.Close()
+	defer resp.Body.Close() //nolint:errcheck
 
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(resp.Body)
@@ -147,19 +148,19 @@ func (c *Client) SearchSeries(query string) ([]SeriesSearchResult, error) {
 	var result struct {
 		Status string `json:"status"`
 		Data   []struct {
-			ObjectID    string `json:"objectID"`
+			FirstAired  string   `json:"first_air_time"`
+			ObjectID    string   `json:"objectID"`
+			Country     string   `json:"country"`
+			ID          string   `json:"id"`
+			ImageURL    string   `json:"image_url"`
+			Name        string   `json:"name"`
+			Overview    string   `json:"overview"`
+			PrimaryType string   `json:"primary_type"`
+			Status      string   `json:"status"`
+			Type        string   `json:"type"`
+			TvdbID      string   `json:"tvdb_id"`
+			Year        string   `json:"year"`
 			Aliases     []string `json:"aliases"`
-			Country     string `json:"country"`
-			ID          string `json:"id"`
-			ImageURL    string `json:"image_url"`
-			Name        string `json:"name"`
-			FirstAired  string `json:"first_air_time"`
-			Overview    string `json:"overview"`
-			PrimaryType string `json:"primary_type"`
-			Status      string `json:"status"`
-			Type        string `json:"type"`
-			TvdbID      string `json:"tvdb_id"`
-			Year        string `json:"year"`
 		} `json:"data"`
 	}
 
@@ -168,20 +169,20 @@ func (c *Client) SearchSeries(query string) ([]SeriesSearchResult, error) {
 	}
 
 	results := make([]SeriesSearchResult, 0, len(result.Data))
-	for _, item := range result.Data {
+	for i := range result.Data {
 		// Parse tvdb_id from string to int
 		var tvdbID int
-		fmt.Sscanf(item.TvdbID, "%d", &tvdbID)
+		fmt.Sscanf(result.Data[i].TvdbID, "%d", &tvdbID) //nolint:errcheck
 
 		results = append(results, SeriesSearchResult{
 			TVDBId:      tvdbID,
-			Name:        item.Name,
-			Image:       item.ImageURL,
-			Year:        item.Year,
-			Status:      item.Status,
-			Overview:    item.Overview,
-			PrimaryType: item.PrimaryType,
-			FirstAired:  item.FirstAired,
+			Name:        result.Data[i].Name,
+			Image:       result.Data[i].ImageURL,
+			Year:        result.Data[i].Year,
+			Status:      result.Data[i].Status,
+			Overview:    result.Data[i].Overview,
+			PrimaryType: result.Data[i].PrimaryType,
+			FirstAired:  result.Data[i].FirstAired,
 		})
 	}
 
@@ -190,41 +191,41 @@ func (c *Client) SearchSeries(query string) ([]SeriesSearchResult, error) {
 
 // SeriesDetails represents detailed information about a series
 type SeriesDetails struct {
-	TVDBId       int              `json:"tvdb_id"`
-	Name         string           `json:"name"`
-	Image        string           `json:"image"`
-	Status       string           `json:"status"`
-	Overview     string           `json:"overview"`
-	FirstAired   string           `json:"first_aired"`
-	LastAired    string           `json:"last_aired"`
-	OriginalName string           `json:"original_name"`
-	Seasons      []SeasonInfo     `json:"seasons"`
+	Name         string       `json:"name"`
+	Image        string       `json:"image"`
+	Status       string       `json:"status"`
+	Overview     string       `json:"overview"`
+	FirstAired   string       `json:"first_aired"`
+	LastAired    string       `json:"last_aired"`
+	OriginalName string       `json:"original_name"`
+	Seasons      []SeasonInfo `json:"seasons"`
+	TVDBId       int          `json:"tvdb_id"`
 }
 
 // SeriesExtended represents full information about a series including all metadata
 type SeriesExtended struct {
-	TVDBId           int               `json:"tvdb_id"`
-	Name             string            `json:"name"`
-	OriginalName     string            `json:"original_name"`
-	Slug             string            `json:"slug"`
-	Overview         string            `json:"overview"`
-	Image            string            `json:"image"`
-	Backdrop         string            `json:"backdrop"`
-	Status           string            `json:"status"`
-	FirstAired       string            `json:"first_aired"`
-	LastAired        string            `json:"last_aired"`
-	Year             int               `json:"year"`
-	Runtime          int               `json:"runtime"`
-	Score            float64           `json:"score"`
-	ContentRatings   []ContentRating   `json:"content_ratings"`
-	OriginalCountry  string            `json:"original_country"`
-	OriginalLanguage string            `json:"original_language"`
-	Genres           []Genre           `json:"genres"`
-	Networks         []Company         `json:"networks"`
-	Studios          []Company         `json:"studios"`
-	Characters       []Character       `json:"characters"`
-	Artworks         []Artwork         `json:"artworks"`
-	Seasons          []SeasonInfo      `json:"seasons"`
+	LastAired        string          `json:"last_aired"`
+	OriginalCountry  string          `json:"original_country"`
+	OriginalLanguage string          `json:"original_language"`
+	Overview         string          `json:"overview"`
+	FirstAired       string          `json:"first_aired"`
+	Status           string          `json:"status"`
+	Slug             string          `json:"slug"`
+	Name             string          `json:"name"`
+	OriginalName     string          `json:"original_name"`
+	Backdrop         string          `json:"backdrop"`
+	Image            string          `json:"image"`
+	Genres           []Genre         `json:"genres"`
+	Seasons          []SeasonInfo    `json:"seasons"`
+	Artworks         []Artwork       `json:"artworks"`
+	Characters       []Character     `json:"characters"`
+	ContentRatings   []ContentRating `json:"content_ratings"`
+	Studios          []Company       `json:"studios"`
+	Networks         []Company       `json:"networks"`
+	Score            float64         `json:"score"`
+	TVDBId           int             `json:"tvdb_id"`
+	Year             int             `json:"year"`
+	Runtime          int             `json:"runtime"`
 }
 
 // ContentRating represents content rating for a series
@@ -235,77 +236,77 @@ type ContentRating struct {
 
 // Genre represents a genre
 type Genre struct {
-	ID   int    `json:"id"`
 	Name string `json:"name"`
 	Slug string `json:"slug"`
+	ID   int    `json:"id"`
 }
 
 // Company represents a network or studio
 type Company struct {
-	ID   int    `json:"id"`
 	Name string `json:"name"`
 	Slug string `json:"slug"`
+	ID   int    `json:"id"`
 }
 
 // Character represents a character and actor
 type Character struct {
-	ID         int    `json:"id"`
 	Name       string `json:"name"`
 	PersonName string `json:"person_name"`
 	Image      string `json:"image"`
+	ID         int    `json:"id"`
 	Sort       int    `json:"sort"`
 }
 
 // Artwork represents artwork (poster, background, banner, etc.)
 type Artwork struct {
-	ID        int     `json:"id"`
-	Type      int     `json:"type"`
 	TypeName  string  `json:"type_name"`
 	URL       string  `json:"url"`
 	Thumbnail string  `json:"thumbnail"`
 	Language  string  `json:"language"`
 	Score     float64 `json:"score"`
+	ID        int     `json:"id"`
+	Type      int     `json:"type"`
 	Width     int     `json:"width"`
 	Height    int     `json:"height"`
 }
 
 // SeasonInfo represents information about a season
 type SeasonInfo struct {
-	ID     int    `json:"id"`
-	Number int    `json:"number"`
 	Name   string `json:"name"`
 	Type   string `json:"type"`
 	Year   string `json:"year"`
 	Image  string `json:"image"`
+	ID     int    `json:"id"`
+	Number int    `json:"number"`
 }
 
 // SeasonExtended represents detailed information about a season with episodes
 type SeasonExtended struct {
-	ID         int       `json:"id"`
-	Number     int       `json:"number"`
 	Name       string    `json:"name"`
 	Overview   string    `json:"overview"`
 	Image      string    `json:"image"`
 	FirstAired string    `json:"first_aired"`
 	Episodes   []Episode `json:"episodes"`
+	ID         int       `json:"id"`
+	Number     int       `json:"number"`
 }
 
 // Episode represents an episode
 type Episode struct {
-	ID       int     `json:"id"`
-	Number   int     `json:"number"`
 	Name     string  `json:"name"`
 	Overview string  `json:"overview"`
 	Image    string  `json:"image"`
 	AirDate  string  `json:"air_date"`
-	Runtime  int     `json:"runtime"`
 	Rating   float64 `json:"rating"`
+	ID       int     `json:"id"`
+	Number   int     `json:"number"`
+	Runtime  int     `json:"runtime"`
 }
 
 // ArtworkType represents an artwork type definition
 type ArtworkType struct {
-	ID   int    `json:"id"`
 	Name string `json:"name"`
+	ID   int    `json:"id"`
 }
 
 // GetSeriesDetails fetches detailed information about a series
@@ -314,7 +315,7 @@ func (c *Client) GetSeriesDetails(tvdbID int) (*SeriesDetails, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer resp.Body.Close()
+	defer resp.Body.Close() //nolint:errcheck
 
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(resp.Body)
@@ -324,27 +325,27 @@ func (c *Client) GetSeriesDetails(tvdbID int) (*SeriesDetails, error) {
 	var result struct {
 		Status string `json:"status"`
 		Data   struct {
-			ID       int    `json:"id"`
-			Name     string `json:"name"`
-			Image    string `json:"image"`
-			Status   struct {
+			Status struct {
 				Name string `json:"name"`
 			} `json:"status"`
+			Name         string `json:"name"`
+			Image        string `json:"image"`
 			Overview     string `json:"overview"`
 			FirstAired   string `json:"firstAired"`
 			LastAired    string `json:"lastAired"`
 			OriginalName string `json:"originalName"`
 			Seasons      []struct {
-				ID     int    `json:"id"`
-				Number int    `json:"number"`
-				Name   string `json:"name"`
-				Year   string `json:"year"`
-				Image  string `json:"image"`
-				Type   struct {
+				Type struct {
 					Name string `json:"name"`
 					Type string `json:"type"`
 				} `json:"type"`
+				Name   string `json:"name"`
+				Year   string `json:"year"`
+				Image  string `json:"image"`
+				ID     int    `json:"id"`
+				Number int    `json:"number"`
 			} `json:"seasons"`
+			ID int `json:"id"`
 		} `json:"data"`
 	}
 
@@ -397,7 +398,7 @@ func (c *Client) GetSeriesExtendedFull(tvdbID int) (*SeriesExtended, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer resp.Body.Close()
+	defer resp.Body.Close() //nolint:errcheck
 
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(resp.Body)
@@ -407,68 +408,68 @@ func (c *Client) GetSeriesExtendedFull(tvdbID int) (*SeriesExtended, error) {
 	var result struct {
 		Status string `json:"status"`
 		Data   struct {
-			ID       int    `json:"id"`
-			Name     string `json:"name"`
-			Slug     string `json:"slug"`
-			Image    string `json:"image"`
-			Status   struct {
+			OriginalCountry  string `json:"originalCountry"`
+			FirstAired       string `json:"firstAired"`
+			OriginalLanguage string `json:"originalLanguage"`
+			Year             string `json:"year"`
+			OriginalName     string `json:"originalName"`
+			Slug             string `json:"slug"`
+			Status           struct {
 				Name string `json:"name"`
 			} `json:"status"`
-			Overview       string `json:"overview"`
-			FirstAired     string `json:"firstAired"`
-			LastAired      string `json:"lastAired"`
-			OriginalName   string `json:"originalName"`
-			Year           string `json:"year"`
-			Score          float64 `json:"score"`
-			AverageRuntime int    `json:"averageRuntime"`
-			OriginalCountry string `json:"originalCountry"`
-			OriginalLanguage string `json:"originalLanguage"`
-			ContentRatings []struct {
-				Name    string `json:"name"`
-				Country string `json:"country"`
-			} `json:"contentRatings"`
+			Name      string `json:"name"`
+			Image     string `json:"image"`
+			Overview  string `json:"overview"`
+			LastAired string `json:"lastAired"`
+			Seasons   []struct {
+				Type struct {
+					Name string `json:"name"`
+					Type string `json:"type"`
+				} `json:"type"`
+				Name   string `json:"name"`
+				Year   string `json:"year"`
+				Image  string `json:"image"`
+				ID     int    `json:"id"`
+				Number int    `json:"number"`
+			} `json:"seasons"`
 			Genres []struct {
-				ID   int    `json:"id"`
 				Name string `json:"name"`
 				Slug string `json:"slug"`
+				ID   int    `json:"id"`
 			} `json:"genres"`
-			Companies []struct {
-				ID   int    `json:"id"`
-				Name string `json:"name"`
-				Slug string `json:"slug"`
-				CompanyType struct {
-					CompanyTypeName string `json:"companyTypeName"`
-				} `json:"companyType"`
-			} `json:"companies"`
-			Characters []struct {
-				ID         int    `json:"id"`
-				Name       string `json:"name"`
-				PersonName string `json:"personName"`
-				Image      string `json:"image"`
-				Sort       int    `json:"sort"`
-			} `json:"characters"`
 			Artworks []struct {
-				ID        int     `json:"id"`
-				Type      int     `json:"type"`
 				TypeName  string  `json:"typeName"`
 				Image     string  `json:"image"`
 				Thumbnail string  `json:"thumbnail"`
 				Language  string  `json:"language"`
 				Score     float64 `json:"score"`
+				ID        int     `json:"id"`
+				Type      int     `json:"type"`
 				Width     int     `json:"width"`
 				Height    int     `json:"height"`
 			} `json:"artworks"`
-			Seasons []struct {
-				ID     int    `json:"id"`
-				Number int    `json:"number"`
-				Name   string `json:"name"`
-				Year   string `json:"year"`
-				Image  string `json:"image"`
-				Type   struct {
-					Name string `json:"name"`
-					Type string `json:"type"`
-				} `json:"type"`
-			} `json:"seasons"`
+			Characters []struct {
+				Name       string `json:"name"`
+				PersonName string `json:"personName"`
+				Image      string `json:"image"`
+				ID         int    `json:"id"`
+				Sort       int    `json:"sort"`
+			} `json:"characters"`
+			ContentRatings []struct {
+				Name    string `json:"name"`
+				Country string `json:"country"`
+			} `json:"contentRatings"`
+			Companies []struct {
+				CompanyType struct {
+					CompanyTypeName string `json:"companyTypeName"`
+				} `json:"companyType"`
+				Name string `json:"name"`
+				Slug string `json:"slug"`
+				ID   int    `json:"id"`
+			} `json:"companies"`
+			Score          float64 `json:"score"`
+			ID             int     `json:"id"`
+			AverageRuntime int     `json:"averageRuntime"`
 		} `json:"data"`
 	}
 
@@ -479,7 +480,7 @@ func (c *Client) GetSeriesExtendedFull(tvdbID int) (*SeriesExtended, error) {
 	// Parse year from string
 	var year int
 	if result.Data.Year != "" {
-		fmt.Sscanf(result.Data.Year, "%d", &year)
+		fmt.Sscanf(result.Data.Year, "%d", &year) //nolint:errcheck
 	}
 
 	extended := &SeriesExtended{
@@ -537,9 +538,10 @@ func (c *Client) GetSeriesExtendedFull(tvdbID int) (*SeriesExtended, error) {
 			Name: comp.Name,
 			Slug: comp.Slug,
 		}
-		if comp.CompanyType.CompanyTypeName == "Network" {
+		switch comp.CompanyType.CompanyTypeName {
+		case "Network":
 			extended.Networks = append(extended.Networks, company)
-		} else if comp.CompanyType.CompanyTypeName == "Studio" {
+		case "Studio":
 			extended.Studios = append(extended.Studios, company)
 		}
 	}
@@ -598,7 +600,7 @@ func (c *Client) GetSeasonEpisodes(tvdbSeasonID int) ([]Episode, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer resp.Body.Close()
+	defer resp.Body.Close() //nolint:errcheck
 
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(resp.Body)
@@ -609,15 +611,15 @@ func (c *Client) GetSeasonEpisodes(tvdbSeasonID int) ([]Episode, error) {
 		Status string `json:"status"`
 		Data   struct {
 			Episodes []struct {
-				ID              int     `json:"id"`
-				Number          int     `json:"number"`
-				Name            string  `json:"name"`
-				Overview        string  `json:"overview"`
-				Image           string  `json:"image"`
-				Aired           string  `json:"aired"`
-				Runtime         int     `json:"runtime"`
-				AverageRuntime  int     `json:"averageRuntime"`
-				Score           float64 `json:"score"`
+				Name           string  `json:"name"`
+				Overview       string  `json:"overview"`
+				Image          string  `json:"image"`
+				Aired          string  `json:"aired"`
+				Score          float64 `json:"score"`
+				ID             int     `json:"id"`
+				Number         int     `json:"number"`
+				Runtime        int     `json:"runtime"`
+				AverageRuntime int     `json:"averageRuntime"`
 			} `json:"episodes"`
 		} `json:"data"`
 	}
@@ -669,7 +671,7 @@ func (c *Client) GetSeriesTranslation(tvdbID int, language string) (*SeriesTrans
 	if err != nil {
 		return nil, err
 	}
-	defer resp.Body.Close()
+	defer resp.Body.Close() //nolint:errcheck
 
 	if resp.StatusCode != http.StatusOK {
 		// Translation not found is not an error, just return nil
@@ -719,11 +721,7 @@ func (c *Client) GetSeriesDetailsWithRussian(tvdbID int) (*SeriesDetails, error)
 	englishOverview := details.Overview
 
 	// Try to get Russian translation
-	rusTrans, err := c.GetSeriesTranslation(tvdbID, "rus")
-	if err != nil {
-		// Log error but continue with English
-		// Non-critical: just use English names
-	}
+	rusTrans, _ := c.GetSeriesTranslation(tvdbID, "rus") // Non-critical: just use English names
 
 	if rusTrans != nil && rusTrans.Name != "" {
 		// Use Russian name as primary

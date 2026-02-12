@@ -1,3 +1,4 @@
+// Package scheduler manages background task scheduling.
 package scheduler
 
 import (

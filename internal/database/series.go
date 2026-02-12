@@ -2,16 +2,13 @@ package database
 
 import (
 	"database/sql"
-	"encoding/json"
 	"fmt"
 	"log/slog"
 )
 
 // Series represents a TV series with full metadata
 type Series struct {
-	ID               int64
 	TVDBId           *int
-	Title            string
 	OriginalTitle    *string
 	Slug             *string
 	Overview         *string
@@ -29,71 +26,73 @@ type Series struct {
 	Genres           *string // JSON array
 	Networks         *string // JSON array
 	Studios          *string // JSON array
+	Title            string
+	ID               int64
 	TotalSeasons     int
 }
 
 // Season represents a season of a series
 type Season struct {
-	ID             int64
-	SeriesID       int64
-	TVDBSeasonID   *int
-	SeasonNumber   int
-	Name           *string
-	Overview       *string
-	PosterURL      *string
-	FirstAired     *string
-	EpisodeCount   *int
-	FolderPath     *string
-	VoiceActorID   *int
-	IsOwned        bool
-	DiscoveredAt   *string
+	TVDBSeasonID *int
+	Name         *string
+	Overview     *string
+	PosterURL    *string
+	FirstAired   *string
+	EpisodeCount *int
+	FolderPath   *string
+	VoiceActorID *int
+	DiscoveredAt *string
+	ID           int64
+	SeriesID     int64
+	SeasonNumber int
+	IsOwned      bool
 }
 
 // Episode represents an episode
 type Episode struct {
-	ID              int64
-	SeasonID        int64
-	TVDBEpisodeID   *int
-	EpisodeNumber   int
-	Title           *string
-	Overview        *string
-	ImageURL        *string
-	AirDate         *string
-	Runtime         *int
-	Rating          *float64
-	FilePath        *string
-	FileHash        *string
-	FileSize        *int64
-	IsOwned         bool
-	WatchedAt       *string
+	TVDBEpisodeID *int
+	Title         *string
+	Overview      *string
+	ImageURL      *string
+	AirDate       *string
+	Runtime       *int
+	Rating        *float64
+	FilePath      *string
+	FileHash      *string
+	FileSize      *int64
+	WatchedAt     *string
+	ID            int64
+	SeasonID      int64
+	EpisodeNumber int
+	IsOwned       bool
 }
 
 // Character represents a character in a series
 type Character struct {
-	ID              int64
-	SeriesID        int64
 	TVDBCharacterID *int
 	TVDBPersonID    *int
 	CharacterName   *string
 	ActorName       *string
 	ImageURL        *string
 	SortOrder       *int
+	ID              int64
+	SeriesID        int64
 }
 
 // Artwork represents artwork for series or season
 type Artwork struct {
-	ID             int64
-	SeriesID       *int64
-	SeasonID       *int64
-	TVDBArtworkID  *int
-	Type           *string
-	URL            string
-	ThumbnailURL   *string
-	Language       *string
-	Score          *float64
-	Width          *int
-	Height         *int
-	IsPrimary      bool
+	SeriesID      *int64
+	SeasonID      *int64
+	TVDBArtworkID *int
+	Type          *string
+	ThumbnailURL  *string
+	Language      *string
+	Score         *float64
+	Width         *int
+	Height        *int
+	URL           string
+	ID            int64
+	IsPrimary     bool
 }
 
 // UpsertSeries creates or updates a series with full metadata
@@ -310,7 +309,7 @@ func (db *DB) UpsertCharacters(seriesID int64, characters []Character) error {
 	if err != nil {
 		return fmt.Errorf("failed to prepare character insert: %w", err)
 	}
-	defer stmt.Close()
+	defer stmt.Close() //nolint:errcheck // closing prepared statement
 
 	for _, char := range characters {
 		_, err := stmt.Exec(
@@ -337,7 +336,7 @@ func (db *DB) UpsertArtworks(artworks []Artwork) error {
 	if err != nil {
 		return fmt.Errorf("failed to prepare artwork insert: %w", err)
 	}
-	defer stmt.Close()
+	defer stmt.Close() //nolint:errcheck // closing prepared statement
 
 	for _, art := range artworks {
 		_, err := stmt.Exec(
@@ -351,24 +350,4 @@ func (db *DB) UpsertArtworks(artworks []Artwork) error {
 	}
 
 	return nil
-}
-
-// Helper function to convert slice to JSON string
-func toJSONString(v interface{}) (*string, error) {
-	if v == nil {
-		return nil, nil
-	}
-
-	data, err := json.Marshal(v)
-	if err != nil {
-		return nil, err
-	}
-
-	result := string(data)
-	return &result, nil
-}
-
-// Helper to check if string pointer is empty
-func isEmptyString(s *string) bool {
-	return s == nil || *s == ""
 }

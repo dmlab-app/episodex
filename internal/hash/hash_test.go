@@ -18,7 +18,7 @@ func TestComputeFileHash(t *testing.T) {
 		testData[i] = byte(i % 256)
 	}
 
-	err := os.WriteFile(testFile, testData, 0644)
+	err := os.WriteFile(testFile, testData, 0o644)
 	if err != nil {
 		t.Fatalf("Failed to create test file: %v", err)
 	}
@@ -54,7 +54,7 @@ func TestHashChangesOnFileModification(t *testing.T) {
 
 	// Create original file
 	original := []byte("Original content at the beginning" + string(make([]byte, 100*1024)) + "Original content at the end")
-	err := os.WriteFile(testFile, original, 0644)
+	err := os.WriteFile(testFile, original, 0o644)
 	if err != nil {
 		t.Fatalf("Failed to create test file: %v", err)
 	}
@@ -69,7 +69,7 @@ func TestHashChangesOnFileModification(t *testing.T) {
 
 	// Modify file content
 	modified := []byte("MODIFIED content at the beginning" + string(make([]byte, 100*1024)) + "MODIFIED content at the end")
-	err = os.WriteFile(testFile, modified, 0644)
+	err = os.WriteFile(testFile, modified, 0o644)
 	if err != nil {
 		t.Fatalf("Failed to modify test file: %v", err)
 	}
@@ -90,7 +90,7 @@ func TestHashChangesOnSizeChange(t *testing.T) {
 
 	// Create small file
 	small := make([]byte, 50*1024)
-	err := os.WriteFile(testFile, small, 0644)
+	err := os.WriteFile(testFile, small, 0o644)
 	if err != nil {
 		t.Fatalf("Failed to create test file: %v", err)
 	}
@@ -106,7 +106,7 @@ func TestHashChangesOnSizeChange(t *testing.T) {
 	// Create larger file with same beginning
 	large := make([]byte, 150*1024)
 	copy(large, small)
-	err = os.WriteFile(testFile, large, 0644)
+	err = os.WriteFile(testFile, large, 0o644)
 	if err != nil {
 		t.Fatalf("Failed to resize test file: %v", err)
 	}
@@ -129,9 +129,9 @@ func TestComputeMultiFileHash(t *testing.T) {
 	file2 := filepath.Join(tempDir, "episode2.mkv")
 	file3 := filepath.Join(tempDir, "episode3.mkv")
 
-	os.WriteFile(file1, []byte("Episode 1 content"), 0644)
-	os.WriteFile(file2, []byte("Episode 2 content"), 0644)
-	os.WriteFile(file3, []byte("Episode 3 content"), 0644)
+	os.WriteFile(file1, []byte("Episode 1 content"), 0o644)
+	os.WriteFile(file2, []byte("Episode 2 content"), 0o644)
+	os.WriteFile(file3, []byte("Episode 3 content"), 0o644)
 
 	// Compute combined hash
 	hash1, err := ComputeMultiFileHash([]string{file1, file2, file3})
@@ -155,7 +155,7 @@ func TestComputeMultiFileHash(t *testing.T) {
 
 	// Modify one file
 	time.Sleep(10 * time.Millisecond)
-	os.WriteFile(file2, []byte("MODIFIED Episode 2 content"), 0644)
+	os.WriteFile(file2, []byte("MODIFIED Episode 2 content"), 0o644)
 
 	// Hash should change
 	hash3, err := ComputeMultiFileHash([]string{file1, file2, file3})
@@ -174,7 +174,7 @@ func TestHasChanged(t *testing.T) {
 
 	// Create file
 	content := []byte("Test content for change detection")
-	err := os.WriteFile(testFile, content, 0644)
+	err := os.WriteFile(testFile, content, 0o644)
 	if err != nil {
 		t.Fatalf("Failed to create test file: %v", err)
 	}
@@ -198,7 +198,7 @@ func TestHasChanged(t *testing.T) {
 	// Modify file
 	time.Sleep(10 * time.Millisecond)
 	modified := []byte("MODIFIED content for change detection")
-	err = os.WriteFile(testFile, modified, 0644)
+	err = os.WriteFile(testFile, modified, 0o644)
 	if err != nil {
 		t.Fatalf("Failed to modify test file: %v", err)
 	}
@@ -220,7 +220,7 @@ func TestSmallFileHashing(t *testing.T) {
 
 	// Create file smaller than ChunkSize
 	content := []byte("Small file content")
-	err := os.WriteFile(testFile, content, 0644)
+	err := os.WriteFile(testFile, content, 0o644)
 	if err != nil {
 		t.Fatalf("Failed to create test file: %v", err)
 	}
@@ -249,8 +249,7 @@ func BenchmarkComputeFileHash(b *testing.B) {
 	for i := range largeData {
 		largeData[i] = byte(i % 256)
 	}
-	os.WriteFile(testFile, largeData, 0644)
-
+	os.WriteFile(testFile, largeData, 0o644)
 	b.ResetTimer()
 
 	for i := 0; i < b.N; i++ {

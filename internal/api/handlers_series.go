@@ -5,221 +5,11 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
-	"time"
+
+	"github.com/go-chi/chi/v5"
 
 	"github.com/episodex/episodex/internal/database"
-	"github.com/go-chi/chi/v5"
 )
-
-// handleGetSeriesExtended returns extended series information with all metadata
-func (s *Server) handleGetSeriesExtended(w http.ResponseWriter, r *http.Request) {
-	id := chi.URLParam(r, "id")
-
-	// Get series basic info
-	query := `
-		SELECT id, tvdb_id, title, original_title, slug, overview,
-			poster_url, backdrop_url, status, first_aired, last_aired,
-			year, runtime, rating, content_rating,
-			original_country, original_language,
-			genres, networks, studios, total_seasons, created_at
-		FROM series
-		WHERE id = ?
-	`
-
-	var series struct {
-		ID               int
-		TVDBId           *int
-		Title            string
-		OriginalTitle    *string
-		Slug             *string
-		Overview         *string
-		PosterURL        *string
-		BackdropURL      *string
-		Status           *string
-		FirstAired       *string
-		LastAired        *string
-		Year             *int
-		Runtime          *int
-		Rating           *float64
-		ContentRating    *string
-		OriginalCountry  *string
-		OriginalLanguage *string
-		Genres           *string
-		Networks         *string
-		Studios          *string
-		TotalSeasons     int
-		CreatedAt        time.Time
-	}
-
-	err := s.db.QueryRow(query, id).Scan(
-		&series.ID, &series.TVDBId, &series.Title, &series.OriginalTitle,
-		&series.Slug, &series.Overview, &series.PosterURL, &series.BackdropURL,
-		&series.Status, &series.FirstAired, &series.LastAired,
-		&series.Year, &series.Runtime, &series.Rating, &series.ContentRating,
-		&series.OriginalCountry, &series.OriginalLanguage,
-		&series.Genres, &series.Networks, &series.Studios,
-		&series.TotalSeasons, &series.CreatedAt,
-	)
-
-	if err != nil {
-		s.respondError(w, http.StatusNotFound, "series not found")
-		return
-	}
-
-	// Get seasons
-	seasonsQuery := `
-		SELECT id, season_number, name, overview, poster_url,
-			first_aired, episode_count, folder_path, is_owned, discovered_at
-		FROM seasons
-		WHERE series_id = ?
-		ORDER BY season_number
-	`
-
-	seasonsRows, err := s.db.Query(seasonsQuery, id)
-	if err != nil {
-		s.respondError(w, http.StatusInternalServerError, "failed to fetch seasons")
-		return
-	}
-	defer seasonsRows.Close()
-
-	seasons := []map[string]interface{}{}
-	for seasonsRows.Next() {
-		var seasonID int64
-		var seasonNum int
-		var name, overview, posterURL, firstAired, folderPath *string
-		var episodeCount *int
-		var isOwned bool
-		var discoveredAt *time.Time
-
-		if err := seasonsRows.Scan(&seasonID, &seasonNum, &name, &overview, &posterURL,
-			&firstAired, &episodeCount, &folderPath, &isOwned, &discoveredAt); err != nil {
-			continue
-		}
-
-		season := map[string]interface{}{
-			"id":            seasonID,
-			"season_number": seasonNum,
-			"is_owned":      isOwned,
-		}
-
-		if name != nil {
-			season["name"] = *name
-		}
-		if overview != nil {
-			season["overview"] = *overview
-		}
-		if posterURL != nil {
-			season["poster_url"] = *posterURL
-		}
-		if firstAired != nil {
-			season["first_aired"] = *firstAired
-		}
-		if episodeCount != nil {
-			season["episode_count"] = *episodeCount
-		}
-		if folderPath != nil {
-			season["folder_path"] = *folderPath
-		}
-		if discoveredAt != nil {
-			season["discovered_at"] = *discoveredAt
-		}
-
-		seasons = append(seasons, season)
-	}
-
-	// Get characters
-	charactersQuery := `
-		SELECT character_name, actor_name, image_url, sort_order
-		FROM series_characters
-		WHERE series_id = ?
-		ORDER BY sort_order
-		LIMIT 10
-	`
-
-	charactersRows, err := s.db.Query(charactersQuery, id)
-	if err == nil {
-		defer charactersRows.Close()
-
-		// Characters will be added to response separately
-	}
-
-	// Build response
-	response := map[string]interface{}{
-		"id":            series.ID,
-		"title":         series.Title,
-		"total_seasons": series.TotalSeasons,
-		"seasons":       seasons,
-		"created_at":    series.CreatedAt,
-	}
-
-	if series.TVDBId != nil {
-		response["tvdb_id"] = *series.TVDBId
-	}
-	if series.OriginalTitle != nil {
-		response["original_title"] = *series.OriginalTitle
-	}
-	if series.Slug != nil {
-		response["slug"] = *series.Slug
-	}
-	if series.Overview != nil {
-		response["overview"] = *series.Overview
-	}
-	if series.PosterURL != nil {
-		response["poster_url"] = *series.PosterURL
-	}
-	if series.BackdropURL != nil {
-		response["backdrop_url"] = *series.BackdropURL
-	}
-	if series.Status != nil {
-		response["status"] = *series.Status
-	}
-	if series.FirstAired != nil {
-		response["first_aired"] = *series.FirstAired
-	}
-	if series.LastAired != nil {
-		response["last_aired"] = *series.LastAired
-	}
-	if series.Year != nil {
-		response["year"] = *series.Year
-	}
-	if series.Runtime != nil {
-		response["runtime"] = *series.Runtime
-	}
-	if series.Rating != nil {
-		response["rating"] = *series.Rating
-	}
-	if series.ContentRating != nil {
-		response["content_rating"] = *series.ContentRating
-	}
-	if series.OriginalCountry != nil {
-		response["original_country"] = *series.OriginalCountry
-	}
-	if series.OriginalLanguage != nil {
-		response["original_language"] = *series.OriginalLanguage
-	}
-
-	// Parse JSON fields
-	if series.Genres != nil {
-		var genres []interface{}
-		if err := json.Unmarshal([]byte(*series.Genres), &genres); err == nil {
-			response["genres"] = genres
-		}
-	}
-	if series.Networks != nil {
-		var networks []interface{}
-		if err := json.Unmarshal([]byte(*series.Networks), &networks); err == nil {
-			response["networks"] = networks
-		}
-	}
-	if series.Studios != nil {
-		var studios []interface{}
-		if err := json.Unmarshal([]byte(*series.Studios), &studios); err == nil {
-			response["studios"] = studios
-		}
-	}
-
-	s.respondJSON(w, http.StatusOK, response)
-}
 
 // handleSyncSeriesFromTVDB syncs series metadata from TVDB
 func (s *Server) handleSyncSeriesFromTVDB(w http.ResponseWriter, r *http.Request) {
@@ -263,9 +53,21 @@ func (s *Server) handleSyncSeriesFromTVDB(w http.ResponseWriter, r *http.Request
 	}
 
 	// Convert arrays to JSON
-	genresJSON, _ := json.Marshal(extended.Genres)
-	networksJSON, _ := json.Marshal(extended.Networks)
-	studiosJSON, _ := json.Marshal(extended.Studios)
+	genresJSON, err := json.Marshal(extended.Genres)
+	if err != nil {
+		slog.Error("Failed to marshal genres", "error", err)
+		genresJSON = []byte("[]")
+	}
+	networksJSON, err := json.Marshal(extended.Networks)
+	if err != nil {
+		slog.Error("Failed to marshal networks", "error", err)
+		networksJSON = []byte("[]")
+	}
+	studiosJSON, err := json.Marshal(extended.Studios)
+	if err != nil {
+		slog.Error("Failed to marshal studios", "error", err)
+		studiosJSON = []byte("[]")
+	}
 
 	genres := string(genresJSON)
 	networks := string(networksJSON)

@@ -88,7 +88,7 @@ func TestHandleListSeries_ReturnsCorrectSeasonCounts(t *testing.T) {
 	seedSeason(t, db, id2, 2, "", false, nil)
 
 	// Make request
-	req := httptest.NewRequest(http.MethodGet, "/api/series", nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/series", http.NoBody)
 	w := httptest.NewRecorder()
 	srv.router.ServeHTTP(w, req)
 
@@ -139,7 +139,7 @@ func TestHandleGetSeries_ReturnsSeasonsWithVoiceActors(t *testing.T) {
 	seedSeason(t, db, seriesID, 2, "/media/bb/s02", true, nil)
 
 	// Make request
-	req := httptest.NewRequest(http.MethodGet, "/api/series/1", nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/series/1", http.NoBody)
 	w := httptest.NewRecorder()
 	srv.router.ServeHTTP(w, req)
 
@@ -185,7 +185,7 @@ func TestHandleGetSeries_ReturnsSeasonsWithVoiceActors(t *testing.T) {
 func TestHandleGetSeries_NotFound(t *testing.T) {
 	srv, _ := setupTestServer(t)
 
-	req := httptest.NewRequest(http.MethodGet, "/api/series/999", nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/series/999", http.NoBody)
 	w := httptest.NewRecorder()
 	srv.router.ServeHTTP(w, req)
 
@@ -206,7 +206,7 @@ func TestHandleListSeasons_OwnedVsLocked(t *testing.T) {
 	seedSeason(t, db, seriesID, 1, "/media/bb/s01", true, &amediaID)
 	seedSeason(t, db, seriesID, 3, "/media/bb/s03", true, nil)
 
-	req := httptest.NewRequest(http.MethodGet, "/api/series/1/seasons", nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/series/1/seasons", http.NoBody)
 	w := httptest.NewRecorder()
 	srv.router.ServeHTTP(w, req)
 
@@ -255,7 +255,7 @@ func TestHandleListSeasons_OwnedVsLocked(t *testing.T) {
 func TestHandleListSeasons_SeriesNotFound(t *testing.T) {
 	srv, _ := setupTestServer(t)
 
-	req := httptest.NewRequest(http.MethodGet, "/api/series/999/seasons", nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/series/999/seasons", http.NoBody)
 	w := httptest.NewRecorder()
 	srv.router.ServeHTTP(w, req)
 
@@ -297,7 +297,7 @@ func seedCharacters(t *testing.T, db *database.DB, seriesID int64) {
 	t.Helper()
 	chars := []struct {
 		name, actor, image string
-		sort              int
+		sort               int
 	}{
 		{"Walter White", "Bryan Cranston", "https://img/walter.jpg", 1},
 		{"Jesse Pinkman", "Aaron Paul", "https://img/jesse.jpg", 2},
@@ -332,7 +332,7 @@ func TestHandleGetSeries_ReturnsFullMetadata(t *testing.T) {
 	seriesID := seedSeriesWithMetadata(t, db)
 	seedSeason(t, db, seriesID, 1, "/media/bb/s01", true, nil)
 
-	req := httptest.NewRequest(http.MethodGet, fmt.Sprintf("/api/series/%d", seriesID), nil)
+	req := httptest.NewRequest(http.MethodGet, fmt.Sprintf("/api/series/%d", seriesID), http.NoBody)
 	w := httptest.NewRecorder()
 	srv.router.ServeHTTP(w, req)
 
@@ -404,10 +404,8 @@ func TestHandleGetSeries_ReturnsFullMetadata(t *testing.T) {
 	genres, ok := result["genres"].([]interface{})
 	if !ok || len(genres) != 2 {
 		t.Errorf("genres: expected array of 2, got %v", result["genres"])
-	} else {
-		if genres[0] != "Drama" || genres[1] != "Thriller" {
-			t.Errorf("genres: expected [Drama, Thriller], got %v", genres)
-		}
+	} else if genres[0] != "Drama" || genres[1] != "Thriller" {
+		t.Errorf("genres: expected [Drama, Thriller], got %v", genres)
 	}
 
 	networks, ok := result["networks"].([]interface{})
@@ -436,7 +434,7 @@ func TestHandleGetSeries_IncludesCharacters(t *testing.T) {
 	seriesID := seedSeriesWithMetadata(t, db)
 	seedCharacters(t, db, seriesID)
 
-	req := httptest.NewRequest(http.MethodGet, fmt.Sprintf("/api/series/%d", seriesID), nil)
+	req := httptest.NewRequest(http.MethodGet, fmt.Sprintf("/api/series/%d", seriesID), http.NoBody)
 	w := httptest.NewRecorder()
 	srv.router.ServeHTTP(w, req)
 
@@ -493,7 +491,7 @@ func TestHandleGetSeries_ArtworkFallback(t *testing.T) {
 	seedArtwork(t, db, seriesID, "poster", "https://art/fallback-poster.jpg", 8.0)
 	seedArtwork(t, db, seriesID, "background", "https://art/fallback-backdrop.jpg", 7.5)
 
-	req := httptest.NewRequest(http.MethodGet, fmt.Sprintf("/api/series/%d", seriesID), nil)
+	req := httptest.NewRequest(http.MethodGet, fmt.Sprintf("/api/series/%d", seriesID), http.NoBody)
 	w := httptest.NewRecorder()
 	srv.router.ServeHTTP(w, req)
 
@@ -618,7 +616,7 @@ func TestHandleUpdateSeason_SeasonNotFound(t *testing.T) {
 func TestHandleListVoices(t *testing.T) {
 	srv, _ := setupTestServer(t)
 
-	req := httptest.NewRequest(http.MethodGet, "/api/voices", nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/voices", http.NoBody)
 	w := httptest.NewRecorder()
 	srv.router.ServeHTTP(w, req)
 

@@ -117,14 +117,14 @@ The project has a split-brain problem: the scanner writes to the `seasons` table
 - [x] No code tests needed (frontend-only), manual verification
 
 ### Task 8: Verify acceptance criteria
-- [ ] Verify: clicking on any owned season opens season detail without errors
-- [ ] Verify: audio tracks load correctly for seasons with MKV files
-- [ ] Verify: voice selection saves and displays correctly
-- [ ] Verify: series detail shows full metadata (overview, genres, year, rating, characters)
-- [ ] Verify: entire UI is consistent Plex dark theme (no white panels, no style mismatches)
-- [ ] Verify: updates page correctly shows new seasons
-- [ ] Run full test suite `make test`
-- [ ] Run linter `make lint` — all issues must be fixed
+- [x] Verify: clicking on any owned season opens season detail without errors
+- [x] Verify: audio tracks load correctly for seasons with MKV files
+- [x] Verify: voice selection saves and displays correctly
+- [x] Verify: series detail shows full metadata (overview, genres, year, rating, characters)
+- [x] Verify: entire UI is consistent Plex dark theme (no white panels, no style mismatches)
+- [x] Verify: updates page correctly shows new seasons
+- [x] Run full test suite `make test`
+- [x] Run linter `make lint` — all issues must be fixed
 
 ### Task 9: [Final] Update documentation
 - [ ] Update CLAUDE.md: remove "Not Yet Implemented" items that are now done, update API endpoints list

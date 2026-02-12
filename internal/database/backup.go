@@ -33,7 +33,7 @@ func NewBackupManager(db *DB, dbPath, backupPath string, retention int) *BackupM
 // Backup performs a full database backup
 func (bm *BackupManager) Backup() error {
 	// Ensure backup directory exists
-	if err := os.MkdirAll(bm.backupPath, 0755); err != nil {
+	if err := os.MkdirAll(bm.backupPath, 0o755); err != nil {
 		return fmt.Errorf("failed to create backup directory: %w", err)
 	}
 
@@ -88,13 +88,13 @@ func (bm *BackupManager) copyFile(src, dst string) error {
 	if err != nil {
 		return err
 	}
-	defer sourceFile.Close()
+	defer sourceFile.Close() //nolint:errcheck // closing read-only file
 
 	destFile, err := os.Create(dst)
 	if err != nil {
 		return err
 	}
-	defer destFile.Close()
+	defer destFile.Close() //nolint:errcheck // file synced explicitly below
 
 	if _, err := io.Copy(destFile, sourceFile); err != nil {
 		return err
@@ -110,7 +110,7 @@ func (bm *BackupManager) checkIntegrity(backupFile string) (bool, error) {
 	if err != nil {
 		return false, err
 	}
-	defer db.Close()
+	defer db.Close() //nolint:errcheck // closing temporary integrity-check connection
 
 	var result string
 	err = db.QueryRow("PRAGMA integrity_check").Scan(&result)
@@ -202,7 +202,7 @@ func (bm *BackupManager) GetBackupHistory(limit int) ([]BackupInfo, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer rows.Close() //nolint:errcheck // closing read-only rows
 
 	var backups []BackupInfo
 	for rows.Next() {
@@ -218,9 +218,9 @@ func (bm *BackupManager) GetBackupHistory(limit int) ([]BackupInfo, error) {
 
 // BackupInfo represents backup metadata
 type BackupInfo struct {
-	ID          int
+	CreatedAt   time.Time
 	Filename    string
 	SizeBytes   int64
+	ID          int
 	IntegrityOK bool
-	CreatedAt   time.Time
 }

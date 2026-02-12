@@ -2,7 +2,6 @@ package hash_test
 
 import (
 	"fmt"
-	"log"
 	"os"
 	"path/filepath"
 
@@ -17,15 +16,17 @@ func ExampleComputeFileHash() {
 
 	// Write some test data
 	data := make([]byte, 1024*1024) // 1MB file
-	if err := os.WriteFile(testFile, data, 0644); err != nil {
-		log.Fatal(err)
+	if err := os.WriteFile(testFile, data, 0o644); err != nil {
+		fmt.Println(err)
+		return
 	}
 	defer os.Remove(testFile)
 
 	// Compute hash
 	fileHash, err := hash.ComputeFileHash(testFile)
 	if err != nil {
-		log.Fatal(err)
+		fmt.Println(err)
+		return
 	}
 
 	fmt.Printf("File: %s\n", filepath.Base(fileHash.FilePath))
@@ -46,34 +47,39 @@ func ExampleHasChanged() {
 
 	// Original content
 	original := []byte("Original episode content")
-	if err := os.WriteFile(testFile, original, 0644); err != nil {
-		log.Fatal(err)
+	if err := os.WriteFile(testFile, original, 0o644); err != nil {
+		fmt.Println(err)
+		return
 	}
 	defer os.Remove(testFile)
 
 	// Get initial hash
 	initialHash, err := hash.ComputeFileHash(testFile)
 	if err != nil {
-		log.Fatal(err)
+		fmt.Println(err)
+		return
 	}
 
 	// Check - should not have changed
 	changed, err := hash.HasChanged(testFile, initialHash.Hash)
 	if err != nil {
-		log.Fatal(err)
+		fmt.Println(err)
+		return
 	}
 	fmt.Printf("File changed (initial): %v\n", changed)
 
 	// Modify the file
 	modified := []byte("MODIFIED episode content - different quality")
-	if err := os.WriteFile(testFile, modified, 0644); err != nil {
-		log.Fatal(err)
+	if err := os.WriteFile(testFile, modified, 0o644); err != nil {
+		fmt.Println(err)
+		return
 	}
 
 	// Check again - should have changed
 	changed, err = hash.HasChanged(testFile, initialHash.Hash)
 	if err != nil {
-		log.Fatal(err)
+		fmt.Println(err)
+		return
 	}
 	fmt.Printf("File changed (after modification): %v\n", changed)
 
@@ -87,7 +93,7 @@ func ExampleComputeMultiFileHash() {
 	// Create temporary test files (simulating season episodes)
 	tmpDir := os.TempDir()
 	seasonDir := filepath.Join(tmpDir, "example_season")
-	os.MkdirAll(seasonDir, 0755)
+	os.MkdirAll(seasonDir, 0o755)
 	defer os.RemoveAll(seasonDir)
 
 	// Create 3 episode files
@@ -99,15 +105,17 @@ func ExampleComputeMultiFileHash() {
 
 	for i, ep := range episodes {
 		content := fmt.Sprintf("Episode %d content", i+1)
-		if err := os.WriteFile(ep, []byte(content), 0644); err != nil {
-			log.Fatal(err)
+		if err := os.WriteFile(ep, []byte(content), 0o644); err != nil {
+			fmt.Println(err)
+			return
 		}
 	}
 
 	// Compute combined hash for all episodes
 	combinedHash, err := hash.ComputeMultiFileHash(episodes)
 	if err != nil {
-		log.Fatal(err)
+		fmt.Println(err)
+		return
 	}
 
 	fmt.Printf("Episodes: %d\n", len(episodes))
@@ -132,15 +140,17 @@ func ExampleComputeFileHash_largeFile() {
 		data[i] = byte(i % 256)
 	}
 
-	if err := os.WriteFile(testFile, data, 0644); err != nil {
-		log.Fatal(err)
+	if err := os.WriteFile(testFile, data, 0o644); err != nil {
+		fmt.Println(err)
+		return
 	}
 	defer os.Remove(testFile)
 
 	// Compute hash - should be very fast even for large file
 	fileHash, err := hash.ComputeFileHash(testFile)
 	if err != nil {
-		log.Fatal(err)
+		fmt.Println(err)
+		return
 	}
 
 	fmt.Printf("Large file size: %d MB\n", fileHash.Size/(1024*1024))

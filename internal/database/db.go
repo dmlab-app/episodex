@@ -1,3 +1,4 @@
+// Package database provides SQLite database operations and backup management.
 package database
 
 import (
@@ -7,7 +8,7 @@ import (
 	"os"
 	"path/filepath"
 
-	_ "modernc.org/sqlite"
+	_ "modernc.org/sqlite" // SQLite driver registration
 )
 
 // DB wraps the database connection
@@ -19,7 +20,7 @@ type DB struct {
 func New(dbPath string) (*DB, error) {
 	// Ensure the directory exists
 	dir := filepath.Dir(dbPath)
-	if err := os.MkdirAll(dir, 0755); err != nil {
+	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return nil, fmt.Errorf("failed to create database directory: %w", err)
 	}
 
@@ -37,20 +38,17 @@ func New(dbPath string) (*DB, error) {
 
 	// Pre-migrations: add new columns to existing tables BEFORE creating indexes
 	// This is needed because the schema has indexes on new columns
-	if err := db.preMigrations(); err != nil {
-		sqlDB.Close()
-		return nil, fmt.Errorf("failed to run pre-migrations: %w", err)
-	}
+	db.preMigrations()
 
 	// Initialize tables (creates tables and indexes)
 	if err := db.initTables(); err != nil {
-		sqlDB.Close()
+		sqlDB.Close() //nolint:errcheck // best-effort cleanup on init failure
 		return nil, fmt.Errorf("failed to initialize tables: %w", err)
 	}
 
 	// Run migrations (data migrations)
 	if err := db.runMigrations(); err != nil {
-		sqlDB.Close()
+		sqlDB.Close() //nolint:errcheck // best-effort cleanup on init failure
 		return nil, fmt.Errorf("failed to run migrations: %w", err)
 	}
 
@@ -300,7 +298,7 @@ func (db *DB) seedVoiceActors() error {
 	if err != nil {
 		return err
 	}
-	defer stmt.Close()
+	defer stmt.Close() //nolint:errcheck // closing prepared statement
 
 	for _, name := range defaultVoices {
 		if _, err := stmt.Exec(name); err != nil {
@@ -322,9 +320,11 @@ func (db *DB) Ping() error {
 	return db.DB.Ping()
 }
 
-// preMigrations adds new columns to existing tables BEFORE initTables runs
-// This is necessary because initTables creates indexes on these columns
-func (db *DB) preMigrations() error {
+// preMigrations adds new columns to existing tables BEFORE initTables runs.
+// This is necessary because initTables creates indexes on these columns.
+// Errors are logged but not returned because pre-migrations are best-effort:
+// columns may already exist, or the table may not exist yet (first run).
+func (db *DB) preMigrations() {
 	// Check if series table exists
 	var tableExists int
 	err := db.QueryRow(`
@@ -333,7 +333,7 @@ func (db *DB) preMigrations() error {
 	`).Scan(&tableExists)
 	if err != nil || tableExists == 0 {
 		// Table doesn't exist yet, nothing to migrate
-		return nil
+		return
 	}
 
 	// Add new columns to series table if they don't exist
@@ -376,8 +376,6 @@ func (db *DB) preMigrations() error {
 			}
 		}
 	}
-
-	return nil
 }
 
 // runMigrations applies database schema migrations
@@ -475,18 +473,18 @@ func (db *DB) migrateToSchemaV2() error {
 	// Migrate data from watched_seasons to seasons (handles both initial and incremental cases)
 	if watchedCount > 0 {
 		// Check if voice_actor_id column exists in watched_seasons
-		var hasVoiceActorId int
+		var hasVoiceActorID int
 		err = db.QueryRow(`
 			SELECT COUNT(*) FROM pragma_table_info('watched_seasons')
 			WHERE name = 'voice_actor_id'
-		`).Scan(&hasVoiceActorId)
+		`).Scan(&hasVoiceActorID)
 		if err != nil {
-			hasVoiceActorId = 0
+			hasVoiceActorID = 0
 		}
 
 		// Migrate rows from watched_seasons that don't already exist in seasons
 		var migrateQuery string
-		if hasVoiceActorId > 0 {
+		if hasVoiceActorID > 0 {
 			migrateQuery = `
 				INSERT INTO seasons (series_id, season_number, folder_path, voice_actor_id, is_owned, discovered_at)
 				SELECT ws.series_id, ws.season_number, ws.folder_path, ws.voice_actor_id, 1, ws.discovered_at
@@ -513,7 +511,7 @@ func (db *DB) migrateToSchemaV2() error {
 			return fmt.Errorf("failed to migrate watched_seasons data: %w", err)
 		}
 
-		migrated, _ := result.RowsAffected()
+		migrated, _ := result.RowsAffected() // SQLite always supports RowsAffected
 		if migrated > 0 {
 			slog.Info("Migration completed: migrated watched_seasons to seasons", "migrated", migrated)
 		}
