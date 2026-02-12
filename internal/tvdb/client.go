@@ -718,7 +718,6 @@ func (c *Client) GetSeriesDetailsWithRussian(tvdbID int) (*SeriesDetails, error)
 
 	// Store English name as original
 	englishName := details.Name
-	englishOverview := details.Overview
 
 	// Try to get Russian translation
 	rusTrans, _ := c.GetSeriesTranslation(tvdbID, "rus") // Non-critical: just use English names
@@ -735,9 +734,8 @@ func (c *Client) GetSeriesDetailsWithRussian(tvdbID int) (*SeriesDetails, error)
 		details.OriginalName = englishName
 	}
 
-	// If OriginalName is same as Name, clear it to avoid duplication
+	// If OriginalName is same as Name, keep the English name
 	if details.OriginalName == details.Name {
-		details.OriginalName = englishOverview // Actually keep english name
 		details.OriginalName = englishName
 	}
 

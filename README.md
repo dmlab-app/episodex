@@ -5,18 +5,18 @@ Local web service for tracking watched TV series with automatic media folder sca
 ## Features
 
 - Automatic scanning of TV shows folder
-- TheTVDB integration for metadata
+- TheTVDB integration for metadata (series info, characters, artwork)
 - New season notifications
 - Per-season voice dubbing tracking
-- AudioCutter for audio track management
+- AudioCutter for audio track management (mkvmerge/ffmpeg)
 - Automatic database backups
-- Modern web interface
+- Plex-inspired dark theme web interface
 
 ## Quick Start
 
 ### Requirements
 
-- Go 1.22 or higher
+- Go 1.25 or higher
 - Docker (optional)
 
 ### Local Development
@@ -61,9 +61,10 @@ episodex/
 │   ├── config/         # Configuration
 │   ├── database/       # Database and backups
 │   ├── scheduler/      # Task scheduler
-│   ├── scanner/        # Media scanning (TODO)
-│   ├── tvdb/           # TVDB API client (TODO)
-│   └── audio/          # AudioCutter (TODO)
+│   ├── scanner/        # Media folder scanning
+│   ├── tvdb/           # TVDB API client
+│   ├── hash/           # File hashing utilities
+│   └── audio/          # AudioCutter (mkvmerge/ffmpeg)
 ├── web/
 │   ├── static/         # CSS, JS
 │   └── templates/      # HTML templates
@@ -91,10 +92,13 @@ All settings are configured via environment variables (`.env` file):
 - `MEDIA_PATH` - path to TV shows folder
 - `TVDB_API_KEY` - TheTVDB API key
 - `PORT` - web server port (default 8080)
+- `HOST` - server bind address (default 0.0.0.0)
 - `DB_PATH` - path to SQLite database
 - `BACKUP_PATH` - backup folder
 - `BACKUP_RETENTION` - number of backups to keep (default 10)
+- `BACKUP_HOUR` - hour of day for backup (default 3, range 0-23)
 - `SCAN_INTERVAL_HOURS` - scanning interval in hours
+- `TVDB_CHECK_HOUR` - hour of day for TVDB update check (default 5, range 0-23)
 
 ## API Endpoints
 
@@ -103,17 +107,44 @@ All settings are configured via environment variables (`.env` file):
 - `GET /api/health` - health check
 - `GET /api/alerts` - system alerts
 - `POST /api/alerts/:id/dismiss` - dismiss alert
+- `POST /api/scan/trigger` - trigger folder scan
 
-### Series (in development)
+### Series
 
-- `GET /api/series` - list series
-- `POST /api/series` - add series
-- `GET /api/series/:id` - series details
+- `GET /api/series` - list series with season counts
+- `POST /api/series` - create series
+- `GET /api/series/:id` - series detail with metadata, characters, artwork
 - `DELETE /api/series/:id` - delete series
+- `POST /api/series/:id/match` - match series to TVDB
+- `POST /api/series/:id/sync` - sync metadata from TVDB
+- `GET /api/search` - search TVDB for series
+
+### Seasons
+
+- `GET /api/series/:id/seasons` - list seasons (owned vs locked)
+- `GET /api/series/:id/seasons/:num` - season detail
+- `PUT /api/series/:id/seasons/:num` - update season (voice actor)
+- `POST /api/series/:id/seasons/:num/rescan` - rescan season folder
+
+### Audio
+
+- `GET /api/series/:id/seasons/:num/audio` - list audio tracks
+- `POST /api/series/:id/seasons/:num/audio/preview` - generate audio preview
+- `POST /api/series/:id/seasons/:num/audio/process` - process audio (SSE)
+- `GET /api/audio/preview/:hash` - serve audio preview file
+
+### Voice Actors
+
+- `GET /api/voices` - list voice actor studios
+
+### Updates
+
+- `GET /api/updates` - get new season updates
+- `POST /api/updates/check` - check for TVDB updates
 
 ## Technologies
 
-- **Backend**: Go 1.22
+- **Backend**: Go 1.25
 - **Database**: SQLite (modernc.org/sqlite - pure Go, no CGO)
 - **Router**: chi v5
 - **Frontend**: Vanilla JS + HTML + CSS
@@ -156,25 +187,20 @@ make test
 
 ## Project Status
 
-**Phase 1 (Infrastructure)**: Completed
+All core features implemented:
 
-- [x] Project structure
-- [x] Configuration
-- [x] Database (SQLite)
-- [x] Backup system
+- [x] Project structure and configuration
+- [x] Database (SQLite) with backups
 - [x] HTTP server with middleware
 - [x] Task scheduler
-- [x] Docker support
-- [x] Linting
-
-**Phases 2-6**: Planned
-
-- [ ] TVDB integration
-- [ ] Media scanning
-- [ ] Series API
-- [ ] Voice dubbing management
-- [ ] AudioCutter
-- [ ] Full UI
+- [x] Docker support with reproxy
+- [x] TVDB integration (metadata, characters, artwork)
+- [x] Media folder scanning with torrent name parsing
+- [x] Series API (CRUD, match, sync)
+- [x] Voice dubbing management
+- [x] AudioCutter (mkvmerge/ffmpeg)
+- [x] Plex-inspired dark theme UI
+- [x] Linting and tests
 
 ## License
 

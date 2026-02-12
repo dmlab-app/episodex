@@ -139,7 +139,7 @@ func TestHandleGetSeries_ReturnsSeasonsWithVoiceActors(t *testing.T) {
 	seedSeason(t, db, seriesID, 2, "/media/bb/s02", true, nil)
 
 	// Make request
-	req := httptest.NewRequest(http.MethodGet, "/api/series/1", http.NoBody)
+	req := httptest.NewRequest(http.MethodGet, fmt.Sprintf("/api/series/%d", seriesID), http.NoBody)
 	w := httptest.NewRecorder()
 	srv.router.ServeHTTP(w, req)
 
@@ -206,7 +206,7 @@ func TestHandleListSeasons_OwnedVsLocked(t *testing.T) {
 	seedSeason(t, db, seriesID, 1, "/media/bb/s01", true, &amediaID)
 	seedSeason(t, db, seriesID, 3, "/media/bb/s03", true, nil)
 
-	req := httptest.NewRequest(http.MethodGet, "/api/series/1/seasons", http.NoBody)
+	req := httptest.NewRequest(http.MethodGet, fmt.Sprintf("/api/series/%d/seasons", seriesID), http.NoBody)
 	w := httptest.NewRecorder()
 	srv.router.ServeHTTP(w, req)
 
@@ -600,10 +600,10 @@ func TestHandleUpdateSeason_InvalidVoiceID(t *testing.T) {
 func TestHandleUpdateSeason_SeasonNotFound(t *testing.T) {
 	srv, db := setupTestServer(t)
 
-	seedSeries(t, db, "Breaking Bad", 5)
+	seriesID := seedSeries(t, db, "Breaking Bad", 5)
 
 	body := `{"voice_actor_id": 1}`
-	req := httptest.NewRequest(http.MethodPut, "/api/series/1/seasons/99", strings.NewReader(body))
+	req := httptest.NewRequest(http.MethodPut, fmt.Sprintf("/api/series/%d/seasons/99", seriesID), strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
 	srv.router.ServeHTTP(w, req)

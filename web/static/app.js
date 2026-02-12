@@ -18,6 +18,14 @@ function posterSrc(url) {
     return url || PLACEHOLDER_SVG;
 }
 
+// HTML escape utility to prevent XSS
+function esc(str) {
+    if (str == null) return '';
+    const div = document.createElement('div');
+    div.textContent = String(str);
+    return div.innerHTML;
+}
+
 // ==============================================================================
 // API
 // ==============================================================================
@@ -59,7 +67,7 @@ function showToast(message, type = 'success') {
     const container = document.getElementById('toast-container');
     const toast = document.createElement('div');
     toast.className = `toast toast-${type}`;
-    toast.innerHTML = `<span class="toast-message">${message}</span>`;
+    toast.innerHTML = `<span class="toast-message">${esc(message)}</span>`;
     container.appendChild(toast);
     setTimeout(() => {
         toast.classList.add('hiding');
@@ -140,8 +148,8 @@ function renderSeries() {
     let list = [...state.series];
 
     // Filter
-    if (filter === 'continuing') list = list.filter(s => s.status === 'continuing');
-    else if (filter === 'ended') list = list.filter(s => s.status === 'ended');
+    if (filter === 'continuing') list = list.filter(s => s.status?.toLowerCase() === 'continuing');
+    else if (filter === 'ended') list = list.filter(s => s.status?.toLowerCase() === 'ended');
 
     // Search
     if (searchQuery) {
@@ -161,14 +169,14 @@ function renderSeries() {
         return `
         <div class="series-card ${hasNoMatch ? 'unmatched' : ''}" onclick="${hasNoMatch ? '' : `navigate('/series/${s.id}')`}">
             <div class="series-poster">
-                <img src="${posterSrc(s.poster_url)}" alt="${s.title}" loading="lazy">
+                <img src="${posterSrc(s.poster_url)}" alt="${esc(s.title)}" loading="lazy">
                 ${hasNoMatch ? '<div class="unmatched-overlay"></div>' : ''}
             </div>
             <div class="series-info">
-                <h4 class="series-title">${s.title}</h4>
+                <h4 class="series-title">${esc(s.title)}</h4>
                 <div class="series-meta">
                     <span>${s.watched_seasons || 0} seasons</span>
-                    <span class="series-status-badge ${s.status}">${s.status}</span>
+                    <span class="series-status-badge ${esc(s.status)}">${esc(s.status)}</span>
                 </div>
                 ${hasNoMatch ? `
                     <button class="btn btn-match" onclick="event.stopPropagation(); openMatchModal(${s.id})">
@@ -187,8 +195,8 @@ function renderSeries() {
 
 function updateStats() {
     document.getElementById('stat-total').textContent = state.series.length;
-    document.getElementById('stat-continuing').textContent = state.series.filter(s => s.status === 'continuing').length;
-    document.getElementById('stat-ended').textContent = state.series.filter(s => s.status === 'ended').length;
+    document.getElementById('stat-continuing').textContent = state.series.filter(s => s.status?.toLowerCase() === 'continuing').length;
+    document.getElementById('stat-ended').textContent = state.series.filter(s => s.status?.toLowerCase() === 'ended').length;
     document.getElementById('stat-seasons').textContent = state.series.reduce((sum, s) => sum + (s.watched_seasons || 0), 0);
 }
 
@@ -845,11 +853,11 @@ async function searchTVDB(query) {
         container.innerHTML = results.map(r => `
             <div class="search-result" onclick="addSeries(${r.id})">
                 <div class="search-result-poster">
-                    <img src="${posterSrc(r.poster)}" alt="${r.name}">
+                    <img src="${posterSrc(r.poster)}" alt="${esc(r.name)}">
                 </div>
                 <div class="search-result-info">
-                    <div class="search-result-title">${r.name}</div>
-                    <div class="search-result-year">${r.year || 'N/A'}</div>
+                    <div class="search-result-title">${esc(r.name)}</div>
+                    <div class="search-result-year">${esc(r.year) || 'N/A'}</div>
                 </div>
                 <button class="btn btn-primary" onclick="event.stopPropagation(); addSeries(${r.id})">Add</button>
             </div>
@@ -882,7 +890,7 @@ async function loadAlerts() {
         }
         container.innerHTML = alerts.map(alert => `
             <div class="alert alert-${alert.type.includes('error') ? 'error' : 'warning'}">
-                <span class="alert-message">${alert.message}</span>
+                <span class="alert-message">${esc(alert.message)}</span>
                 <button class="alert-dismiss" onclick="dismissAlert(${alert.id})">x</button>
             </div>
         `).join('');
@@ -982,15 +990,15 @@ async function searchTVDBForMatch(query) {
         container.innerHTML = results.map(r => `
             <div class="match-result-item">
                 <div class="match-result-poster">
-                    <img src="${posterSrc(r.poster)}" alt="${r.name}">
+                    <img src="${posterSrc(r.poster)}" alt="${esc(r.name)}">
                 </div>
                 <div class="match-result-info">
-                    <div class="match-result-title">${r.name}</div>
+                    <div class="match-result-title">${esc(r.name)}</div>
                     <div class="match-result-meta">
-                        <span class="match-result-year">${r.year || 'N/A'}</span>
-                        ${r.status ? `<span class="match-result-status">${r.status}</span>` : ''}
+                        <span class="match-result-year">${esc(r.year) || 'N/A'}</span>
+                        ${r.status ? `<span class="match-result-status">${esc(r.status)}</span>` : ''}
                     </div>
-                    ${r.status ? `<div class="match-result-overview">${r.status}</div>` : ''}
+                    ${r.status ? `<div class="match-result-overview">${esc(r.status)}</div>` : ''}
                 </div>
                 <button class="btn btn-primary" onclick="matchSeries(${r.id})">
                     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">

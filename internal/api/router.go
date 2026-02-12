@@ -193,7 +193,7 @@ func (s *Server) handleListSeries(w http.ResponseWriter, _ *http.Request) {
 			continue
 		}
 
-		s := map[string]interface{}{
+		item := map[string]interface{}{
 			"id":              id,
 			"title":           title,
 			"total_seasons":   totalSeasons,
@@ -202,21 +202,21 @@ func (s *Server) handleListSeries(w http.ResponseWriter, _ *http.Request) {
 		}
 
 		if tvdbID != nil {
-			s["tvdb_id"] = *tvdbID
+			item["tvdb_id"] = *tvdbID
 		}
 		if originalTitle != nil {
-			s["original_title"] = *originalTitle
+			item["original_title"] = *originalTitle
 		}
 		if posterURL != nil {
-			s["poster_url"] = *posterURL
+			item["poster_url"] = *posterURL
 		}
 		if status != nil {
-			s["status"] = *status
+			item["status"] = *status
 		} else {
-			s["status"] = "unknown"
+			item["status"] = "unknown"
 		}
 
-		series = append(series, s)
+		series = append(series, item)
 	}
 
 	s.respondJSON(w, http.StatusOK, series)
@@ -514,7 +514,7 @@ func (s *Server) handleGetSeries(w http.ResponseWriter, r *http.Request) {
 		"id":              seriesInfo.ID,
 		"title":           seriesInfo.Title,
 		"total_seasons":   seriesInfo.TotalSeasons,
-		"watched_seasons": len(seasons),
+		"watched_seasons": countOwnedSeasons(seasons),
 		"seasons":         seasons,
 		"characters":      characters,
 		"created_at":      seriesInfo.CreatedAt,
@@ -811,6 +811,30 @@ func (s *Server) respondError(w http.ResponseWriter, status int, message string)
 	})
 }
 
+// isValidHash checks if the string is a valid hex hash (prevents path traversal)
+func isValidHash(h string) bool {
+	if h == "" || len(h) > 128 {
+		return false
+	}
+	for _, c := range h {
+		if (c < '0' || c > '9') && (c < 'a' || c > 'f') && (c < 'A' || c > 'F') {
+			return false
+		}
+	}
+	return true
+}
+
+// countOwnedSeasons counts seasons where owned == true
+func countOwnedSeasons(seasons []map[string]interface{}) int {
+	count := 0
+	for _, s := range seasons {
+		if owned, ok := s["owned"].(bool); ok && owned {
+			count++
+		}
+	}
+	return count
+}
+
 // Scan handler
 func (s *Server) handleTriggerScan(w http.ResponseWriter, _ *http.Request) {
 	slog.Info("Manual scan triggered")
@@ -897,58 +921,65 @@ func (s *Server) handleCheckUpdates(w http.ResponseWriter, _ *http.Request) {
 
 	// Run check in background
 	go func() {
-		// Get all series with TVDB IDs
-		query := `
+		// Collect all series with TVDB IDs first, then close rows
+		type seriesCheck struct {
+			ID           int
+			TVDBId       int
+			Title        string
+			TotalSeasons int
+		}
+
+		rows, err := s.db.Query(`
 			SELECT id, tvdb_id, title, total_seasons
 			FROM series
 			WHERE tvdb_id IS NOT NULL
-		`
-
-		rows, err := s.db.Query(query)
+		`)
 		if err != nil {
 			slog.Error("Failed to fetch series for TVDB check", "error", err)
 			return
 		}
-		defer rows.Close() //nolint:errcheck
+
+		var toCheck []seriesCheck
+		for rows.Next() {
+			var sc seriesCheck
+			if err := rows.Scan(&sc.ID, &sc.TVDBId, &sc.Title, &sc.TotalSeasons); err != nil {
+				continue
+			}
+			toCheck = append(toCheck, sc)
+		}
+		rows.Close() //nolint:errcheck
 
 		var checked, updated, errored int
 
-		for rows.Next() {
-			var id, tvdbID, totalSeasons int
-			var title string
-
-			if err := rows.Scan(&id, &tvdbID, &title, &totalSeasons); err != nil {
-				continue
-			}
-
+		for _, sc := range toCheck {
 			checked++
 
 			// Get current season count from TVDB
-			newTotalSeasons, err := s.tvdbClient.GetTotalSeasons(tvdbID)
+			newTotalSeasons, err := s.tvdbClient.GetTotalSeasons(sc.TVDBId)
 			if err != nil {
-				slog.Error("Failed to get TVDB seasons", "series_id", id, "tvdb_id", tvdbID, "error", err)
+				slog.Error("Failed to get TVDB seasons", "series_id", sc.ID, "tvdb_id", sc.TVDBId, "error", err)
 				errored++
 				continue
 			}
 
 			// Compare with database
-			if newTotalSeasons > totalSeasons {
+			if newTotalSeasons > sc.TotalSeasons {
 				// Update database
 				_, err = s.db.Exec(`
 					UPDATE series
 					SET total_seasons = ?, updated_at = CURRENT_TIMESTAMP
 					WHERE id = ?
-				`, newTotalSeasons, id)
+				`, newTotalSeasons, sc.ID)
 
 				if err != nil {
-					slog.Error("Failed to update series seasons", "series_id", id, "error", err)
+					slog.Error("Failed to update series seasons", "series_id", sc.ID, "error", err)
 					errored++
 					continue
 				}
 
 				// Create alert
-				newSeasons := newTotalSeasons - totalSeasons
-				message := fmt.Sprintf("New seasons available for %s: %d new season(s)", title, newSeasons)
+				newSeasons := newTotalSeasons - sc.TotalSeasons
+				message := fmt.Sprintf("New seasons available for %s: %d new season(s)", sc.Title, newSeasons)
 
 				_, err = s.db.Exec(`
 					INSERT INTO system_alerts (type, message, created_at, dismissed)
@@ -956,10 +987,10 @@ func (s *Server) handleCheckUpdates(w http.ResponseWriter, _ *http.Request) {
 				`, "new_seasons", message)
 
 				if err != nil {
-					slog.Error("Failed to create alert", "series_id", id, "error", err)
+					slog.Error("Failed to create alert", "series_id", sc.ID, "error", err)
 				}
 
-				slog.Info("Detected new seasons", "series", title, "old", totalSeasons, "new", newTotalSeasons)
+				slog.Info("Detected new seasons", "series", sc.Title, "old", sc.TotalSeasons, "new", newTotalSeasons)
 				updated++
 			}
 		}
@@ -1398,6 +1429,12 @@ func (s *Server) handleGenerateAudioPreview(w http.ResponseWriter, r *http.Reque
 func (s *Server) handleServeAudioPreview(w http.ResponseWriter, r *http.Request) {
 	hash := chi.URLParam(r, "hash")
 
+	// Validate hash format to prevent path traversal
+	if !isValidHash(hash) {
+		s.respondError(w, http.StatusBadRequest, "invalid hash format")
+		return
+	}
+
 	filePath, err := s.audioCutter.GetPreviewPath(hash)
 	if err != nil {
 		s.respondError(w, http.StatusNotFound, "preview not found")
@@ -1436,6 +1473,13 @@ func (s *Server) handleProcessAudioStream(w http.ResponseWriter, r *http.Request
 		return
 	}
 
+	// Validate series ID before starting SSE stream
+	sid, err := strconv.Atoi(seriesID)
+	if err != nil {
+		s.respondError(w, http.StatusBadRequest, "invalid series ID")
+		return
+	}
+
 	// Set SSE headers
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("Cache-Control", "no-cache")
@@ -1470,12 +1514,6 @@ func (s *Server) handleProcessAudioStream(w http.ResponseWriter, r *http.Request
 	flusher.Flush()
 
 	// Process files
-	sid, err := strconv.Atoi(seriesID)
-	if err != nil {
-		slog.Error("Invalid series ID", "series_id", seriesID, "error", err)
-		s.respondError(w, http.StatusBadRequest, "invalid series ID")
-		return
-	}
 	successCount := 0
 	errorCount := 0
 	skippedCount := 0

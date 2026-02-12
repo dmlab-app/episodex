@@ -409,9 +409,9 @@ func (s *Scanner) processSeriesInfo(info SeriesInfo) error {
 		slog.Warn("Using parsed title without TVDB", "title", info.Title)
 		seriesTitle = info.Title
 
-		// First, check if this folder_path already exists in watched_seasons
+		// First, check if this folder_path already exists in seasons
 		err := s.db.QueryRow(`
-			SELECT series_id FROM watched_seasons WHERE folder_path = ?
+			SELECT series_id FROM seasons WHERE folder_path = ?
 		`, info.Path).Scan(&seriesID)
 
 		if err == nil {
@@ -443,18 +443,18 @@ func (s *Scanner) processSeriesInfo(info SeriesInfo) error {
 		}
 	}
 
-	// Now add or update the season
+	// Now add or update the season in the seasons table
 	var exists int
 	err := s.db.QueryRow(`
-		SELECT COUNT(*) FROM watched_seasons
+		SELECT COUNT(*) FROM seasons
 		WHERE series_id = ? AND season_number = ?
 	`, seriesID, info.Season).Scan(&exists)
 
 	if err != nil || exists == 0 {
 		// Add season
 		_, err = s.db.Exec(`
-			INSERT INTO watched_seasons (series_id, season_number, folder_path, source, discovered_at)
-			VALUES (?, ?, ?, 'scan', CURRENT_TIMESTAMP)
+			INSERT INTO seasons (series_id, season_number, folder_path, is_owned, discovered_at, created_at, updated_at)
+			VALUES (?, ?, ?, 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
 		`, seriesID, info.Season, info.Path)
 		if err != nil {
 			return err
@@ -463,7 +463,7 @@ func (s *Scanner) processSeriesInfo(info SeriesInfo) error {
 	} else {
 		// Update folder path if changed
 		_, err = s.db.Exec(`
-			UPDATE watched_seasons SET folder_path = ?
+			UPDATE seasons SET folder_path = ?, is_owned = 1, updated_at = CURRENT_TIMESTAMP
 			WHERE series_id = ? AND season_number = ?
 		`, info.Path, seriesID, info.Season)
 		if err == nil {
@@ -630,7 +630,7 @@ func (s *Scanner) RescanSeason(seriesID int64, seasonNumber int) error {
 	// Get the season folder path
 	var folderPath string
 	err := s.db.QueryRow(`
-		SELECT folder_path FROM watched_seasons
+		SELECT folder_path FROM seasons
 		WHERE series_id = ? AND season_number = ?
 	`, seriesID, seasonNumber).Scan(&folderPath)
 

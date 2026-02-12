@@ -324,8 +324,19 @@ func (db *DB) UpsertCharacters(seriesID int64, characters []Character) error {
 	return nil
 }
 
-// UpsertArtworks inserts or updates artworks for a series or season
+// UpsertArtworks inserts or updates artworks for a series or season.
+// Deletes existing artworks for the series before inserting to prevent duplicates.
 func (db *DB) UpsertArtworks(artworks []Artwork) error {
+	if len(artworks) == 0 {
+		return nil
+	}
+
+	// Delete existing artworks for this series to prevent accumulating duplicates
+	seriesID := artworks[0].SeriesID
+	if _, err := db.Exec(`DELETE FROM artworks WHERE series_id = ?`, seriesID); err != nil {
+		return fmt.Errorf("failed to delete existing artworks: %w", err)
+	}
+
 	stmt, err := db.Prepare(`
 		INSERT INTO artworks (
 			series_id, season_id, tvdb_artwork_id, type,

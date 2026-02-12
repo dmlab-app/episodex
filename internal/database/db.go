@@ -217,7 +217,7 @@ func (db *DB) initTables() error {
 		mod_time INTEGER,
 		first_seen TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
 		last_checked TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-		FOREIGN KEY (series_id, season_number) REFERENCES watched_seasons(series_id, season_number) ON DELETE CASCADE
+		FOREIGN KEY (series_id, season_number) REFERENCES seasons(series_id, season_number) ON DELETE CASCADE
 	);
 
 	-- Системные алерты (для UI)
