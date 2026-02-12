@@ -130,28 +130,51 @@
 
         <!-- Series Detail -->
         <section id="page-series-detail" class="page">
-            <div class="page-header">
-                <button class="btn btn-icon" id="back-to-series">
-                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                        <path d="M19 12H5"/>
-                        <polyline points="12 19 5 12 12 5"/>
-                    </svg>
-                </button>
-                <h2 id="detail-series-title">Series Name</h2>
-                <button class="btn btn-danger" id="delete-series-btn">Delete</button>
+            <!-- Hero Backdrop -->
+            <div class="series-hero" id="series-hero">
+                <div class="series-hero-backdrop" id="series-hero-backdrop"></div>
+                <div class="series-hero-gradient"></div>
+                <div class="series-hero-content">
+                    <button class="btn btn-icon series-hero-back" id="back-to-series">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <path d="M19 12H5"/>
+                            <polyline points="12 19 5 12 12 5"/>
+                        </svg>
+                    </button>
+                    <div class="series-hero-info">
+                        <img id="detail-series-poster" src="" alt="" class="series-hero-poster">
+                        <div class="series-hero-meta">
+                            <h1 id="detail-series-title" class="series-hero-title">Series Name</h1>
+                            <p id="detail-original-title" class="series-hero-original"></p>
+                            <div class="series-hero-tags" id="detail-tags">
+                                <span id="detail-series-status" class="series-status-badge">Continuing</span>
+                            </div>
+                            <p id="detail-overview" class="series-hero-overview"></p>
+                            <div class="series-hero-actions">
+                                <button class="btn btn-secondary" id="sync-tvdb-btn" style="display: none;">
+                                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                        <path d="M21 12a9 9 0 11-9-9"/>
+                                        <polyline points="21,3 21,9 15,9"/>
+                                    </svg>
+                                    Sync with TVDB
+                                </button>
+                                <button class="btn btn-danger" id="delete-series-btn">Delete</button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
             </div>
 
-            <div class="series-detail-layout">
-                <div class="series-detail-sidebar">
-                    <img id="detail-series-poster" src="" alt="" class="series-detail-poster">
-                    <p id="detail-original-title" class="series-original-title"></p>
-                    <span id="detail-series-status" class="series-status-badge">Continuing</span>
-                </div>
+            <!-- Characters Row -->
+            <div class="series-characters" id="series-characters" style="display: none;">
+                <h3>Cast</h3>
+                <div class="characters-row" id="characters-row"></div>
+            </div>
 
-                <div class="series-detail-content">
-                    <h3>Seasons</h3>
-                    <div class="seasons-grid" id="seasons-grid"></div>
-                </div>
+            <!-- Seasons -->
+            <div class="series-seasons-section">
+                <h3>Seasons</h3>
+                <div class="seasons-grid" id="seasons-grid"></div>
             </div>
         </section>
 

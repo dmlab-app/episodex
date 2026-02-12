@@ -211,14 +211,73 @@ async function loadSeriesDetail(seriesId) {
     try {
         const series = await api.get(`/api/series/${seriesId}`);
 
-        // Update header
+        // Hero backdrop
+        const backdropEl = document.getElementById('series-hero-backdrop');
+        if (series.backdrop_url) {
+            backdropEl.style.backgroundImage = `url(${series.backdrop_url})`;
+        } else if (series.poster_url) {
+            backdropEl.style.backgroundImage = `url(${series.poster_url})`;
+        } else {
+            backdropEl.style.backgroundImage = 'none';
+        }
+
+        // Poster & title
         document.getElementById('detail-series-title').textContent = series.title;
         document.getElementById('detail-original-title').textContent = series.original_title || '';
         document.getElementById('detail-series-poster').src = series.poster_url || '/static/placeholder.svg';
 
+        // Status badge
         const statusEl = document.getElementById('detail-series-status');
-        statusEl.textContent = series.status;
-        statusEl.className = `series-status-badge ${series.status}`;
+        statusEl.textContent = series.status || 'unknown';
+        statusEl.className = `series-status-badge ${series.status || 'unknown'}`;
+
+        // Metadata tags
+        const tagsEl = document.getElementById('detail-tags');
+        let tagsHTML = `<span id="detail-series-status" class="series-status-badge ${series.status || 'unknown'}">${series.status || 'unknown'}</span>`;
+        if (series.year) tagsHTML += `<span class="meta-tag">${series.year}</span>`;
+        if (series.content_rating) tagsHTML += `<span class="meta-tag">${series.content_rating}</span>`;
+        if (series.runtime) tagsHTML += `<span class="meta-tag">${series.runtime} min</span>`;
+        if (series.rating) tagsHTML += `<span class="meta-tag meta-tag-star">${series.rating.toFixed(1)}</span>`;
+        if (series.genres && series.genres.length > 0) {
+            series.genres.forEach(g => {
+                const name = typeof g === 'string' ? g : (g.name || g);
+                tagsHTML += `<span class="meta-tag">${name}</span>`;
+            });
+        }
+        if (series.networks && series.networks.length > 0) {
+            series.networks.forEach(n => {
+                const name = typeof n === 'string' ? n : (n.name || n);
+                tagsHTML += `<span class="meta-tag meta-tag-network">${name}</span>`;
+            });
+        }
+        tagsEl.innerHTML = tagsHTML;
+
+        // Overview
+        const overviewEl = document.getElementById('detail-overview');
+        overviewEl.textContent = series.overview || '';
+        overviewEl.style.display = series.overview ? 'block' : 'none';
+
+        // Sync button (show only if series has tvdb_id)
+        const syncBtn = document.getElementById('sync-tvdb-btn');
+        syncBtn.style.display = series.tvdb_id ? 'inline-flex' : 'none';
+
+        // Characters
+        const charsSection = document.getElementById('series-characters');
+        const charsRow = document.getElementById('characters-row');
+        if (series.characters && series.characters.length > 0) {
+            charsSection.style.display = 'block';
+            charsRow.innerHTML = series.characters.map(c => `
+                <div class="character-card">
+                    <div class="character-avatar">
+                        <img src="${c.image_url || '/static/placeholder.svg'}" alt="${c.character_name || ''}" loading="lazy">
+                    </div>
+                    <div class="character-name">${c.character_name || ''}</div>
+                    <div class="character-actor">${c.actor_name || ''}</div>
+                </div>
+            `).join('');
+        } else {
+            charsSection.style.display = 'none';
+        }
 
         // Load seasons
         const seasons = await api.get(`/api/series/${seriesId}/seasons`);
@@ -257,13 +316,17 @@ function renderSeasons(series, seasons) {
                 </div>
             `;
         } else {
-            // Owned season - clickable card (no voice selector or audio button)
+            // Owned season - clickable card with optional voice badge
+            const voiceBadge = season.voice_actor_name
+                ? `<span class="voice-badge">${season.voice_actor_name}</span>`
+                : '';
             return `
                 <div class="season-card owned" data-season="${season.season_number}" onclick="navigate('/series/${series.id}/season/${season.season_number}')">
                     <div class="season-poster">
                         <img src="${seasonImage}" alt="Season ${season.season_number}" loading="lazy">
                         <div class="season-overlay">
                             <div class="season-number">Season ${season.season_number}</div>
+                            ${voiceBadge}
                         </div>
                     </div>
                 </div>
@@ -272,6 +335,21 @@ function renderSeasons(series, seasons) {
     }).join('');
 }
 
+
+async function syncWithTVDB() {
+    if (!state.currentSeriesId) return;
+    const btn = document.getElementById('sync-tvdb-btn');
+    btn.disabled = true;
+    try {
+        await api.post(`/api/series/${state.currentSeriesId}/sync`);
+        showToast('Synced with TVDB');
+        await loadSeriesDetail(state.currentSeriesId);
+    } catch (e) {
+        showToast('Sync failed', 'error');
+    } finally {
+        btn.disabled = false;
+    }
+}
 
 async function deleteSeries() {
     if (!state.currentSeriesId) return;
@@ -998,6 +1076,8 @@ document.addEventListener('DOMContentLoaded', () => {
     document.getElementById('scan-trigger')?.addEventListener('click', triggerScan);
     document.getElementById('check-updates-btn')?.addEventListener('click', checkUpdates);
     document.getElementById('delete-series-btn')?.addEventListener('click', deleteSeries);
+    document.getElementById('sync-tvdb-btn')?.addEventListener('click', syncWithTVDB);
+    document.getElementById('back-to-series')?.addEventListener('click', () => navigate('/series'));
 
     // Setup router
     window.addEventListener('hashchange', router);
@@ -1019,3 +1099,4 @@ window.deleteSeries = deleteSeries;
 window.openMatchModal = openMatchModal;
 window.closeMatchModal = closeMatchModal;
 window.matchSeries = matchSeries;
+window.syncWithTVDB = syncWithTVDB;

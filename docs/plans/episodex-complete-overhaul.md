@@ -86,13 +86,13 @@ The project has a split-brain problem: the scanner writes to the `seasons` table
 - [x] Run `make test` — must pass before next task
 
 ### Task 5: Series detail page — frontend redesign
-- [ ] In `web/templates/index.html` — redesign `#page-series-detail` section: add hero backdrop area, metadata section (year, rating, genres, networks), overview text area, characters row
-- [ ] In `web/static/app.js` — update `loadSeriesDetail()`: call enhanced GET endpoint, populate backdrop, overview, year, rating, genres, networks, characters
-- [ ] Update `renderSeasons()`: show voice actor badge on owned season cards (small label like "LostFilm" at bottom of card)
-- [ ] In `web/static/style.css` — add styles for hero backdrop (full-width image with gradient overlay), metadata tags, character avatars row, voice badge on season cards
-- [ ] Add "Sync with TVDB" button on series detail that calls `POST /api/series/{id}/sync`
-- [ ] Verify in browser: series detail page shows full metadata, backdrop, characters, voice badges
-- [ ] No code tests needed (frontend-only), manual verification
+- [x] In `web/templates/index.html` — redesign `#page-series-detail` section: add hero backdrop area, metadata section (year, rating, genres, networks), overview text area, characters row
+- [x] In `web/static/app.js` — update `loadSeriesDetail()`: call enhanced GET endpoint, populate backdrop, overview, year, rating, genres, networks, characters
+- [x] Update `renderSeasons()`: show voice actor badge on owned season cards (small label like "LostFilm" at bottom of card)
+- [x] In `web/static/style.css` — add styles for hero backdrop (full-width image with gradient overlay), metadata tags, character avatars row, voice badge on season cards
+- [x] Add "Sync with TVDB" button on series detail that calls `POST /api/series/{id}/sync`
+- [x] Verify in browser: series detail page shows full metadata, backdrop, characters, voice badges
+- [x] No code tests needed (frontend-only), manual verification
 
 ### Task 6: Voice selection on season detail page
 - [ ] In `internal/api/router.go` — add `PUT /api/series/{id}/seasons/{num}` handler to update voice_actor_id on season

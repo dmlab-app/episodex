@@ -76,6 +76,7 @@ func (s *Server) setupRoutes() {
 			r.Get("/{id}", s.handleGetSeries)       // GET /api/series/:id
 			r.Delete("/{id}", s.handleDeleteSeries) // DELETE /api/series/:id
 			r.Post("/{id}/match", s.handleMatchSeries) // POST /api/series/:id/match
+			r.Post("/{id}/sync", s.handleSyncSeriesFromTVDB) // POST /api/series/:id/sync
 
 			// Seasons endpoints
 			r.Route("/{id}/seasons", func(r chi.Router) {
