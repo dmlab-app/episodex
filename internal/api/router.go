@@ -633,7 +633,11 @@ func (s *Server) handleDeleteSeries(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleMatchSeries(w http.ResponseWriter, r *http.Request) {
-	id := chi.URLParam(r, "id")
+	id, err := strconv.ParseInt(chi.URLParam(r, "id"), 10, 64)
+	if err != nil {
+		s.respondError(w, http.StatusBadRequest, "invalid series ID")
+		return
+	}
 
 	var req struct {
 		TVDBId int `json:"tvdb_id"`
@@ -652,7 +656,7 @@ func (s *Server) handleMatchSeries(w http.ResponseWriter, r *http.Request) {
 	// Check if series exists
 	var currentTVDBId *int
 	var title string
-	err := s.db.QueryRow("SELECT tvdb_id, title FROM series WHERE id = ?", id).Scan(&currentTVDBId, &title)
+	err = s.db.QueryRow("SELECT tvdb_id, title FROM series WHERE id = ?", id).Scan(&currentTVDBId, &title)
 	if err != nil {
 		s.respondError(w, http.StatusNotFound, "series not found")
 		return
@@ -672,6 +676,23 @@ func (s *Server) handleMatchSeries(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		defer tx.Rollback() //nolint:errcheck
+
+		// For overlapping seasons, preserve owned data from source into destination
+		_, err = tx.Exec(`
+			UPDATE seasons
+			SET folder_path = (SELECT src.folder_path FROM seasons src WHERE src.series_id = ? AND src.season_number = seasons.season_number),
+				is_owned = 1,
+				voice_actor_id = COALESCE(voice_actor_id, (SELECT src.voice_actor_id FROM seasons src WHERE src.series_id = ? AND src.season_number = seasons.season_number)),
+				discovered_at = COALESCE(discovered_at, (SELECT src.discovered_at FROM seasons src WHERE src.series_id = ? AND src.season_number = seasons.season_number))
+			WHERE series_id = ? AND season_number IN (
+				SELECT season_number FROM seasons WHERE series_id = ? AND is_owned = 1
+			)
+		`, id, id, id, existingSeriesID, id)
+		if err != nil {
+			slog.Error("Failed to update overlapping seasons", "error", err)
+			s.respondError(w, http.StatusInternalServerError, "failed to merge seasons")
+			return
+		}
 
 		// Move non-overlapping seasons from current series to existing one
 		_, err = tx.Exec(`
@@ -1129,12 +1150,10 @@ func (s *Server) handleListSeasons(w http.ResponseWriter, r *http.Request) {
 	// Build response with all seasons (owned and missing)
 	seasons := []map[string]interface{}{}
 	maxSeasons := totalSeasons
-	if maxSeasons == 0 {
-		// If no total_seasons set, use max owned season number
-		for num := range ownedSeasons {
-			if num > maxSeasons {
-				maxSeasons = num
-			}
+	// Ensure maxSeasons includes all owned season numbers (they may exceed totalSeasons)
+	for num := range ownedSeasons {
+		if num > maxSeasons {
+			maxSeasons = num
 		}
 	}
 
@@ -1280,20 +1299,28 @@ func (s *Server) handleGetAudioTracks(w http.ResponseWriter, r *http.Request) {
 
 // handleGetSeason returns details for a specific season
 func (s *Server) handleGetSeason(w http.ResponseWriter, r *http.Request) {
-	seriesID := chi.URLParam(r, "id")
-	seasonNum := chi.URLParam(r, "num")
+	sid, err := strconv.ParseInt(chi.URLParam(r, "id"), 10, 64)
+	if err != nil {
+		s.respondError(w, http.StatusBadRequest, "invalid series ID")
+		return
+	}
+	snum, err := strconv.Atoi(chi.URLParam(r, "num"))
+	if err != nil {
+		s.respondError(w, http.StatusBadRequest, "invalid season number")
+		return
+	}
 
 	var folderPath *string
 	var isOwned bool
 	var voiceActorID *int
 	var voiceActorName *string
 	var discoveredAt *time.Time
-	err := s.db.QueryRow(`
+	err = s.db.QueryRow(`
 		SELECT sn.folder_path, sn.is_owned, sn.voice_actor_id, va.name, sn.discovered_at
 		FROM seasons sn
 		LEFT JOIN voice_actors va ON sn.voice_actor_id = va.id
 		WHERE sn.series_id = ? AND sn.season_number = ?
-	`, seriesID, seasonNum).Scan(&folderPath, &isOwned, &voiceActorID, &voiceActorName, &discoveredAt)
+	`, sid, snum).Scan(&folderPath, &isOwned, &voiceActorID, &voiceActorName, &discoveredAt)
 
 	if err != nil {
 		s.respondError(w, http.StatusNotFound, "season not found")
@@ -1301,7 +1328,7 @@ func (s *Server) handleGetSeason(w http.ResponseWriter, r *http.Request) {
 	}
 
 	response := map[string]interface{}{
-		"season_number": seasonNum,
+		"season_number": snum,
 		"folder_path":   folderPath,
 		"owned":         isOwned,
 	}
@@ -1321,8 +1348,16 @@ func (s *Server) handleGetSeason(w http.ResponseWriter, r *http.Request) {
 
 // handleUpdateSeason updates a season's voice_actor_id
 func (s *Server) handleUpdateSeason(w http.ResponseWriter, r *http.Request) {
-	seriesID := chi.URLParam(r, "id")
-	seasonNum := chi.URLParam(r, "num")
+	sid, err := strconv.ParseInt(chi.URLParam(r, "id"), 10, 64)
+	if err != nil {
+		s.respondError(w, http.StatusBadRequest, "invalid series ID")
+		return
+	}
+	snum, err := strconv.Atoi(chi.URLParam(r, "num"))
+	if err != nil {
+		s.respondError(w, http.StatusBadRequest, "invalid season number")
+		return
+	}
 
 	var req struct {
 		VoiceActorID *int `json:"voice_actor_id"`
@@ -1335,10 +1370,10 @@ func (s *Server) handleUpdateSeason(w http.ResponseWriter, r *http.Request) {
 
 	// Verify season exists
 	var exists bool
-	err := s.db.QueryRow(`
+	err = s.db.QueryRow(`
 		SELECT COUNT(*) > 0 FROM seasons
 		WHERE series_id = ? AND season_number = ?
-	`, seriesID, seasonNum).Scan(&exists)
+	`, sid, snum).Scan(&exists)
 	if err != nil || !exists {
 		s.respondError(w, http.StatusNotFound, "season not found")
 		return
@@ -1358,13 +1393,13 @@ func (s *Server) handleUpdateSeason(w http.ResponseWriter, r *http.Request) {
 	_, err = s.db.Exec(`
 		UPDATE seasons SET voice_actor_id = ?, updated_at = CURRENT_TIMESTAMP
 		WHERE series_id = ? AND season_number = ?
-	`, req.VoiceActorID, seriesID, seasonNum)
+	`, req.VoiceActorID, sid, snum)
 	if err != nil {
 		s.respondError(w, http.StatusInternalServerError, "failed to update season")
 		return
 	}
 
-	slog.Info("Updated season voice", "series_id", seriesID, "season", seasonNum, "voice_actor_id", req.VoiceActorID)
+	slog.Info("Updated season voice", "series_id", sid, "season", snum, "voice_actor_id", req.VoiceActorID)
 
 	s.respondJSON(w, http.StatusOK, map[string]interface{}{
 		"success": true,
@@ -1651,7 +1686,7 @@ func (s *Server) handleProcessAudioStream(w http.ResponseWriter, r *http.Request
 		flusher.Flush()
 
 		// Process file
-		err := s.audioCutter.RemoveAudioTracks(filePath, req.TrackID)
+		err := s.audioCutter.RemoveAudioTracks(filePath, req.TrackID, req.KeepOriginal)
 		if err != nil {
 			errorCount++
 			event := map[string]interface{}{

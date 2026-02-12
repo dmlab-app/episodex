@@ -127,8 +127,9 @@ func (ac *AudioCutter) ScanFolderAudioTracks(folderPath string) (map[string][]Au
 	return results, nil
 }
 
-// RemoveAudioTracks removes all audio tracks except the specified one
-func (ac *AudioCutter) RemoveAudioTracks(filePath string, keepTrackID int) error {
+// RemoveAudioTracks removes all audio tracks except the specified one.
+// If keepOriginal is true, the original English audio track is also preserved.
+func (ac *AudioCutter) RemoveAudioTracks(filePath string, keepTrackID int, keepOriginal bool) error {
 	// Check if file exists
 	if _, err := os.Stat(filePath); os.IsNotExist(err) {
 		return fmt.Errorf("file does not exist: %s", filePath)
@@ -175,10 +176,17 @@ func (ac *AudioCutter) RemoveAudioTracks(filePath string, keepTrackID int) error
 	}
 
 	// Build track selection: keep all video and subtitle tracks, only specified audio track
+	// If keepOriginal is set, also keep English audio tracks
+	kept := make(map[int]bool)
 	var audioTrackIDs []string
 	for _, track := range info.Tracks {
 		if track.Type == "audio" {
-			if track.ID == keepTrackID {
+			keep := track.ID == keepTrackID
+			if keepOriginal && (track.Properties.Language == "eng" || track.Properties.Language == "und") {
+				keep = true
+			}
+			if keep && !kept[track.ID] {
+				kept[track.ID] = true
 				audioTrackIDs = append(audioTrackIDs, fmt.Sprintf("%d", track.ID))
 			}
 		}
@@ -214,8 +222,9 @@ func (ac *AudioCutter) RemoveAudioTracks(filePath string, keepTrackID int) error
 	return nil
 }
 
-// ProcessFolder processes all MKV files in a folder, keeping only the specified audio track
-func (ac *AudioCutter) ProcessFolder(folderPath string, keepTrackID int) (processed, failed []string, err error) {
+// ProcessFolder processes all MKV files in a folder, keeping only the specified audio track.
+// If keepOriginal is true, the original English audio track is also preserved.
+func (ac *AudioCutter) ProcessFolder(folderPath string, keepTrackID int, keepOriginal bool) (processed, failed []string, err error) {
 	if _, err := os.Stat(folderPath); os.IsNotExist(err) {
 		return nil, nil, fmt.Errorf("folder does not exist: %s", folderPath)
 	}
@@ -228,7 +237,7 @@ func (ac *AudioCutter) ProcessFolder(folderPath string, keepTrackID int) (proces
 
 		// Only process MKV files
 		if !info.IsDir() && strings.ToLower(filepath.Ext(path)) == ".mkv" {
-			if err := ac.RemoveAudioTracks(path, keepTrackID); err != nil {
+			if err := ac.RemoveAudioTracks(path, keepTrackID, keepOriginal); err != nil {
 				failed = append(failed, path)
 			} else {
 				processed = append(processed, path)
