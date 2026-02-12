@@ -78,12 +78,12 @@ The project has a split-brain problem: the scanner writes to the `seasons` table
 - [x] No tests needed (CSS-only changes)
 
 ### Task 4: Series detail page — API enhancement
-- [ ] In `internal/api/router.go` — update `handleGetSeries` to return full metadata: overview, year, runtime, rating, genres, networks, studios, backdrop_url, slug (fields already exist in series table)
-- [ ] Add characters endpoint or include top characters in series response — query `series_characters` table, limit 10, ordered by sort_order
-- [ ] Add artwork endpoint or include poster/backdrop from `artworks` table as fallback
-- [ ] Write tests for enhanced handleGetSeries (verify all metadata fields returned)
-- [ ] Write tests for characters data inclusion
-- [ ] Run `make test` — must pass before next task
+- [x] In `internal/api/router.go` — update `handleGetSeries` to return full metadata: overview, year, runtime, rating, genres, networks, studios, backdrop_url, slug (fields already exist in series table)
+- [x] Add characters endpoint or include top characters in series response — query `series_characters` table, limit 10, ordered by sort_order
+- [x] Add artwork endpoint or include poster/backdrop from `artworks` table as fallback
+- [x] Write tests for enhanced handleGetSeries (verify all metadata fields returned)
+- [x] Write tests for characters data inclusion
+- [x] Run `make test` — must pass before next task
 
 ### Task 5: Series detail page — frontend redesign
 - [ ] In `web/templates/index.html` — redesign `#page-series-detail` section: add hero backdrop area, metadata section (year, rating, genres, networks), overview text area, characters row

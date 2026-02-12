@@ -310,20 +310,38 @@ func (s *Server) handleCreateSeries(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleGetSeries(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
 
-	// Get series info
+	// Get series info with full metadata
 	var seriesInfo struct {
-		ID            int
-		TVDBId        *int
-		Title         string
-		OriginalTitle *string
-		PosterURL     *string
-		Status        *string
-		TotalSeasons  int
-		CreatedAt     time.Time
+		ID               int
+		TVDBId           *int
+		Title            string
+		OriginalTitle    *string
+		Slug             *string
+		Overview         *string
+		PosterURL        *string
+		BackdropURL      *string
+		Status           *string
+		FirstAired       *string
+		LastAired        *string
+		Year             *int
+		Runtime          *int
+		Rating           *float64
+		ContentRating    *string
+		OriginalCountry  *string
+		OriginalLanguage *string
+		Genres           *string
+		Networks         *string
+		Studios          *string
+		TotalSeasons     int
+		CreatedAt        time.Time
 	}
 
 	query := `
-		SELECT id, tvdb_id, title, original_title, poster_url, status, total_seasons, created_at
+		SELECT id, tvdb_id, title, original_title, slug, overview,
+			poster_url, backdrop_url, status, first_aired, last_aired,
+			year, runtime, rating, content_rating,
+			original_country, original_language,
+			genres, networks, studios, total_seasons, created_at
 		FROM series
 		WHERE id = ?
 	`
@@ -333,8 +351,22 @@ func (s *Server) handleGetSeries(w http.ResponseWriter, r *http.Request) {
 		&seriesInfo.TVDBId,
 		&seriesInfo.Title,
 		&seriesInfo.OriginalTitle,
+		&seriesInfo.Slug,
+		&seriesInfo.Overview,
 		&seriesInfo.PosterURL,
+		&seriesInfo.BackdropURL,
 		&seriesInfo.Status,
+		&seriesInfo.FirstAired,
+		&seriesInfo.LastAired,
+		&seriesInfo.Year,
+		&seriesInfo.Runtime,
+		&seriesInfo.Rating,
+		&seriesInfo.ContentRating,
+		&seriesInfo.OriginalCountry,
+		&seriesInfo.OriginalLanguage,
+		&seriesInfo.Genres,
+		&seriesInfo.Networks,
+		&seriesInfo.Studios,
 		&seriesInfo.TotalSeasons,
 		&seriesInfo.CreatedAt,
 	)
@@ -393,6 +425,69 @@ func (s *Server) handleGetSeries(w http.ResponseWriter, r *http.Request) {
 		seasons = append(seasons, season)
 	}
 
+	// Get top 10 characters
+	characters := []map[string]interface{}{}
+	charactersQuery := `
+		SELECT character_name, actor_name, image_url, sort_order
+		FROM series_characters
+		WHERE series_id = ?
+		ORDER BY sort_order
+		LIMIT 10
+	`
+	charRows, err := s.db.Query(charactersQuery, id)
+	if err == nil {
+		defer charRows.Close()
+		for charRows.Next() {
+			var characterName, actorName, imageURL *string
+			var sortOrder *int
+			if err := charRows.Scan(&characterName, &actorName, &imageURL, &sortOrder); err != nil {
+				continue
+			}
+			char := map[string]interface{}{}
+			if characterName != nil {
+				char["character_name"] = *characterName
+			}
+			if actorName != nil {
+				char["actor_name"] = *actorName
+			}
+			if imageURL != nil {
+				char["image_url"] = *imageURL
+			}
+			if sortOrder != nil {
+				char["sort_order"] = *sortOrder
+			}
+			characters = append(characters, char)
+		}
+	}
+
+	// Artwork fallback: if poster_url or backdrop_url is missing, try artworks table
+	posterURL := seriesInfo.PosterURL
+	backdropURL := seriesInfo.BackdropURL
+	if posterURL == nil || *posterURL == "" {
+		var url *string
+		_ = s.db.QueryRow(`
+			SELECT url FROM artworks
+			WHERE series_id = ? AND type = 'poster'
+			ORDER BY score DESC, is_primary DESC
+			LIMIT 1
+		`, id).Scan(&url)
+		if url != nil {
+			posterURL = url
+		}
+	}
+	if backdropURL == nil || *backdropURL == "" {
+		var url *string
+		_ = s.db.QueryRow(`
+			SELECT url FROM artworks
+			WHERE series_id = ? AND type = 'background'
+			ORDER BY score DESC, is_primary DESC
+			LIMIT 1
+		`, id).Scan(&url)
+		if url != nil {
+			backdropURL = url
+		}
+	}
+
 	// Build response
 	response := map[string]interface{}{
 		"id":              seriesInfo.ID,
@@ -400,6 +495,7 @@ func (s *Server) handleGetSeries(w http.ResponseWriter, r *http.Request) {
 		"total_seasons":   seriesInfo.TotalSeasons,
 		"watched_seasons": len(seasons),
 		"seasons":         seasons,
+		"characters":      characters,
 		"created_at":      seriesInfo.CreatedAt,
 	}
 
@@ -409,13 +505,66 @@ func (s *Server) handleGetSeries(w http.ResponseWriter, r *http.Request) {
 	if seriesInfo.OriginalTitle != nil {
 		response["original_title"] = *seriesInfo.OriginalTitle
 	}
-	if seriesInfo.PosterURL != nil {
-		response["poster_url"] = *seriesInfo.PosterURL
+	if seriesInfo.Slug != nil {
+		response["slug"] = *seriesInfo.Slug
+	}
+	if seriesInfo.Overview != nil {
+		response["overview"] = *seriesInfo.Overview
+	}
+	if posterURL != nil {
+		response["poster_url"] = *posterURL
+	}
+	if backdropURL != nil {
+		response["backdrop_url"] = *backdropURL
 	}
 	if seriesInfo.Status != nil {
 		response["status"] = *seriesInfo.Status
 	} else {
 		response["status"] = "unknown"
+	}
+	if seriesInfo.FirstAired != nil {
+		response["first_aired"] = *seriesInfo.FirstAired
+	}
+	if seriesInfo.LastAired != nil {
+		response["last_aired"] = *seriesInfo.LastAired
+	}
+	if seriesInfo.Year != nil {
+		response["year"] = *seriesInfo.Year
+	}
+	if seriesInfo.Runtime != nil {
+		response["runtime"] = *seriesInfo.Runtime
+	}
+	if seriesInfo.Rating != nil {
+		response["rating"] = *seriesInfo.Rating
+	}
+	if seriesInfo.ContentRating != nil {
+		response["content_rating"] = *seriesInfo.ContentRating
+	}
+	if seriesInfo.OriginalCountry != nil {
+		response["original_country"] = *seriesInfo.OriginalCountry
+	}
+	if seriesInfo.OriginalLanguage != nil {
+		response["original_language"] = *seriesInfo.OriginalLanguage
+	}
+
+	// Parse JSON fields
+	if seriesInfo.Genres != nil {
+		var genres []interface{}
+		if err := json.Unmarshal([]byte(*seriesInfo.Genres), &genres); err == nil {
+			response["genres"] = genres
+		}
+	}
+	if seriesInfo.Networks != nil {
+		var networks []interface{}
+		if err := json.Unmarshal([]byte(*seriesInfo.Networks), &networks); err == nil {
+			response["networks"] = networks
+		}
+	}
+	if seriesInfo.Studios != nil {
+		var studios []interface{}
+		if err := json.Unmarshal([]byte(*seriesInfo.Studios), &studios); err == nil {
+			response["studios"] = studios
+		}
 	}
 
 	s.respondJSON(w, http.StatusOK, response)
