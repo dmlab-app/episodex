@@ -610,7 +610,7 @@ h4 { font-size: 1rem; }
     font-weight: 600;
 }
 
-.sort-select select {
+.sort-select {
     padding: var(--space-sm) var(--space-lg) var(--space-sm) var(--space-md);
     background: var(--bg-surface);
     border: 1px solid var(--border);
@@ -624,7 +624,7 @@ h4 { font-size: 1rem; }
     background-position: right 8px center;
 }
 
-.sort-select select:focus {
+.sort-select:focus {
     outline: none;
     border-color: var(--accent);
 }

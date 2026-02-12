@@ -14,7 +14,7 @@
 
     <header class="header">
         <div class="header-inner">
-            <a href="/" class="logo" onclick="navigateTo('series'); return false;">
+            <a href="#/series" class="logo">
                 <span class="logo-icon">
                     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                         <rect x="2" y="3" width="20" height="14" rx="2"/>
@@ -27,7 +27,7 @@
             </a>
 
             <nav class="nav">
-                <a href="/" class="nav-link active" data-page="series">
+                <a href="#/series" class="nav-link active" data-page="series">
                     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                         <rect x="3" y="3" width="7" height="7" rx="1"/>
                         <rect x="14" y="3" width="7" height="7" rx="1"/>
@@ -36,7 +36,7 @@
                     </svg>
                     <span>Series</span>
                 </a>
-                <a href="/updates" class="nav-link" data-page="updates">
+                <a href="#/updates" class="nav-link" data-page="updates">
                     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                         <circle cx="12" cy="12" r="10"/>
                         <path d="M12 6v6l4 2"/>
@@ -199,6 +199,92 @@
             </div>
 
             <div class="search-results" id="search-results"></div>
+        </section>
+
+        <!-- Season Detail -->
+        <section id="page-season-detail" class="page">
+            <div class="page-header">
+                <button class="btn btn-icon" id="back-to-series-from-season">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <path d="M19 12H5"/>
+                        <polyline points="12 19 5 12 12 5"/>
+                    </svg>
+                </button>
+                <div>
+                    <h2 id="season-detail-title">Season</h2>
+                    <p class="page-subtitle" id="season-detail-subtitle"></p>
+                </div>
+            </div>
+
+            <div class="audio-scanner">
+                <!-- Voice Selector -->
+                <div class="voice-selector-panel" id="voice-selector-panel">
+                    <label for="voice-select">Voice Studio</label>
+                    <div class="voice-selector-row">
+                        <select id="voice-select">
+                            <option value="">No voice selected</option>
+                        </select>
+                    </div>
+                </div>
+
+                <!-- Season not owned message -->
+                <div class="info-box" id="season-not-owned" style="display: none;">
+                    <h3>Season files not available</h3>
+                    <p>This season is not yet available in your media library.</p>
+                </div>
+
+                <!-- Audio Tracks Panel -->
+                <div class="audio-tracks-panel" id="audio-tracks-container" style="display: none;">
+                    <h3>Audio Tracks</h3>
+                    <p class="panel-hint">Select which audio track to keep (others will be removed):</p>
+                    <div class="audio-tracks" id="audio-tracks-list"></div>
+
+                    <label class="audio-track-option keep-original">
+                        <input type="checkbox" id="keep-original-checkbox" checked>
+                        <div class="track-info">
+                            <span class="track-name">Keep original English track</span>
+                            <span class="track-meta">Preserve English audio alongside selected track</span>
+                        </div>
+                    </label>
+
+                    <div class="audio-actions">
+                        <button class="btn btn-success" id="process-audio-btn">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <polyline points="20 6 9 17 4 12"/>
+                            </svg>
+                            Process Files
+                        </button>
+                    </div>
+                </div>
+
+                <!-- Files List -->
+                <div class="info-box" id="season-files-box">
+                    <h3>Files</h3>
+                    <div class="files-list" id="files-list">
+                        <div class="loader"></div>
+                    </div>
+                </div>
+
+                <div class="progress-container" id="progress-container" style="display: none;">
+                    <div class="progress-header">
+                        <span id="progress-text">Processing...</span>
+                        <span id="progress-percent">0%</span>
+                    </div>
+                    <div class="progress-bar-wrapper">
+                        <div class="progress-bar" id="progress-bar" style="width: 0%"></div>
+                    </div>
+                    <div class="progress-current-file" id="current-file-info">
+                        <div class="file-label">Current file:</div>
+                        <div class="file-name">-</div>
+                    </div>
+                    <div class="progress-stats">
+                        <div class="stat">Success: <span class="stat-value stat-success" id="stat-success">0</span></div>
+                        <div class="stat">Errors: <span class="stat-value stat-error" id="stat-error">0</span></div>
+                        <div class="stat">Skipped: <span class="stat-value stat-skipped" id="stat-skipped">0</span></div>
+                    </div>
+                    <div class="files-list" id="processed-files-list"></div>
+                </div>
+            </div>
         </section>
 
         <!-- Updates -->

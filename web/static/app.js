@@ -1,6 +1,6 @@
 /**
  * EpisodeX - TV Series Audio Track Manager
- * Hash-based SPA with 3 pages: Series List, Series Detail, Season Detail
+ * Hash-based SPA with 4 pages: Series List, Series Detail, Season Detail, Updates
  */
 
 const state = {
@@ -10,6 +10,13 @@ const state = {
     currentSeriesId: null,
     currentSeasonNum: null,
 };
+
+// Inline SVG placeholder for series without posters
+const PLACEHOLDER_SVG = `data:image/svg+xml,${encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 300 450" fill="none"><rect width="300" height="450" fill="#1a1c22"/><rect x="1" y="1" width="298" height="448" stroke="#323640" stroke-width="2" fill="none"/><g transform="translate(150, 180)"><circle cx="0" cy="0" r="60" stroke="#3d4250" stroke-width="3" fill="none"/><circle cx="0" cy="0" r="20" stroke="#3d4250" stroke-width="3" fill="none"/><line x1="0" y1="-20" x2="0" y2="-60" stroke="#3d4250" stroke-width="3"/><line x1="0" y1="20" x2="0" y2="60" stroke="#3d4250" stroke-width="3"/><line x1="-20" y1="0" x2="-60" y2="0" stroke="#3d4250" stroke-width="3"/><line x1="20" y1="0" x2="60" y2="0" stroke="#3d4250" stroke-width="3"/><line x1="-14" y1="-14" x2="-42" y2="-42" stroke="#3d4250" stroke-width="3"/><line x1="14" y1="14" x2="42" y2="42" stroke="#3d4250" stroke-width="3"/><line x1="-14" y1="14" x2="-42" y2="42" stroke="#3d4250" stroke-width="3"/><line x1="14" y1="-14" x2="42" y2="-42" stroke="#3d4250" stroke-width="3"/><circle cx="0" cy="-40" r="8" fill="#282c37"/><circle cx="0" cy="40" r="8" fill="#282c37"/><circle cx="-40" cy="0" r="8" fill="#282c37"/><circle cx="40" cy="0" r="8" fill="#282c37"/><circle cx="-28" cy="-28" r="8" fill="#282c37"/><circle cx="28" cy="28" r="8" fill="#282c37"/><circle cx="-28" cy="28" r="8" fill="#282c37"/><circle cx="28" cy="-28" r="8" fill="#282c37"/></g><text x="150" y="320" font-family="system-ui, sans-serif" font-size="48" font-weight="bold" fill="#3d4250" text-anchor="middle">?</text><text x="150" y="380" font-family="system-ui, sans-serif" font-size="18" fill="#3d4250" text-anchor="middle">No Poster</text></svg>')}`;
+
+function posterSrc(url) {
+    return url || PLACEHOLDER_SVG;
+}
 
 // ==============================================================================
 // API
@@ -95,12 +102,7 @@ async function showSeriesListPage() {
     state.currentView = 'series';
     hideAllPages();
     document.getElementById('page-series').classList.add('active');
-
-    // Update nav
-    document.querySelectorAll('.nav-link').forEach(link => {
-        link.classList.toggle('active', link.dataset.page === 'series');
-    });
-
+    updateNav('series');
     await loadSeries();
 }
 
@@ -159,7 +161,7 @@ function renderSeries() {
         return `
         <div class="series-card ${hasNoMatch ? 'unmatched' : ''}" onclick="${hasNoMatch ? '' : `navigate('/series/${s.id}')`}">
             <div class="series-poster">
-                <img src="${s.poster_url || '/static/placeholder.svg'}" alt="${s.title}" loading="lazy">
+                <img src="${posterSrc(s.poster_url)}" alt="${s.title}" loading="lazy">
                 ${hasNoMatch ? '<div class="unmatched-overlay"></div>' : ''}
             </div>
             <div class="series-info">
@@ -198,12 +200,7 @@ async function showSeriesDetailPage(seriesId) {
     state.currentSeriesId = seriesId;
     hideAllPages();
     document.getElementById('page-series-detail').classList.add('active');
-
-    // Update nav
-    document.querySelectorAll('.nav-link').forEach(link => {
-        link.classList.toggle('active', link.dataset.page === 'series');
-    });
-
+    updateNav('series');
     await loadSeriesDetail(seriesId);
 }
 
@@ -224,12 +221,7 @@ async function loadSeriesDetail(seriesId) {
         // Poster & title
         document.getElementById('detail-series-title').textContent = series.title;
         document.getElementById('detail-original-title').textContent = series.original_title || '';
-        document.getElementById('detail-series-poster').src = series.poster_url || '/static/placeholder.svg';
-
-        // Status badge
-        const statusEl = document.getElementById('detail-series-status');
-        statusEl.textContent = series.status || 'unknown';
-        statusEl.className = `series-status-badge ${series.status || 'unknown'}`;
+        document.getElementById('detail-series-poster').src = posterSrc(series.poster_url);
 
         // Metadata tags
         const tagsEl = document.getElementById('detail-tags');
@@ -269,7 +261,7 @@ async function loadSeriesDetail(seriesId) {
             charsRow.innerHTML = series.characters.map(c => `
                 <div class="character-card">
                     <div class="character-avatar">
-                        <img src="${c.image_url || '/static/placeholder.svg'}" alt="${c.character_name || ''}" loading="lazy">
+                        <img src="${posterSrc(c.image_url)}" alt="${c.character_name || ''}" loading="lazy">
                     </div>
                     <div class="character-name">${c.character_name || ''}</div>
                     <div class="character-actor">${c.actor_name || ''}</div>
@@ -294,7 +286,7 @@ function renderSeasons(series, seasons) {
 
     grid.innerHTML = seasons.map(season => {
         const owned = season.owned === true;
-        const seasonImage = season.image || series.poster_url || '/static/placeholder.svg';
+        const seasonImage = season.image || series.poster_url || PLACEHOLDER_SVG;
 
         if (!owned) {
             // Locked season
@@ -373,109 +365,31 @@ async function showSeasonDetailPage(seriesId, seasonNum) {
     state.currentSeriesId = seriesId;
     state.currentSeasonNum = seasonNum;
 
-    // Remove old season detail page if exists
-    const oldPage = document.getElementById('page-season-detail');
-    if (oldPage) oldPage.remove();
-
-    // Create new season detail page
-    const main = document.querySelector('.main');
-    const seasonPage = createSeasonDetailPage(seriesId, seasonNum);
-    main.appendChild(seasonPage);
-
     hideAllPages();
-    seasonPage.classList.add('active');
+    const page = document.getElementById('page-season-detail');
+    page.classList.add('active');
+
+    // Reset page state
+    document.getElementById('season-detail-title').textContent = `Season ${seasonNum}`;
+    document.getElementById('season-detail-subtitle').textContent = '';
+    document.getElementById('season-not-owned').style.display = 'none';
+    document.getElementById('voice-selector-panel').style.display = 'flex';
+    document.getElementById('audio-tracks-container').style.display = 'none';
+    document.getElementById('season-files-box').style.display = 'block';
+    document.getElementById('files-list').innerHTML = '<div class="loader"></div>';
+    document.getElementById('audio-tracks-list').innerHTML = '';
+    document.getElementById('progress-container').style.display = 'none';
+    document.getElementById('processed-files-list').innerHTML = '';
+
+    updateNav('series');
 
     // Load season data
     await loadSeasonDetail(seriesId, seasonNum);
 }
 
-function createSeasonDetailPage(seriesId, seasonNum) {
-    const page = document.createElement('section');
-    page.id = 'page-season-detail';
-    page.className = 'page';
-    page.innerHTML = `
-        <div class="page-header">
-            <button class="btn btn-icon" onclick="navigate('/series/${seriesId}')">
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                    <path d="M19 12H5"/>
-                    <polyline points="12 19 5 12 12 5"/>
-                </svg>
-            </button>
-            <div>
-                <h2 id="season-detail-title">Season ${seasonNum}</h2>
-                <p class="page-subtitle" id="season-detail-subtitle"></p>
-            </div>
-        </div>
-
-        <div class="audio-scanner">
-            <!-- Voice Selector -->
-            <div class="voice-selector-panel" id="voice-selector-panel">
-                <label for="voice-select">Voice Studio</label>
-                <div class="voice-selector-row">
-                    <select id="voice-select">
-                        <option value="">No voice selected</option>
-                    </select>
-                </div>
-            </div>
-
-            <!-- Audio Tracks Panel (Light Theme) - ABOVE files list -->
-            <div class="audio-tracks-panel" id="audio-tracks-container" style="display: none;">
-                <h3>Audio Tracks</h3>
-                <p class="panel-hint">Select which audio track to keep (others will be removed):</p>
-                <div class="audio-tracks" id="audio-tracks-list"></div>
-
-                <label class="audio-track-option keep-original">
-                    <input type="checkbox" id="keep-original-checkbox" checked>
-                    <div class="track-info">
-                        <span class="track-name">Keep original English track</span>
-                        <span class="track-meta">Preserve English audio alongside selected track</span>
-                    </div>
-                </label>
-
-                <div class="audio-actions">
-                    <button class="btn btn-success" onclick="processSeasonAudio()">
-                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                            <polyline points="20 6 9 17 4 12"/>
-                        </svg>
-                        Process Files
-                    </button>
-                </div>
-            </div>
-
-            <!-- Files List -->
-            <div class="info-box">
-                <h3>Files</h3>
-                <div class="files-list" id="files-list">
-                    <div class="loader"></div>
-                </div>
-            </div>
-
-            <div class="progress-container" id="progress-container" style="display: none;">
-                <div class="progress-header">
-                    <span id="progress-text">Processing...</span>
-                    <span id="progress-percent">0%</span>
-                </div>
-                <div class="progress-bar-wrapper">
-                    <div class="progress-bar" id="progress-bar" style="width: 0%"></div>
-                </div>
-                <div class="progress-current-file" id="current-file-info">
-                    <div class="file-label">Current file:</div>
-                    <div class="file-name">-</div>
-                </div>
-                <div class="progress-stats">
-                    <div class="stat">Success: <span class="stat-value stat-success" id="stat-success">0</span></div>
-                    <div class="stat">Errors: <span class="stat-value stat-error" id="stat-error">0</span></div>
-                    <div class="stat">Skipped: <span class="stat-value stat-skipped" id="stat-skipped">0</span></div>
-                </div>
-                <div class="files-list" id="processed-files-list"></div>
-            </div>
-        </div>
-    `;
-    return page;
-}
-
 let selectedTrackId = null;
 let currentAudioPlayer = null;
+let voiceSelectHandler = null;
 
 async function loadSeasonDetail(seriesId, seasonNum) {
     try {
@@ -501,10 +415,23 @@ async function loadSeasonDetail(seriesId, seasonNum) {
                 }
                 voiceSelect.appendChild(option);
             });
-            voiceSelect.addEventListener('change', () => {
+            // Remove old handler if exists, add new one
+            if (voiceSelectHandler) {
+                voiceSelect.removeEventListener('change', voiceSelectHandler);
+            }
+            voiceSelectHandler = () => {
                 const voiceId = voiceSelect.value ? parseInt(voiceSelect.value) : null;
                 updateSeasonVoice(seriesId, seasonNum, voiceId);
-            });
+            };
+            voiceSelect.addEventListener('change', voiceSelectHandler);
+        }
+
+        // Check if season is owned
+        if (!seasonInfo.owned) {
+            document.getElementById('season-not-owned').style.display = 'block';
+            document.getElementById('voice-selector-panel').style.display = 'none';
+            document.getElementById('season-files-box').style.display = 'none';
+            return;
         }
 
         // Load audio tracks
@@ -808,11 +735,7 @@ async function showUpdatesPage() {
     state.currentView = 'updates';
     hideAllPages();
     document.getElementById('page-updates').classList.add('active');
-
-    document.querySelectorAll('.nav-link').forEach(link => {
-        link.classList.toggle('active', link.dataset.page === 'updates');
-    });
-
+    updateNav('updates');
     await loadUpdates();
 }
 
@@ -833,17 +756,33 @@ async function loadUpdates() {
         empty.style.display = 'none';
         updateBadge(state.updates.length);
 
-        list.innerHTML = state.updates.map(u => `
+        list.innerHTML = state.updates.map(u => {
+            const total = u.total_seasons || 0;
+            const watched = u.watched_seasons || 0;
+            // Build a list of which season numbers are new (not owned)
+            // We know total and watched count; show the range
+            const newCount = u.new_seasons || (total - watched);
+            let seasonDetail = '';
+            if (newCount === 1) {
+                seasonDetail = `Season ${total} available`;
+            } else if (newCount > 0) {
+                // Show range: e.g. "Seasons 3-5 available" (last N seasons are new)
+                const from = watched + 1;
+                const to = total;
+                seasonDetail = `Seasons ${from}\u2013${to} available`;
+            }
+            return `
             <div class="update-card" onclick="navigate('/series/${u.id}')">
                 <div class="update-poster">
-                    <img src="${u.poster_url || '/static/placeholder.svg'}" alt="${u.title}">
+                    <img src="${posterSrc(u.poster_url)}" alt="${u.title}">
                 </div>
                 <div class="update-info">
                     <h4 class="update-title">${u.title}</h4>
-                    <p class="update-detail"><span class="update-season">${u.new_seasons} new season(s)</span> available</p>
+                    <p class="update-detail"><span class="update-season">${newCount} new season${newCount !== 1 ? 's' : ''}</span> \u2014 ${seasonDetail}</p>
                 </div>
             </div>
-        `).join('');
+            `;
+        }).join('');
     } catch (e) {
         showToast('Failed to load updates', 'error');
     }
@@ -880,10 +819,7 @@ async function showAddSeriesPage() {
     state.currentView = 'add-series';
     hideAllPages();
     document.getElementById('page-add-series').classList.add('active');
-
-    document.querySelectorAll('.nav-link').forEach(link => {
-        link.classList.toggle('active', link.dataset.page === 'series');
-    });
+    updateNav('series');
 
     document.getElementById('tvdb-search-input').value = '';
     document.getElementById('search-results').innerHTML = '';
@@ -909,7 +845,7 @@ async function searchTVDB(query) {
         container.innerHTML = results.map(r => `
             <div class="search-result" onclick="addSeries(${r.id})">
                 <div class="search-result-poster">
-                    <img src="${r.poster || '/static/placeholder.svg'}" alt="${r.name}">
+                    <img src="${posterSrc(r.poster)}" alt="${r.name}">
                 </div>
                 <div class="search-result-info">
                     <div class="search-result-title">${r.name}</div>
@@ -992,6 +928,12 @@ function hideAllPages() {
     document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
 }
 
+function updateNav(activePage) {
+    document.querySelectorAll('.nav-link').forEach(link => {
+        link.classList.toggle('active', link.dataset.page === activePage);
+    });
+}
+
 // ==============================================================================
 // Match Modal
 // ==============================================================================
@@ -1040,7 +982,7 @@ async function searchTVDBForMatch(query) {
         container.innerHTML = results.map(r => `
             <div class="match-result-item">
                 <div class="match-result-poster">
-                    <img src="${r.poster || '/static/placeholder.svg'}" alt="${r.name}">
+                    <img src="${posterSrc(r.poster)}" alt="${r.name}">
                 </div>
                 <div class="match-result-info">
                     <div class="match-result-title">${r.name}</div>
@@ -1123,7 +1065,20 @@ document.addEventListener('DOMContentLoaded', () => {
     document.getElementById('check-updates-btn')?.addEventListener('click', checkUpdates);
     document.getElementById('delete-series-btn')?.addEventListener('click', deleteSeries);
     document.getElementById('sync-tvdb-btn')?.addEventListener('click', syncWithTVDB);
+
+    // Back buttons
     document.getElementById('back-to-series')?.addEventListener('click', () => navigate('/series'));
+    document.getElementById('back-to-series-from-season')?.addEventListener('click', () => {
+        if (state.currentSeriesId) {
+            navigate(`/series/${state.currentSeriesId}`);
+        } else {
+            navigate('/series');
+        }
+    });
+    document.getElementById('back-from-add')?.addEventListener('click', () => navigate('/series'));
+
+    // Process audio button
+    document.getElementById('process-audio-btn')?.addEventListener('click', processSeasonAudio);
 
     // Setup router
     window.addEventListener('hashchange', router);

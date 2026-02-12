@@ -106,15 +106,15 @@ The project has a split-brain problem: the scanner writes to the `seasons` table
 - [x] Run `make test` — must pass before next task
 
 ### Task 7: Frontend polish and bug fixes
-- [ ] In `web/static/app.js` — fix season detail page DOM: create once in index.html, show/hide like other pages instead of dynamic createElement/remove
-- [ ] Fix back button navigation: wire `#back-to-series` click in DOMContentLoaded, ensure back from season goes to series detail
-- [ ] Fix sort select CSS: `.sort-select` is a class on the `<select>` element directly, but CSS targets `.sort-select select` — fix selector to match actual HTML
-- [ ] Add graceful handling on season detail: if season is not owned (no folder_path), show message "Season files not available" instead of error toast
-- [ ] Improve updates page: show which specific season numbers are new, not just count
-- [ ] Add a proper SVG placeholder for series without posters (inline SVG in app.js or a static file)
-- [ ] Fix nav link active state: clicking nav links should use hash navigation, not `onclick="navigateTo()"` which doesn't exist (index.html line 17)
-- [ ] Verify in browser: all navigation works, no console errors, graceful fallbacks
-- [ ] No code tests needed (frontend-only), manual verification
+- [x] In `web/static/app.js` — fix season detail page DOM: create once in index.html, show/hide like other pages instead of dynamic createElement/remove
+- [x] Fix back button navigation: wire `#back-to-series` click in DOMContentLoaded, ensure back from season goes to series detail
+- [x] Fix sort select CSS: `.sort-select` is a class on the `<select>` element directly, but CSS targets `.sort-select select` — fix selector to match actual HTML
+- [x] Add graceful handling on season detail: if season is not owned (no folder_path), show message "Season files not available" instead of error toast
+- [x] Improve updates page: show which specific season numbers are new, not just count
+- [x] Add a proper SVG placeholder for series without posters (inline SVG in app.js or a static file)
+- [x] Fix nav link active state: clicking nav links should use hash navigation, not `onclick="navigateTo()"` which doesn't exist (index.html line 17)
+- [x] Verify in browser: all navigation works, no console errors, graceful fallbacks
+- [x] No code tests needed (frontend-only), manual verification
 
 ### Task 8: Verify acceptance criteria
 - [ ] Verify: clicking on any owned season opens season detail without errors
