@@ -39,20 +39,20 @@ The project has a split-brain problem: the scanner writes to the `seasons` table
 ## Implementation Steps
 
 ### Task 1: Migrate API handlers from watched_seasons to seasons table
-- [ ] In `internal/api/router.go` — update `handleListSeries`: replace `watched_seasons` subquery with `seasons` table count
-- [ ] Update `handleGetSeries`: read seasons from `seasons` table instead of `watched_seasons`, include `voice_actor_id` and voice actor name via JOIN
-- [ ] Update `handleListSeasons`: read owned seasons from `seasons` table, JOIN with `voice_actors` for studio name
-- [ ] Update `handleGetSeason`: query `seasons` table for folder_path and season data
-- [ ] Update `handleGetAudioTracks`: get folder_path from `seasons` table
-- [ ] Update `handleRescanSeason`: get folder_path from `seasons` table
-- [ ] Update `handleProcessAudioStream`: get folder_path from `seasons` table
-- [ ] Update `handleGetUpdates`: count watched seasons from `seasons` table
-- [ ] Update `handleMatchSeries`: merge operations via `seasons` table instead of `watched_seasons`
-- [ ] Add data migration in `internal/database/db.go`: on startup, copy any data from `watched_seasons` that doesn't exist in `seasons`
-- [ ] Write tests for handleListSeries handler (returns correct season counts from seasons table)
-- [ ] Write tests for handleGetSeries handler (returns seasons data correctly)
-- [ ] Write tests for handleListSeasons handler (owned vs locked seasons)
-- [ ] Run `make test` — must pass before next task
+- [x] In `internal/api/router.go` — update `handleListSeries`: replace `watched_seasons` subquery with `seasons` table count
+- [x] Update `handleGetSeries`: read seasons from `seasons` table instead of `watched_seasons`, include `voice_actor_id` and voice actor name via JOIN
+- [x] Update `handleListSeasons`: read owned seasons from `seasons` table, JOIN with `voice_actors` for studio name
+- [x] Update `handleGetSeason`: query `seasons` table for folder_path and season data
+- [x] Update `handleGetAudioTracks`: get folder_path from `seasons` table
+- [x] Update `handleRescanSeason`: get folder_path from `seasons` table
+- [x] Update `handleProcessAudioStream`: get folder_path from `seasons` table
+- [x] Update `handleGetUpdates`: count watched seasons from `seasons` table
+- [x] Update `handleMatchSeries`: merge operations via `seasons` table instead of `watched_seasons`
+- [x] Add data migration in `internal/database/db.go`: on startup, copy any data from `watched_seasons` that doesn't exist in `seasons`
+- [x] Write tests for handleListSeries handler (returns correct season counts from seasons table)
+- [x] Write tests for handleGetSeries handler (returns seasons data correctly)
+- [x] Write tests for handleListSeasons handler (owned vs locked seasons)
+- [x] Run `make test` — must pass before next task
 
 ### Task 2: Plex-inspired CSS redesign — variables, base, header
 - [ ] In `web/static/style.css` — replace all CSS variables with Plex palette: bg-deep `#1a1c22`, bg-primary `#1f2326`, bg-surface `#282c37`, bg-elevated `#323640`, bg-hover `#3d4250`, accent `#e5a00d`, accent-dim `#cc7b19`

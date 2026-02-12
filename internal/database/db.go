@@ -472,10 +472,8 @@ func (db *DB) migrateToSchemaV2() error {
 		return fmt.Errorf("failed to check watched_seasons table: %w", err)
 	}
 
-	// If seasons table is empty but watched_seasons has data, migrate
-	if seasonCount == 0 && watchedCount > 0 {
-		slog.Info("Running migration: migrating data from watched_seasons to seasons table")
-
+	// Migrate data from watched_seasons to seasons (handles both initial and incremental cases)
+	if watchedCount > 0 {
 		// Check if voice_actor_id column exists in watched_seasons
 		var hasVoiceActorId int
 		err = db.QueryRow(`
@@ -486,28 +484,39 @@ func (db *DB) migrateToSchemaV2() error {
 			hasVoiceActorId = 0
 		}
 
-		// Migrate all data from watched_seasons to seasons
+		// Migrate rows from watched_seasons that don't already exist in seasons
 		var migrateQuery string
 		if hasVoiceActorId > 0 {
 			migrateQuery = `
 				INSERT INTO seasons (series_id, season_number, folder_path, voice_actor_id, is_owned, discovered_at)
-				SELECT series_id, season_number, folder_path, voice_actor_id, 1, discovered_at
-				FROM watched_seasons
+				SELECT ws.series_id, ws.season_number, ws.folder_path, ws.voice_actor_id, 1, ws.discovered_at
+				FROM watched_seasons ws
+				WHERE NOT EXISTS (
+					SELECT 1 FROM seasons sn
+					WHERE sn.series_id = ws.series_id AND sn.season_number = ws.season_number
+				)
 			`
 		} else {
 			migrateQuery = `
 				INSERT INTO seasons (series_id, season_number, folder_path, is_owned, discovered_at)
-				SELECT series_id, season_number, folder_path, 1, discovered_at
-				FROM watched_seasons
+				SELECT ws.series_id, ws.season_number, ws.folder_path, 1, ws.discovered_at
+				FROM watched_seasons ws
+				WHERE NOT EXISTS (
+					SELECT 1 FROM seasons sn
+					WHERE sn.series_id = ws.series_id AND sn.season_number = ws.season_number
+				)
 			`
 		}
 
-		_, err = db.Exec(migrateQuery)
+		result, err := db.Exec(migrateQuery)
 		if err != nil {
 			return fmt.Errorf("failed to migrate watched_seasons data: %w", err)
 		}
 
-		slog.Info("Migration completed: migrated watched_seasons to seasons", "count", watchedCount)
+		migrated, _ := result.RowsAffected()
+		if migrated > 0 {
+			slog.Info("Migration completed: migrated watched_seasons to seasons", "migrated", migrated)
+		}
 	}
 
 	// Note: New columns are added in preMigrations() which runs before initTables()
