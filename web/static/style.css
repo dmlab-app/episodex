@@ -912,6 +912,58 @@ h4 { font-size: 1rem; }
 }
 
 /* ============================================
+   Voice Selector Panel
+   ============================================ */
+.voice-selector-panel {
+    background: var(--bg-surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-lg);
+    padding: var(--space-md) var(--space-xl);
+    margin-bottom: var(--space-lg);
+    display: flex;
+    align-items: center;
+    gap: var(--space-lg);
+}
+
+.voice-selector-panel label {
+    font-size: 0.875rem;
+    font-weight: 500;
+    color: var(--text-secondary);
+    white-space: nowrap;
+}
+
+.voice-selector-row {
+    flex: 1;
+    max-width: 280px;
+}
+
+.voice-selector-row select {
+    width: 100%;
+    padding: var(--space-sm) var(--space-lg) var(--space-sm) var(--space-md);
+    background: var(--bg-elevated);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-md);
+    color: var(--text-primary);
+    font-size: 0.875rem;
+    cursor: pointer;
+    appearance: none;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='%2371717a' stroke-width='2'%3E%3Cpath d='M6 9l6 6 6-6'/%3E%3C/svg%3E");
+    background-repeat: no-repeat;
+    background-position: right 8px center;
+    transition: all var(--transition-fast);
+}
+
+.voice-selector-row select:hover {
+    border-color: var(--border-hover);
+}
+
+.voice-selector-row select:focus {
+    outline: none;
+    border-color: var(--accent);
+    box-shadow: 0 0 0 3px var(--accent-glow);
+}
+
+/* ============================================
    Audio Tracks Panel (Dark Plex Theme)
    ============================================ */
 .audio-tracks-panel {

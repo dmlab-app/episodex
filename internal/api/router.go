@@ -82,12 +82,16 @@ func (s *Server) setupRoutes() {
 			r.Route("/{id}/seasons", func(r chi.Router) {
 				r.Get("/", s.handleListSeasons)                             // GET /api/series/:id/seasons
 				r.Get("/{num}", s.handleGetSeason)                          // GET /api/series/:id/seasons/:num
+				r.Put("/{num}", s.handleUpdateSeason)                       // PUT /api/series/:id/seasons/:num
 				r.Post("/{num}/rescan", s.handleRescanSeason)               // POST /api/series/:id/seasons/:num/rescan
 				r.Get("/{num}/audio", s.handleGetAudioTracks)               // GET /api/series/:id/seasons/:num/audio
 				r.Post("/{num}/audio/preview", s.handleGenerateAudioPreview) // POST /api/series/:id/seasons/:num/audio/preview
 				r.Post("/{num}/audio/process", s.handleProcessAudioStream)  // POST /api/series/:id/seasons/:num/audio/process (SSE)
 			})
 		})
+
+		// Voice actors endpoint
+		r.Get("/voices", s.handleListVoices) // GET /api/voices
 
 		// Audio preview serving endpoint
 		r.Get("/audio/preview/{hash}", s.handleServeAudioPreview) // GET /api/audio/preview/:hash
@@ -1214,6 +1218,83 @@ func (s *Server) handleGetSeason(w http.ResponseWriter, r *http.Request) {
 	}
 
 	s.respondJSON(w, http.StatusOK, response)
+}
+
+// handleUpdateSeason updates a season's voice_actor_id
+func (s *Server) handleUpdateSeason(w http.ResponseWriter, r *http.Request) {
+	seriesID := chi.URLParam(r, "id")
+	seasonNum := chi.URLParam(r, "num")
+
+	var req struct {
+		VoiceActorID *int `json:"voice_actor_id"`
+	}
+
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		s.respondError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+
+	// Verify season exists
+	var exists bool
+	err := s.db.QueryRow(`
+		SELECT COUNT(*) > 0 FROM seasons
+		WHERE series_id = ? AND season_number = ?
+	`, seriesID, seasonNum).Scan(&exists)
+	if err != nil || !exists {
+		s.respondError(w, http.StatusNotFound, "season not found")
+		return
+	}
+
+	// Verify voice actor exists if provided
+	if req.VoiceActorID != nil && *req.VoiceActorID > 0 {
+		var voiceExists bool
+		err := s.db.QueryRow(`SELECT COUNT(*) > 0 FROM voice_actors WHERE id = ?`, *req.VoiceActorID).Scan(&voiceExists)
+		if err != nil || !voiceExists {
+			s.respondError(w, http.StatusBadRequest, "invalid voice actor ID")
+			return
+		}
+	}
+
+	// Update voice_actor_id
+	_, err = s.db.Exec(`
+		UPDATE seasons SET voice_actor_id = ?, updated_at = CURRENT_TIMESTAMP
+		WHERE series_id = ? AND season_number = ?
+	`, req.VoiceActorID, seriesID, seasonNum)
+	if err != nil {
+		s.respondError(w, http.StatusInternalServerError, "failed to update season")
+		return
+	}
+
+	slog.Info("Updated season voice", "series_id", seriesID, "season", seasonNum, "voice_actor_id", req.VoiceActorID)
+
+	s.respondJSON(w, http.StatusOK, map[string]interface{}{
+		"success": true,
+	})
+}
+
+// handleListVoices returns all voice actor studios
+func (s *Server) handleListVoices(w http.ResponseWriter, r *http.Request) {
+	rows, err := s.db.Query(`SELECT id, name FROM voice_actors ORDER BY name`)
+	if err != nil {
+		s.respondError(w, http.StatusInternalServerError, "failed to fetch voices")
+		return
+	}
+	defer rows.Close()
+
+	voices := []map[string]interface{}{}
+	for rows.Next() {
+		var id int
+		var name string
+		if err := rows.Scan(&id, &name); err != nil {
+			continue
+		}
+		voices = append(voices, map[string]interface{}{
+			"id":   id,
+			"name": name,
+		})
+	}
+
+	s.respondJSON(w, http.StatusOK, voices)
 }
 
 // handleRescanSeason forces a rescan of a specific season to detect file changes

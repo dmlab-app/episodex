@@ -95,15 +95,15 @@ The project has a split-brain problem: the scanner writes to the `seasons` table
 - [x] No code tests needed (frontend-only), manual verification
 
 ### Task 6: Voice selection on season detail page
-- [ ] In `internal/api/router.go` — add `PUT /api/series/{id}/seasons/{num}` handler to update voice_actor_id on season
-- [ ] Add `GET /api/voices` handler to return list of voice actor studios from `voice_actors` table
-- [ ] In `web/static/app.js` — update `loadSeasonDetail()`: load voices list, load current season voice, render dropdown selector
-- [ ] In `web/static/app.js` — add `updateSeasonVoice(seriesId, seasonNum, voiceActorId)` function to save selection via PUT
-- [ ] In `web/static/style.css` — style voice selector dropdown in Plex dark theme, integrate naturally into season detail layout
-- [ ] In `web/templates/index.html` or `createSeasonDetailPage()` — add voice selector UI element above audio tracks panel
-- [ ] Write tests for PUT season voice endpoint (success, invalid voice_id, season not found)
-- [ ] Write tests for GET voices endpoint
-- [ ] Run `make test` — must pass before next task
+- [x] In `internal/api/router.go` — add `PUT /api/series/{id}/seasons/{num}` handler to update voice_actor_id on season
+- [x] Add `GET /api/voices` handler to return list of voice actor studios from `voice_actors` table
+- [x] In `web/static/app.js` — update `loadSeasonDetail()`: load voices list, load current season voice, render dropdown selector
+- [x] In `web/static/app.js` — add `updateSeasonVoice(seriesId, seasonNum, voiceActorId)` function to save selection via PUT
+- [x] In `web/static/style.css` — style voice selector dropdown in Plex dark theme, integrate naturally into season detail layout
+- [x] In `web/templates/index.html` or `createSeasonDetailPage()` — add voice selector UI element above audio tracks panel
+- [x] Write tests for PUT season voice endpoint (success, invalid voice_id, season not found)
+- [x] Write tests for GET voices endpoint
+- [x] Run `make test` — must pass before next task
 
 ### Task 7: Frontend polish and bug fixes
 - [ ] In `web/static/app.js` — fix season detail page DOM: create once in index.html, show/hide like other pages instead of dynamic createElement/remove

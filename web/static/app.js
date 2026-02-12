@@ -408,6 +408,16 @@ function createSeasonDetailPage(seriesId, seasonNum) {
         </div>
 
         <div class="audio-scanner">
+            <!-- Voice Selector -->
+            <div class="voice-selector-panel" id="voice-selector-panel">
+                <label for="voice-select">Voice Studio</label>
+                <div class="voice-selector-row">
+                    <select id="voice-select">
+                        <option value="">No voice selected</option>
+                    </select>
+                </div>
+            </div>
+
             <!-- Audio Tracks Panel (Light Theme) - ABOVE files list -->
             <div class="audio-tracks-panel" id="audio-tracks-container" style="display: none;">
                 <h3>Audio Tracks</h3>
@@ -469,9 +479,33 @@ let currentAudioPlayer = null;
 
 async function loadSeasonDetail(seriesId, seasonNum) {
     try {
-        // Load series info
-        const series = await api.get(`/api/series/${seriesId}`);
+        // Load series info, voices list, and season info in parallel
+        const [series, voices, seasonInfo] = await Promise.all([
+            api.get(`/api/series/${seriesId}`),
+            api.get('/api/voices'),
+            api.get(`/api/series/${seriesId}/seasons/${seasonNum}`)
+        ]);
+
         document.getElementById('season-detail-subtitle').textContent = series.title;
+
+        // Populate voice selector
+        const voiceSelect = document.getElementById('voice-select');
+        if (voiceSelect) {
+            voiceSelect.innerHTML = '<option value="">No voice selected</option>';
+            voices.forEach(v => {
+                const option = document.createElement('option');
+                option.value = v.id;
+                option.textContent = v.name;
+                if (seasonInfo.voice_actor_id && seasonInfo.voice_actor_id === v.id) {
+                    option.selected = true;
+                }
+                voiceSelect.appendChild(option);
+            });
+            voiceSelect.addEventListener('change', () => {
+                const voiceId = voiceSelect.value ? parseInt(voiceSelect.value) : null;
+                updateSeasonVoice(seriesId, seasonNum, voiceId);
+            });
+        }
 
         // Load audio tracks
         const audioData = await api.get(`/api/series/${seriesId}/seasons/${seasonNum}/audio`);
@@ -529,6 +563,18 @@ async function loadSeasonDetail(seriesId, seasonNum) {
 
     } catch (e) {
         showToast('Failed to load season detail', 'error');
+        console.error(e);
+    }
+}
+
+async function updateSeasonVoice(seriesId, seasonNum, voiceActorId) {
+    try {
+        await api.put(`/api/series/${seriesId}/seasons/${seasonNum}`, {
+            voice_actor_id: voiceActorId
+        });
+        showToast('Voice studio updated');
+    } catch (e) {
+        showToast('Failed to update voice studio', 'error');
         console.error(e);
     }
 }
@@ -1100,3 +1146,4 @@ window.openMatchModal = openMatchModal;
 window.closeMatchModal = closeMatchModal;
 window.matchSeries = matchSeries;
 window.syncWithTVDB = syncWithTVDB;
+window.updateSeasonVoice = updateSeasonVoice;

@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/episodex/episodex/internal/database"
@@ -511,5 +512,158 @@ func TestHandleGetSeries_ArtworkFallback(t *testing.T) {
 	}
 	if resp["backdrop_url"] != "https://art/fallback-backdrop.jpg" {
 		t.Errorf("backdrop_url: expected artwork fallback, got %v", resp["backdrop_url"])
+	}
+}
+
+func TestHandleUpdateSeason_Success(t *testing.T) {
+	srv, db := setupTestServer(t)
+
+	seriesID := seedSeries(t, db, "Breaking Bad", 5)
+	seedSeason(t, db, seriesID, 1, "/media/bb/s01", true, nil)
+
+	lostfilmID := getVoiceActorID(t, db, "LostFilm")
+
+	body := fmt.Sprintf(`{"voice_actor_id": %d}`, lostfilmID)
+	req := httptest.NewRequest(http.MethodPut, fmt.Sprintf("/api/series/%d/seasons/1", seriesID), strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	srv.router.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected status 200, got %d: %s", w.Code, w.Body.String())
+	}
+
+	var result map[string]interface{}
+	if err := json.NewDecoder(w.Body).Decode(&result); err != nil {
+		t.Fatalf("failed to decode response: %v", err)
+	}
+
+	if result["success"] != true {
+		t.Errorf("expected success=true, got %v", result["success"])
+	}
+
+	// Verify the voice was actually saved
+	var savedVoiceID int
+	err := db.QueryRow(`SELECT voice_actor_id FROM seasons WHERE series_id = ? AND season_number = 1`, seriesID).Scan(&savedVoiceID)
+	if err != nil {
+		t.Fatalf("failed to query saved voice: %v", err)
+	}
+	if savedVoiceID != lostfilmID {
+		t.Errorf("expected voice_actor_id=%d, got %d", lostfilmID, savedVoiceID)
+	}
+}
+
+func TestHandleUpdateSeason_ClearVoice(t *testing.T) {
+	srv, db := setupTestServer(t)
+
+	seriesID := seedSeries(t, db, "Breaking Bad", 5)
+	lostfilmID := getVoiceActorID(t, db, "LostFilm")
+	seedSeason(t, db, seriesID, 1, "/media/bb/s01", true, &lostfilmID)
+
+	// Clear voice by sending null
+	body := `{"voice_actor_id": null}`
+	req := httptest.NewRequest(http.MethodPut, fmt.Sprintf("/api/series/%d/seasons/1", seriesID), strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	srv.router.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected status 200, got %d: %s", w.Code, w.Body.String())
+	}
+
+	// Verify voice was cleared
+	var savedVoiceID *int
+	err := db.QueryRow(`SELECT voice_actor_id FROM seasons WHERE series_id = ? AND season_number = 1`, seriesID).Scan(&savedVoiceID)
+	if err != nil {
+		t.Fatalf("failed to query saved voice: %v", err)
+	}
+	if savedVoiceID != nil {
+		t.Errorf("expected voice_actor_id=nil, got %d", *savedVoiceID)
+	}
+}
+
+func TestHandleUpdateSeason_InvalidVoiceID(t *testing.T) {
+	srv, db := setupTestServer(t)
+
+	seriesID := seedSeries(t, db, "Breaking Bad", 5)
+	seedSeason(t, db, seriesID, 1, "/media/bb/s01", true, nil)
+
+	body := `{"voice_actor_id": 99999}`
+	req := httptest.NewRequest(http.MethodPut, fmt.Sprintf("/api/series/%d/seasons/1", seriesID), strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	srv.router.ServeHTTP(w, req)
+
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("expected status 400, got %d: %s", w.Code, w.Body.String())
+	}
+}
+
+func TestHandleUpdateSeason_SeasonNotFound(t *testing.T) {
+	srv, db := setupTestServer(t)
+
+	seedSeries(t, db, "Breaking Bad", 5)
+
+	body := `{"voice_actor_id": 1}`
+	req := httptest.NewRequest(http.MethodPut, "/api/series/1/seasons/99", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	srv.router.ServeHTTP(w, req)
+
+	if w.Code != http.StatusNotFound {
+		t.Errorf("expected status 404, got %d: %s", w.Code, w.Body.String())
+	}
+}
+
+func TestHandleListVoices(t *testing.T) {
+	srv, _ := setupTestServer(t)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/voices", nil)
+	w := httptest.NewRecorder()
+	srv.router.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected status 200, got %d: %s", w.Code, w.Body.String())
+	}
+
+	var voices []map[string]interface{}
+	if err := json.NewDecoder(w.Body).Decode(&voices); err != nil {
+		t.Fatalf("failed to decode response: %v", err)
+	}
+
+	// Should have the 9 seeded voice actors
+	if len(voices) != 9 {
+		t.Fatalf("expected 9 voices, got %d", len(voices))
+	}
+
+	// Verify structure: each voice has id and name
+	for _, v := range voices {
+		if _, ok := v["id"]; !ok {
+			t.Error("voice missing 'id' field")
+		}
+		if _, ok := v["name"]; !ok {
+			t.Error("voice missing 'name' field")
+		}
+	}
+
+	// Verify alphabetical ordering - check a few known entries
+	names := make([]string, len(voices))
+	for i, v := range voices {
+		names[i] = v["name"].(string)
+	}
+	// "AlexFilm" should come before "LostFilm" alphabetically
+	alexIdx, lostIdx := -1, -1
+	for i, n := range names {
+		if n == "AlexFilm" {
+			alexIdx = i
+		}
+		if n == "LostFilm" {
+			lostIdx = i
+		}
+	}
+	if alexIdx == -1 || lostIdx == -1 {
+		t.Error("expected AlexFilm and LostFilm in voice list")
+	} else if alexIdx > lostIdx {
+		t.Errorf("expected AlexFilm before LostFilm, but AlexFilm at %d, LostFilm at %d", alexIdx, lostIdx)
 	}
 }
