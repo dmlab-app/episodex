@@ -52,3 +52,6 @@ temp/
 
 # Air (live reload)
 tmp/
+
+# ralphex progress logs
+progress*.txt

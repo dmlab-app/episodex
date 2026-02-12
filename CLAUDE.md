@@ -11,17 +11,24 @@ Local TV series tracking service with automatic folder scanning.
 ## Project Structure
 
 ```
-cmd/server/main.go          - Entry point
+cmd/server/main.go              - Entry point
 internal/
-  config/config.go          - Environment config
-  database/db.go            - SQLite setup, tables
-  database/backup.go        - Nightly backup with integrity check
-  api/router.go             - HTTP handlers
-  scheduler/scheduler.go    - Background tasks
+  config/config.go              - Environment config
+  database/db.go                - SQLite setup, tables, migrations
+  database/backup.go            - Nightly backup with integrity check
+  database/series.go            - Series/season ORM methods
+  database/media_files.go       - Media file tracking
+  api/router.go                 - HTTP handlers, routing
+  api/handlers_series.go        - Extended series handlers (sync, search)
+  tvdb/client.go                - TVDB API client
+  scanner/scanner.go            - Folder scanner with torrent name parsing
+  audio/audio.go                - AudioCutter (mkvmerge/ffmpeg)
+  hash/hash.go                  - File hashing utilities
+  scheduler/scheduler.go        - Background tasks (scan, updates)
 web/
-  templates/index.html      - SPA
-  static/style.css          - Cinematic Noir theme
-  static/app.js             - Frontend app
+  templates/index.html          - SPA
+  static/style.css              - Plex-inspired dark theme
+  static/app.js                 - Frontend app
 ```
 
 ## Key Features
@@ -31,14 +38,6 @@ web/
 - Per-season voice dubbing tracking
 - Built-in AudioCutter (mkvmerge/ffmpeg)
 - SQLite with nightly backups (keep 10)
-
-## Not Yet Implemented
-
-- `internal/tvdb/client.go` - TVDB API client
-- `internal/scanner/scanner.go` - Folder scanner with go-parse-torrent-name
-- `internal/audio/` - AudioCutter (analyzer, processor)
-- Full series CRUD handlers
-- Search endpoint (proxy to TVDB)
 
 ## Commands
 
@@ -61,16 +60,28 @@ SCAN_INTERVAL_HOURS=1
 
 ## API Endpoints
 
-Working:
-- `GET /api/health`
-- `GET /api/series` (empty)
-- `GET /api/alerts`
-- `GET/POST/DELETE /api/voices`
-
-Pending:
-- Series CRUD with TVDB
-- Seasons management
-- Audio processing with SSE progress
+- `GET /api/health` — health check
+- `GET /api/series` — list all series with season counts
+- `POST /api/series` — create series
+- `GET /api/series/{id}` — series detail with metadata, characters, artwork
+- `DELETE /api/series/{id}` — delete series
+- `POST /api/series/{id}/match` — match series to TVDB
+- `POST /api/series/{id}/sync` — sync metadata from TVDB
+- `GET /api/series/{id}/seasons` — list seasons (owned vs locked)
+- `GET /api/series/{id}/seasons/{num}` — season detail
+- `PUT /api/series/{id}/seasons/{num}` — update season (voice actor)
+- `POST /api/series/{id}/seasons/{num}/rescan` — rescan season folder
+- `GET /api/series/{id}/seasons/{num}/audio` — list audio tracks
+- `POST /api/series/{id}/seasons/{num}/audio/preview` — generate audio preview
+- `POST /api/series/{id}/seasons/{num}/audio/process` — process audio (SSE)
+- `GET /api/voices` — list voice actor studios
+- `GET /api/audio/preview/{hash}` — serve audio preview file
+- `GET /api/alerts` — list alerts
+- `POST /api/alerts/{id}/dismiss` — dismiss alert
+- `POST /api/scan/trigger` — trigger folder scan
+- `GET /api/updates` — get new season updates
+- `POST /api/updates/check` — check for TVDB updates
+- `GET /api/search` — search TVDB for series
 
 ## Rules
 
@@ -84,4 +95,4 @@ Pending:
 
 - Uses `gateway_gateway` Docker network for reproxy
 - Voice studios pre-seeded on first run (LostFilm, Amedia, etc.)
-- Frontend uses Outfit + JetBrains Mono fonts
+- Frontend uses Inter + JetBrains Mono fonts

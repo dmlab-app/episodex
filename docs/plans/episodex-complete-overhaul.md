@@ -127,8 +127,8 @@ The project has a split-brain problem: the scanner writes to the `seasons` table
 - [x] Run linter `make lint` — all issues must be fixed
 
 ### Task 9: [Final] Update documentation
-- [ ] Update CLAUDE.md: remove "Not Yet Implemented" items that are now done, update API endpoints list
-- [ ] Clean up any TODO comments left in code
+- [x] Update CLAUDE.md: remove "Not Yet Implemented" items that are now done, update API endpoints list
+- [x] Clean up any TODO comments left in code
 
 ## Technical Details
 

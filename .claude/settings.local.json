@@ -43,7 +43,8 @@
       "Bash(/Users/maks/sdk/go1.25.5/bin/go build:*)",
       "Bash(python3:*)",
       "WebSearch",
-      "WebFetch(domain:raw.githubusercontent.com)"
+      "WebFetch(domain:raw.githubusercontent.com)",
+      "Bash(git commit:*)"
     ],
     "deny": [],
     "ask": []
