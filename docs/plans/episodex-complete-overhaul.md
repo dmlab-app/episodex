@@ -65,17 +65,17 @@ The project has a split-brain problem: the scanner writes to the `seasons` table
 - [x] No tests needed (CSS-only changes)
 
 ### Task 3: Plex-inspired CSS redesign — cards, grids, components
-- [ ] Redesign series cards `.series-card`: Plex poster style — clean rounded corners, subtle shadow, hover overlay with gradient, remove neon glow border effect
-- [ ] Update stats bar `.stats-bar`: Plex-style stat blocks
-- [ ] Update filters bar `.filters-bar`, `.filter-btn`, `.search-box`: Plex-style search and filters
-- [ ] Update season cards `.season-card`: Plex style with clean hover, no exaggerated glow
-- [ ] Redesign audio tracks panel `.audio-tracks-panel`: replace white theme with dark Plex theme — dark bg, light text, accent highlights, remove all hardcoded light colors (#ffffff, #333, #f8f9fa, #666, #f0f4ff, #667eea, #f093fb, #f5576c, #fff3e0, #ffa726, #38ef7d)
-- [ ] Update modals `.modal-*`: dark Plex style
-- [ ] Update toasts `.toast-*`: Plex-consistent notifications
-- [ ] Update search results `.search-result`, match results `.match-result-item`: Plex style
-- [ ] Update progress container `.progress-*`: Plex-style progress bar
-- [ ] Verify in browser: full app looks consistent Plex-style
-- [ ] No tests needed (CSS-only changes)
+- [x] Redesign series cards `.series-card`: Plex poster style — clean rounded corners, subtle shadow, hover overlay with gradient, remove neon glow border effect
+- [x] Update stats bar `.stats-bar`: Plex-style stat blocks
+- [x] Update filters bar `.filters-bar`, `.filter-btn`, `.search-box`: Plex-style search and filters
+- [x] Update season cards `.season-card`: Plex style with clean hover, no exaggerated glow
+- [x] Redesign audio tracks panel `.audio-tracks-panel`: replace white theme with dark Plex theme — dark bg, light text, accent highlights, remove all hardcoded light colors (#ffffff, #333, #f8f9fa, #666, #f0f4ff, #667eea, #f093fb, #f5576c, #fff3e0, #ffa726, #38ef7d)
+- [x] Update modals `.modal-*`: dark Plex style
+- [x] Update toasts `.toast-*`: Plex-consistent notifications
+- [x] Update search results `.search-result`, match results `.match-result-item`: Plex style
+- [x] Update progress container `.progress-*`: Plex-style progress bar
+- [x] Verify in browser: full app looks consistent Plex-style
+- [x] No tests needed (CSS-only changes)
 
 ### Task 4: Series detail page — API enhancement
 - [ ] In `internal/api/router.go` — update `handleGetSeries` to return full metadata: overview, year, runtime, rating, genres, networks, studios, backdrop_url, slug (fields already exist in series table)

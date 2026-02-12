@@ -496,8 +496,13 @@ h4 { font-size: 1rem; }
     padding: var(--space-lg);
     background: var(--bg-surface);
     border: 1px solid var(--border);
-    border-radius: var(--radius-lg);
+    border-radius: var(--radius-md);
     text-align: center;
+    transition: background var(--transition-fast);
+}
+
+.stat:hover {
+    background: var(--bg-elevated);
 }
 
 .stat-value {
@@ -578,9 +583,9 @@ h4 { font-size: 1rem; }
 
 .filter-group {
     display: flex;
-    gap: var(--space-xs);
+    gap: 2px;
     background: var(--bg-surface);
-    padding: 4px;
+    padding: 3px;
     border-radius: var(--radius-md);
     border: 1px solid var(--border);
 }
@@ -596,11 +601,13 @@ h4 { font-size: 1rem; }
 
 .filter-btn:hover {
     color: var(--text-primary);
+    background: var(--bg-hover);
 }
 
 .filter-btn.active {
-    background: var(--accent);
-    color: var(--bg-deep);
+    background: var(--bg-elevated);
+    color: var(--text-primary);
+    font-weight: 600;
 }
 
 .sort-select select {
@@ -634,16 +641,17 @@ h4 { font-size: 1rem; }
 /* Series Card */
 .series-card {
     position: relative;
-    border-radius: var(--radius-lg);
+    border-radius: var(--radius-md);
     overflow: hidden;
     cursor: pointer;
+    background: var(--bg-surface);
     transition: transform var(--transition-base), box-shadow var(--transition-base);
     animation: cardAppear 0.5s ease backwards;
 }
 
 .series-card:hover {
-    transform: translateY(-8px) scale(1.02);
-    box-shadow: var(--shadow-glow);
+    transform: translateY(-4px);
+    box-shadow: var(--shadow-lg);
 }
 
 @keyframes cardAppear {
@@ -693,20 +701,20 @@ h4 { font-size: 1rem; }
     pointer-events: none;
 }
 
-/* Glow effect on hover */
+/* Subtle border on hover */
 .series-card::before {
     content: '';
     position: absolute;
-    inset: -2px;
-    background: linear-gradient(135deg, var(--accent), var(--secondary));
-    border-radius: var(--radius-lg);
-    opacity: 0;
-    z-index: -1;
-    transition: opacity var(--transition-base);
+    inset: 0;
+    border: 1px solid transparent;
+    border-radius: var(--radius-md);
+    z-index: 3;
+    transition: border-color var(--transition-base);
+    pointer-events: none;
 }
 
 .series-card:hover::before {
-    opacity: 0.5;
+    border-color: var(--border-hover);
 }
 
 .series-info {
@@ -904,24 +912,25 @@ h4 { font-size: 1rem; }
 }
 
 /* ============================================
-   Light-themed Audio Tracks Panel
+   Audio Tracks Panel (Dark Plex Theme)
    ============================================ */
 .audio-tracks-panel {
-    background: #ffffff;
-    border-radius: var(--radius-xl);
+    background: var(--bg-surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-lg);
     padding: var(--space-xl);
     margin-bottom: var(--space-xl);
-    box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
+    box-shadow: var(--shadow-md);
 }
 
 .audio-tracks-panel h3 {
-    color: #333;
+    color: var(--text-primary);
     margin-bottom: var(--space-sm);
     font-size: 1.25rem;
 }
 
 .audio-tracks-panel .panel-hint {
-    color: #666;
+    color: var(--text-muted);
     font-size: 0.875rem;
     margin-bottom: var(--space-lg);
 }
@@ -934,25 +943,25 @@ h4 { font-size: 1rem; }
 }
 
 .audio-tracks-panel .track-item {
-    background: #f8f9fa;
-    border: 2px solid #e0e0e0;
+    background: var(--bg-elevated);
+    border: 1px solid var(--border);
     border-radius: var(--radius-md);
     padding: var(--space-md);
     cursor: pointer;
-    transition: all 0.2s ease;
+    transition: all var(--transition-fast);
     display: flex;
     align-items: center;
     flex-wrap: wrap;
 }
 
 .audio-tracks-panel .track-item:hover {
-    border-color: #667eea;
-    transform: translateX(5px);
+    border-color: var(--border-hover);
+    background: var(--bg-hover);
 }
 
 .audio-tracks-panel .track-item.selected {
-    border-color: #667eea;
-    background: #f0f4ff;
+    border-color: var(--accent);
+    background: var(--accent-glow);
 }
 
 .audio-tracks-panel .track-item input[type="radio"] {
@@ -960,7 +969,7 @@ h4 { font-size: 1rem; }
     width: 20px;
     height: 20px;
     cursor: pointer;
-    accent-color: #667eea;
+    accent-color: var(--accent);
 }
 
 .audio-tracks-panel .track-info {
@@ -970,7 +979,7 @@ h4 { font-size: 1rem; }
 
 .audio-tracks-panel .track-info .track-name {
     font-weight: 600;
-    color: #333;
+    color: var(--text-primary);
     margin-bottom: 4px;
     display: flex;
     align-items: center;
@@ -978,7 +987,7 @@ h4 { font-size: 1rem; }
 }
 
 .audio-tracks-panel .track-info .track-details {
-    color: #666;
+    color: var(--text-secondary);
     font-size: 0.85rem;
 }
 
@@ -990,34 +999,34 @@ h4 { font-size: 1rem; }
 
 .audio-tracks-panel .btn-listen {
     padding: 8px 16px;
-    background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%);
-    color: white;
+    background: var(--accent);
+    color: var(--bg-deep);
     border: none;
-    border-radius: 6px;
+    border-radius: var(--radius-md);
     cursor: pointer;
     font-size: 0.875rem;
     font-weight: 600;
-    transition: all 0.2s ease;
+    transition: all var(--transition-fast);
     min-width: 80px;
 }
 
 .audio-tracks-panel .btn-listen:hover {
-    transform: translateY(-2px);
-    box-shadow: 0 5px 15px rgba(245, 87, 108, 0.4);
+    background: var(--accent-dim);
 }
 
 .audio-tracks-panel .btn-listen:disabled {
-    opacity: 0.6;
+    opacity: 0.5;
     cursor: not-allowed;
-    transform: none;
 }
 
 .audio-tracks-panel .btn-listen.loading {
-    background: linear-gradient(135deg, #a0a0a0 0%, #808080 100%);
+    background: var(--bg-hover);
+    color: var(--text-muted);
 }
 
 .audio-tracks-panel .btn-listen.playing {
-    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+    background: var(--secondary);
+    color: white;
 }
 
 /* Audio Player inside track item */
@@ -1025,7 +1034,7 @@ h4 { font-size: 1rem; }
     width: 100%;
     margin-top: var(--space-md);
     padding-top: var(--space-md);
-    border-top: 1px solid #e0e0e0;
+    border-top: 1px solid var(--border);
 }
 
 .audio-tracks-panel .audio-player-wrapper audio {
@@ -1034,7 +1043,7 @@ h4 { font-size: 1rem; }
 }
 
 .audio-tracks-panel .preview-error {
-    color: #ef5350;
+    color: var(--danger);
     font-size: 0.875rem;
     margin: 0;
 }
@@ -1045,61 +1054,60 @@ h4 { font-size: 1rem; }
     align-items: center;
     gap: var(--space-md);
     padding: var(--space-md);
-    background: #fff3e0;
-    border: 2px solid #ffa726;
+    background: rgba(234, 179, 8, 0.1);
+    border: 1px solid rgba(234, 179, 8, 0.3);
     border-radius: var(--radius-md);
     cursor: pointer;
     margin-bottom: var(--space-lg);
 }
 
 .audio-tracks-panel .audio-track-option.keep-original:hover {
-    background: #ffe0b2;
+    background: rgba(234, 179, 8, 0.15);
 }
 
 .audio-tracks-panel .audio-track-option input[type="checkbox"] {
     width: 20px;
     height: 20px;
     cursor: pointer;
-    accent-color: #ffa726;
+    accent-color: var(--warning);
 }
 
 .audio-tracks-panel .audio-track-option .track-info .track-name {
     font-weight: 600;
-    color: #333;
+    color: var(--text-primary);
 }
 
 .audio-tracks-panel .audio-track-option .track-info .track-meta {
     font-size: 0.85rem;
-    color: #666;
+    color: var(--text-secondary);
 }
 
-/* Default badge inside light panel */
+/* Default badge inside panel */
 .audio-tracks-panel .default-badge {
     font-size: 0.65rem;
     font-weight: 600;
     text-transform: uppercase;
     letter-spacing: 0.05em;
     padding: 2px 6px;
-    background: #38ef7d;
-    color: white;
+    background: rgba(34, 197, 94, 0.2);
+    color: var(--success);
     border-radius: var(--radius-sm);
 }
 
-/* Process Button (Green gradient like original) */
+/* Process Button */
 .audio-tracks-panel .audio-actions {
     display: flex;
     justify-content: flex-end;
 }
 
 .btn-success {
-    background: linear-gradient(135deg, #11998e 0%, #38ef7d 100%);
-    color: white;
+    background: var(--success);
+    color: var(--bg-deep);
     font-weight: 600;
 }
 
 .btn-success:hover {
-    transform: translateY(-2px);
-    box-shadow: 0 5px 20px rgba(56, 239, 125, 0.4);
+    background: #1aab4e;
 }
 
 .info-box {
@@ -1352,13 +1360,13 @@ h4 { font-size: 1rem; }
 
 .progress-bar {
     height: 100%;
-    background: linear-gradient(135deg, var(--accent) 0%, var(--accent-dim) 100%);
+    background: var(--accent);
     border-radius: var(--radius-full);
     transition: width var(--transition-fast);
     display: flex;
     align-items: center;
     justify-content: center;
-    color: white;
+    color: var(--bg-deep);
     font-weight: 600;
     font-size: 0.75rem;
 }
@@ -1499,10 +1507,10 @@ h4 { font-size: 1rem; }
     width: 100%;
     max-width: 480px;
     max-height: 90vh;
-    background: var(--bg-surface);
+    background: var(--bg-primary);
     border: 1px solid var(--border);
-    border-radius: var(--radius-xl);
-    box-shadow: var(--shadow-lg);
+    border-radius: var(--radius-lg);
+    box-shadow: 0 16px 48px rgba(0, 0, 0, 0.6);
     overflow: hidden;
     animation: modalSlide 0.3s var(--transition-slower);
 }
@@ -1542,7 +1550,7 @@ h4 { font-size: 1rem; }
     gap: var(--space-sm);
     padding: var(--space-lg);
     border-top: 1px solid var(--border);
-    background: var(--bg-elevated);
+    background: var(--bg-surface);
 }
 
 /* Search Results */
@@ -1707,33 +1715,33 @@ h4 { font-size: 1rem; }
 
 /* Season Card */
 .season-card {
-    border-radius: var(--radius-lg);
+    border-radius: var(--radius-md);
     overflow: hidden;
     cursor: pointer;
-    transition: transform var(--transition-base), box-shadow var(--transition-base);
+    background: var(--bg-surface);
+    border: 1px solid var(--border);
+    transition: transform var(--transition-base), box-shadow var(--transition-base), border-color var(--transition-fast);
     position: relative;
 }
 
 .season-card:hover {
-    transform: translateY(-4px);
-    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.6);
+    transform: translateY(-3px);
+    box-shadow: var(--shadow-md);
+    border-color: var(--border-hover);
 }
 
 .season-card.locked {
     cursor: default;
+    opacity: 0.7;
 }
 
 .season-card.locked:hover {
-    transform: translateY(-2px);
-}
-
-.season-card.owned {
-    background: var(--bg-surface);
-    border: 1px solid var(--border);
+    transform: translateY(-1px);
+    box-shadow: var(--shadow-sm);
 }
 
 .season-card.owned:hover {
-    border-color: var(--border-hover);
+    border-color: var(--accent);
 }
 
 /* Season Poster */
