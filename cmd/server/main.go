@@ -3,6 +3,7 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"os"
@@ -122,6 +123,9 @@ func main() {
 				seriesList = append(seriesList, s)
 			}
 			rows.Close() //nolint:errcheck
+			if err := rows.Err(); err != nil {
+				return fmt.Errorf("error reading series rows: %w", err)
+			}
 
 			var checked, updated int
 

@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"net/http"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -52,7 +53,6 @@ func (s *Server) setupMiddleware() {
 	s.router.Use(middleware.RealIP)
 	s.router.Use(s.loggingMiddleware)
 	s.router.Use(middleware.Recoverer)
-	s.router.Use(middleware.Timeout(60 * time.Second))
 
 	// CORS configuration
 	s.router.Use(cors.Handler(cors.Options{
@@ -70,9 +70,14 @@ func (s *Server) setupRoutes() {
 	// Health check
 	s.router.Get("/api/health", s.handleHealth)
 
-	// API routes will be added in future phases
+	// SSE endpoint without timeout — audio processing can take minutes
+	s.router.Post("/api/series/{id}/seasons/{num}/audio/process", s.handleProcessAudioStream)
+
 	s.router.Route("/api", func(r chi.Router) {
-		// Series endpoints (placeholder)
+		// Apply timeout to all API routes (SSE is registered above, outside this group)
+		r.Use(middleware.Timeout(60 * time.Second))
+
+		// Series endpoints
 		r.Route("/series", func(r chi.Router) {
 			r.Get("/", s.handleListSeries)                   // GET /api/series
 			r.Post("/", s.handleCreateSeries)                // POST /api/series
@@ -89,7 +94,6 @@ func (s *Server) setupRoutes() {
 				r.Post("/{num}/rescan", s.handleRescanSeason)                // POST /api/series/:id/seasons/:num/rescan
 				r.Get("/{num}/audio", s.handleGetAudioTracks)                // GET /api/series/:id/seasons/:num/audio
 				r.Post("/{num}/audio/preview", s.handleGenerateAudioPreview) // POST /api/series/:id/seasons/:num/audio/preview
-				r.Post("/{num}/audio/process", s.handleProcessAudioStream)   // POST /api/series/:id/seasons/:num/audio/process (SSE)
 			})
 		})
 
@@ -1193,15 +1197,23 @@ func (s *Server) handleSearch(w http.ResponseWriter, r *http.Request) {
 
 // Audio handlers
 func (s *Server) handleGetAudioTracks(w http.ResponseWriter, r *http.Request) {
-	seriesID := chi.URLParam(r, "id")
-	seasonNum := chi.URLParam(r, "num")
+	sid, err := strconv.ParseInt(chi.URLParam(r, "id"), 10, 64)
+	if err != nil {
+		s.respondError(w, http.StatusBadRequest, "invalid series ID")
+		return
+	}
+	snum, err := strconv.Atoi(chi.URLParam(r, "num"))
+	if err != nil {
+		s.respondError(w, http.StatusBadRequest, "invalid season number")
+		return
+	}
 
 	// Get folder path from seasons table
 	var folderPath *string
-	err := s.db.QueryRow(`
+	err = s.db.QueryRow(`
 		SELECT folder_path FROM seasons
 		WHERE series_id = ? AND season_number = ?
-	`, seriesID, seasonNum).Scan(&folderPath)
+	`, sid, snum).Scan(&folderPath)
 
 	if err != nil || folderPath == nil {
 		s.respondError(w, http.StatusNotFound, "season not found or no folder path")
@@ -1216,9 +1228,16 @@ func (s *Server) handleGetAudioTracks(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Collect and sort file paths for deterministic ordering
+	sortedPaths := make([]string, 0, len(results))
+	for fp := range results {
+		sortedPaths = append(sortedPaths, fp)
+	}
+	sort.Strings(sortedPaths)
+
 	// Get files and their processed status
 	files := []map[string]interface{}{}
-	for filePath := range results {
+	for _, filePath := range sortedPaths {
 		var processed bool
 		err := s.db.QueryRow(`
 			SELECT COUNT(*) > 0 FROM processed_files WHERE file_path = ?
@@ -1236,14 +1255,8 @@ func (s *Server) handleGetAudioTracks(w http.ResponseWriter, r *http.Request) {
 
 	// Get audio tracks from first file (assuming all files have same structure)
 	var audioTracks []map[string]interface{}
-	if len(results) > 0 {
-		var firstFile string
-		for fp := range results {
-			firstFile = fp
-			break
-		}
-
-		tracks := results[firstFile]
+	if len(sortedPaths) > 0 {
+		tracks := results[sortedPaths[0]]
 		for _, track := range tracks {
 			audioTracks = append(audioTracks, map[string]interface{}{
 				"id":       track.ID,
@@ -1441,8 +1454,16 @@ func (s *Server) handleRescanSeason(w http.ResponseWriter, r *http.Request) {
 
 // handleGenerateAudioPreview generates a 30-second preview of an audio track
 func (s *Server) handleGenerateAudioPreview(w http.ResponseWriter, r *http.Request) {
-	seriesID := chi.URLParam(r, "id")
-	seasonNum := chi.URLParam(r, "num")
+	sid, err := strconv.ParseInt(chi.URLParam(r, "id"), 10, 64)
+	if err != nil {
+		s.respondError(w, http.StatusBadRequest, "invalid series ID")
+		return
+	}
+	snum, err := strconv.Atoi(chi.URLParam(r, "num"))
+	if err != nil {
+		s.respondError(w, http.StatusBadRequest, "invalid season number")
+		return
+	}
 
 	var req struct {
 		FilePath   string `json:"file_path"`
@@ -1456,17 +1477,25 @@ func (s *Server) handleGenerateAudioPreview(w http.ResponseWriter, r *http.Reque
 
 	// Validate file path is within the season's folder to prevent path traversal
 	var folderPath *string
-	err := s.db.QueryRow(`
+	err = s.db.QueryRow(`
 		SELECT folder_path FROM seasons
 		WHERE series_id = ? AND season_number = ?
-	`, seriesID, seasonNum).Scan(&folderPath)
+	`, sid, snum).Scan(&folderPath)
 	if err != nil || folderPath == nil {
 		s.respondError(w, http.StatusNotFound, "season not found or no folder path")
 		return
 	}
 
-	absFolder, _ := filepath.Abs(*folderPath)
-	absFile, _ := filepath.Abs(req.FilePath)
+	absFolder, err := filepath.Abs(*folderPath)
+	if err != nil {
+		s.respondError(w, http.StatusInternalServerError, "failed to resolve folder path")
+		return
+	}
+	absFile, err := filepath.Abs(req.FilePath)
+	if err != nil {
+		s.respondError(w, http.StatusBadRequest, "invalid file path")
+		return
+	}
 	if !strings.HasPrefix(absFile, absFolder+string(filepath.Separator)) {
 		s.respondError(w, http.StatusBadRequest, "file path is outside season folder")
 		return
@@ -1572,10 +1601,11 @@ func (s *Server) handleProcessAudioStream(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	files := []string{}
+	files := make([]string, 0, len(results))
 	for filePath := range results {
 		files = append(files, filePath)
 	}
+	sort.Strings(files)
 
 	// Send start event
 	startEvent := map[string]interface{}{
