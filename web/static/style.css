@@ -1,26 +1,26 @@
 /* ============================================
-   EpisodeX - Cinematic Noir Design System
+   EpisodeX - Plex-Inspired Design System
    ============================================ */
 
 /* Fonts */
-@import url('https://fonts.googleapis.com/css2?family=Unbounded:wght@400;500;600;700&family=DM+Sans:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap');
 
 /* ============================================
    CSS Variables
    ============================================ */
 :root {
-    /* Colors - Cinematic Noir */
-    --bg-deep: #05060a;
-    --bg-primary: #08090d;
-    --bg-surface: #0f1115;
-    --bg-elevated: #16181d;
-    --bg-hover: #1c1f26;
+    /* Colors - Plex Dark */
+    --bg-deep: #1a1c22;
+    --bg-primary: #1f2326;
+    --bg-surface: #282c37;
+    --bg-elevated: #323640;
+    --bg-hover: #3d4250;
 
-    /* Accent - Warm Amber (projector light) */
-    --accent: #f59e0b;
-    --accent-dim: #d97706;
-    --accent-glow: rgba(245, 158, 11, 0.15);
-    --accent-glow-strong: rgba(245, 158, 11, 0.3);
+    /* Accent - Plex Orange */
+    --accent: #e5a00d;
+    --accent-dim: #cc7b19;
+    --accent-glow: rgba(229, 160, 13, 0.15);
+    --accent-glow-strong: rgba(229, 160, 13, 0.3);
 
     /* Secondary - Cool Blue */
     --secondary: #3b82f6;
@@ -33,25 +33,25 @@
     --info: #06b6d4;
 
     /* Text */
-    --text-primary: #f4f4f5;
-    --text-secondary: #a1a1aa;
-    --text-muted: #71717a;
+    --text-primary: #eaeaea;
+    --text-secondary: #999999;
+    --text-muted: #666666;
     --text-disabled: #52525b;
 
     /* Borders */
-    --border: rgba(255, 255, 255, 0.06);
-    --border-hover: rgba(255, 255, 255, 0.1);
-    --border-accent: rgba(245, 158, 11, 0.3);
+    --border: rgba(255, 255, 255, 0.08);
+    --border-hover: rgba(255, 255, 255, 0.14);
+    --border-accent: rgba(229, 160, 13, 0.3);
 
     /* Shadows */
-    --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.5);
-    --shadow-md: 0 4px 12px rgba(0, 0, 0, 0.5);
-    --shadow-lg: 0 8px 32px rgba(0, 0, 0, 0.6);
-    --shadow-glow: 0 0 40px var(--accent-glow);
+    --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.4);
+    --shadow-md: 0 4px 12px rgba(0, 0, 0, 0.4);
+    --shadow-lg: 0 8px 32px rgba(0, 0, 0, 0.5);
+    --shadow-glow: 0 0 20px var(--accent-glow);
 
     /* Typography */
-    --font-display: 'Unbounded', cursive;
-    --font-body: 'DM Sans', sans-serif;
+    --font-display: 'Inter', sans-serif;
+    --font-body: 'Inter', sans-serif;
     --font-mono: 'JetBrains Mono', monospace;
 
     /* Spacing */
@@ -105,31 +105,6 @@ body {
     background: var(--bg-deep);
     min-height: 100vh;
     overflow-x: hidden;
-}
-
-/* Subtle noise texture overlay */
-body::before {
-    content: '';
-    position: fixed;
-    inset: 0;
-    background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noise'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noise)'/%3E%3C/svg%3E");
-    opacity: 0.015;
-    pointer-events: none;
-    z-index: 9999;
-}
-
-/* Ambient gradient */
-body::after {
-    content: '';
-    position: fixed;
-    top: -50%;
-    left: -50%;
-    width: 200%;
-    height: 200%;
-    background: radial-gradient(ellipse at 30% 20%, rgba(245, 158, 11, 0.03) 0%, transparent 50%),
-                radial-gradient(ellipse at 70% 80%, rgba(59, 130, 246, 0.02) 0%, transparent 50%);
-    pointer-events: none;
-    z-index: -1;
 }
 
 a {
@@ -273,8 +248,7 @@ h4 { font-size: 1rem; }
     top: 0;
     z-index: 100;
     height: var(--header-height);
-    background: rgba(8, 9, 13, 0.8);
-    backdrop-filter: blur(20px);
+    background: var(--bg-primary);
     border-bottom: 1px solid var(--border);
 }
 
@@ -356,7 +330,9 @@ h4 { font-size: 1rem; }
 
 .nav-link.active {
     color: var(--accent);
-    background: var(--accent-glow);
+    background: transparent;
+    border-bottom: 2px solid var(--accent);
+    border-radius: 0;
 }
 
 .nav-badge {
@@ -391,10 +367,10 @@ h4 { font-size: 1rem; }
     align-items: center;
     justify-content: center;
     gap: var(--space-sm);
-    padding: var(--space-sm) var(--space-md);
+    padding: var(--space-sm) var(--space-lg);
     font-size: 0.875rem;
     font-weight: 500;
-    border-radius: var(--radius-md);
+    border-radius: var(--radius-full);
     transition: all var(--transition-fast);
     white-space: nowrap;
 }
@@ -411,6 +387,7 @@ h4 { font-size: 1rem; }
     color: var(--text-secondary);
     background: var(--bg-surface);
     border: 1px solid var(--border);
+    border-radius: 50%;
 }
 
 .btn-icon:hover {
@@ -436,7 +413,6 @@ h4 { font-size: 1rem; }
 
 .btn-primary:hover {
     background: var(--accent-dim);
-    box-shadow: var(--shadow-glow);
 }
 
 .btn-secondary {
@@ -710,8 +686,8 @@ h4 { font-size: 1rem; }
     position: absolute;
     inset: 0;
     background: linear-gradient(to top,
-        rgba(5, 6, 10, 0.95) 0%,
-        rgba(5, 6, 10, 0.5) 30%,
+        rgba(26, 28, 34, 0.95) 0%,
+        rgba(26, 28, 34, 0.5) 30%,
         transparent 60%
     );
     pointer-events: none;
@@ -1789,9 +1765,9 @@ h4 { font-size: 1rem; }
     position: absolute;
     inset: 0;
     background: linear-gradient(to top,
-        rgba(5, 6, 10, 0.95) 0%,
-        rgba(5, 6, 10, 0.6) 50%,
-        rgba(5, 6, 10, 0.3) 70%,
+        rgba(26, 28, 34, 0.95) 0%,
+        rgba(26, 28, 34, 0.6) 50%,
+        rgba(26, 28, 34, 0.3) 70%,
         transparent 100%
     );
     display: flex;

@@ -55,14 +55,14 @@ The project has a split-brain problem: the scanner writes to the `seasons` table
 - [x] Run `make test` — must pass before next task
 
 ### Task 2: Plex-inspired CSS redesign — variables, base, header
-- [ ] In `web/static/style.css` — replace all CSS variables with Plex palette: bg-deep `#1a1c22`, bg-primary `#1f2326`, bg-surface `#282c37`, bg-elevated `#323640`, bg-hover `#3d4250`, accent `#e5a00d`, accent-dim `#cc7b19`
-- [ ] Replace fonts: use `Inter` for body and display, keep `JetBrains Mono` for monospace. Update Google Fonts import and `--font-display`, `--font-body` variables
-- [ ] Update `web/templates/index.html`: change Google Fonts link to load Inter instead of Outfit/Unbounded/DM Sans
-- [ ] Update body base styles: new background, remove noise texture overlay (`body::before`), simplify ambient gradient
-- [ ] Redesign header `.header`: Plex-style navbar — solid dark bg, cleaner look, accent on active nav
-- [ ] Update button styles `.btn-*`: Plex-like buttons — rounded, clean, accent orange for primary
-- [ ] Verify in browser: header renders correctly, colors are Plex-like
-- [ ] No tests needed (CSS-only changes)
+- [x] In `web/static/style.css` — replace all CSS variables with Plex palette: bg-deep `#1a1c22`, bg-primary `#1f2326`, bg-surface `#282c37`, bg-elevated `#323640`, bg-hover `#3d4250`, accent `#e5a00d`, accent-dim `#cc7b19`
+- [x] Replace fonts: use `Inter` for body and display, keep `JetBrains Mono` for monospace. Update Google Fonts import and `--font-display`, `--font-body` variables
+- [x] Update `web/templates/index.html`: change Google Fonts link to load Inter instead of Outfit/Unbounded/DM Sans
+- [x] Update body base styles: new background, remove noise texture overlay (`body::before`), simplify ambient gradient
+- [x] Redesign header `.header`: Plex-style navbar — solid dark bg, cleaner look, accent on active nav
+- [x] Update button styles `.btn-*`: Plex-like buttons — rounded, clean, accent orange for primary
+- [x] Verify in browser: header renders correctly, colors are Plex-like
+- [x] No tests needed (CSS-only changes)
 
 ### Task 3: Plex-inspired CSS redesign — cards, grids, components
 - [ ] Redesign series cards `.series-card`: Plex poster style — clean rounded corners, subtle shadow, hover overlay with gradient, remove neon glow border effect
