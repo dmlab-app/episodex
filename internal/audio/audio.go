@@ -210,13 +210,10 @@ func (ac *AudioCutter) RemoveAudioTracks(filePath string, keepTrackID int, keepO
 		return fmt.Errorf("mkvmerge failed: %w, output: %s", err, string(output))
 	}
 
-	// Replace original file with new file
-	if err := os.Remove(filePath); err != nil {
-		return fmt.Errorf("failed to remove original file: %w", err)
-	}
-
+	// Replace original file atomically — Rename overwrites the destination on UNIX,
+	// so there's no window where the original is deleted but the temp isn't yet in place.
 	if err := os.Rename(tempFile, filePath); err != nil {
-		return fmt.Errorf("failed to rename temp file: %w", err)
+		return fmt.Errorf("failed to replace original file: %w", err)
 	}
 
 	return nil

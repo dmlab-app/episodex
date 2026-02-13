@@ -110,9 +110,6 @@ func (s *Server) handleSyncSeriesFromTVDB(w http.ResponseWriter, r *http.Request
 		Status:           &extended.Status,
 		FirstAired:       &extended.FirstAired,
 		LastAired:        &extended.LastAired,
-		Year:             &extended.Year,
-		Runtime:          &extended.Runtime,
-		Rating:           &extended.Score,
 		ContentRating:    &contentRating,
 		OriginalCountry:  &extended.OriginalCountry,
 		OriginalLanguage: &extended.OriginalLanguage,
@@ -120,6 +117,16 @@ func (s *Server) handleSyncSeriesFromTVDB(w http.ResponseWriter, r *http.Request
 		Networks:         &networks,
 		Studios:          &studios,
 		TotalSeasons:     len(extended.Seasons),
+	}
+	// Only store non-zero values so we don't overwrite NULL with meaningless 0
+	if extended.Year > 0 {
+		seriesData.Year = &extended.Year
+	}
+	if extended.Runtime > 0 {
+		seriesData.Runtime = &extended.Runtime
+	}
+	if extended.Score > 0 {
+		seriesData.Rating = &extended.Score
 	}
 
 	seriesID, err := s.db.UpsertSeries(seriesData)
@@ -135,8 +142,13 @@ func (s *Server) handleSyncSeriesFromTVDB(w http.ResponseWriter, r *http.Request
 			SeriesID:     seriesID,
 			TVDBSeasonID: &seasonInfo.ID,
 			SeasonNumber: seasonInfo.Number,
-			Name:         &seasonInfo.Name,
-			PosterURL:    &seasonInfo.Image,
+		}
+		// Only set name/image if non-empty to avoid overwriting existing values with ""
+		if seasonInfo.Name != "" {
+			seasonData.Name = &seasonInfo.Name
+		}
+		if seasonInfo.Image != "" {
+			seasonData.PosterURL = &seasonInfo.Image
 		}
 
 		// Check if season is already owned locally

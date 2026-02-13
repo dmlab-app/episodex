@@ -100,6 +100,9 @@ func (db *DB) UpsertSeries(series *Series) (int64, error) {
 	if series.TVDBId != nil {
 		var existingID int64
 		err := db.QueryRow(`SELECT id FROM series WHERE tvdb_id = ?`, *series.TVDBId).Scan(&existingID)
+		if err != nil && err != sql.ErrNoRows {
+			return 0, fmt.Errorf("failed to check existing series: %w", err)
+		}
 		if err == nil {
 			// Update existing series
 			_, err = db.Exec(`
@@ -157,13 +160,25 @@ func (db *DB) UpsertSeason(season *Season) (int64, error) {
 		WHERE series_id = ? AND season_number = ?
 	`, season.SeriesID, season.SeasonNumber).Scan(&existingID)
 
+	if err != nil && err != sql.ErrNoRows {
+		return 0, fmt.Errorf("failed to check existing season: %w", err)
+	}
+
 	if err == nil {
-		// Update existing season
+		// Update existing season — use COALESCE so that callers with partial data
+		// (e.g. scanner with no TVDB fields) don't overwrite previously synced metadata.
 		_, err = db.Exec(`
 			UPDATE seasons SET
-				tvdb_season_id = ?, name = ?, overview = ?, poster_url = ?,
-				first_aired = ?, episode_count = ?, folder_path = ?,
-				voice_actor_id = ?, is_owned = ?, discovered_at = ?,
+				tvdb_season_id = COALESCE(?, tvdb_season_id),
+				name = COALESCE(?, name),
+				overview = COALESCE(?, overview),
+				poster_url = COALESCE(?, poster_url),
+				first_aired = COALESCE(?, first_aired),
+				episode_count = COALESCE(?, episode_count),
+				folder_path = COALESCE(?, folder_path),
+				voice_actor_id = COALESCE(?, voice_actor_id),
+				is_owned = ?,
+				discovered_at = COALESCE(?, discovered_at),
 				updated_at = CURRENT_TIMESTAMP
 			WHERE id = ?
 		`, season.TVDBSeasonID, season.Name, season.Overview, season.PosterURL,
@@ -202,6 +217,10 @@ func (db *DB) UpsertEpisode(episode *Episode) (int64, error) {
 		SELECT id FROM episodes
 		WHERE season_id = ? AND episode_number = ?
 	`, episode.SeasonID, episode.EpisodeNumber).Scan(&existingID)
+
+	if err != nil && err != sql.ErrNoRows {
+		return 0, fmt.Errorf("failed to check existing episode: %w", err)
+	}
 
 	if err == nil {
 		// Update existing episode — use COALESCE for TVDB metadata fields

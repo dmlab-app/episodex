@@ -15,7 +15,12 @@ const state = {
 const PLACEHOLDER_SVG = `data:image/svg+xml,${encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 300 450" fill="none"><rect width="300" height="450" fill="#1a1c22"/><rect x="1" y="1" width="298" height="448" stroke="#323640" stroke-width="2" fill="none"/><g transform="translate(150, 180)"><circle cx="0" cy="0" r="60" stroke="#3d4250" stroke-width="3" fill="none"/><circle cx="0" cy="0" r="20" stroke="#3d4250" stroke-width="3" fill="none"/><line x1="0" y1="-20" x2="0" y2="-60" stroke="#3d4250" stroke-width="3"/><line x1="0" y1="20" x2="0" y2="60" stroke="#3d4250" stroke-width="3"/><line x1="-20" y1="0" x2="-60" y2="0" stroke="#3d4250" stroke-width="3"/><line x1="20" y1="0" x2="60" y2="0" stroke="#3d4250" stroke-width="3"/><line x1="-14" y1="-14" x2="-42" y2="-42" stroke="#3d4250" stroke-width="3"/><line x1="14" y1="14" x2="42" y2="42" stroke="#3d4250" stroke-width="3"/><line x1="-14" y1="14" x2="-42" y2="42" stroke="#3d4250" stroke-width="3"/><line x1="14" y1="-14" x2="42" y2="-42" stroke="#3d4250" stroke-width="3"/><circle cx="0" cy="-40" r="8" fill="#282c37"/><circle cx="0" cy="40" r="8" fill="#282c37"/><circle cx="-40" cy="0" r="8" fill="#282c37"/><circle cx="40" cy="0" r="8" fill="#282c37"/><circle cx="-28" cy="-28" r="8" fill="#282c37"/><circle cx="28" cy="28" r="8" fill="#282c37"/><circle cx="-28" cy="28" r="8" fill="#282c37"/><circle cx="28" cy="-28" r="8" fill="#282c37"/></g><text x="150" y="320" font-family="system-ui, sans-serif" font-size="48" font-weight="bold" fill="#3d4250" text-anchor="middle">?</text><text x="150" y="380" font-family="system-ui, sans-serif" font-size="18" fill="#3d4250" text-anchor="middle">No Poster</text></svg>')}`;
 
 function posterSrc(url) {
-    return url || PLACEHOLDER_SVG;
+    const src = url || PLACEHOLDER_SVG;
+    // Sanitize: only allow http(s) and data URIs to prevent XSS via crafted URLs
+    if (src.startsWith('http://') || src.startsWith('https://') || src.startsWith('data:')) {
+        return src;
+    }
+    return PLACEHOLDER_SVG;
 }
 
 // HTML escape utility to prevent XSS
@@ -169,7 +174,7 @@ function renderSeries() {
         return `
         <div class="series-card ${hasNoMatch ? 'unmatched' : ''}" onclick="navigate('/series/${s.id}')">
             <div class="series-poster">
-                <img src="${posterSrc(s.poster_url)}" alt="${esc(s.title)}" loading="lazy">
+                <img src="${esc(posterSrc(s.poster_url))}" alt="${esc(s.title)}" loading="lazy">
                 ${hasNoMatch ? '<div class="unmatched-overlay"></div>' : ''}
             </div>
             <div class="series-info">
@@ -269,7 +274,7 @@ async function loadSeriesDetail(seriesId) {
             charsRow.innerHTML = series.characters.map(c => `
                 <div class="character-card">
                     <div class="character-avatar">
-                        <img src="${posterSrc(c.image_url)}" alt="${esc(c.character_name || '')}" loading="lazy">
+                        <img src="${esc(posterSrc(c.image_url))}" alt="${esc(c.character_name || '')}" loading="lazy">
                     </div>
                     <div class="character-name">${esc(c.character_name || '')}</div>
                     <div class="character-actor">${esc(c.actor_name || '')}</div>
@@ -301,7 +306,7 @@ function renderSeasons(series, seasons) {
             return `
                 <div class="season-card locked" data-season="${season.season_number}">
                     <div class="season-poster">
-                        <img src="${seasonImage}" alt="Season ${season.season_number}" loading="lazy">
+                        <img src="${esc(seasonImage)}" alt="Season ${season.season_number}" loading="lazy">
                         <div class="season-overlay">
                             <div class="season-lock-icon">
                                 <svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -323,7 +328,7 @@ function renderSeasons(series, seasons) {
             return `
                 <div class="season-card owned" data-season="${season.season_number}" onclick="navigate('/series/${series.id}/season/${season.season_number}')">
                     <div class="season-poster">
-                        <img src="${seasonImage}" alt="Season ${season.season_number}" loading="lazy">
+                        <img src="${esc(seasonImage)}" alt="Season ${season.season_number}" loading="lazy">
                         <div class="season-overlay">
                             <div class="season-number">Season ${season.season_number}</div>
                             ${voiceBadge}
@@ -575,7 +580,7 @@ async function togglePreview(index) {
         // Create audio player
         playerDiv.innerHTML = `
             <audio controls autoplay>
-                <source src="${result.preview_url}" type="audio/mpeg">
+                <source src="${esc(result.preview_url)}" type="audio/mpeg">
                 Your browser does not support audio playback.
             </audio>
         `;
@@ -772,7 +777,7 @@ async function loadUpdates() {
             return `
             <div class="update-card" onclick="navigate('/series/${u.id}')">
                 <div class="update-poster">
-                    <img src="${posterSrc(u.poster_url)}" alt="${esc(u.title)}">
+                    <img src="${esc(posterSrc(u.poster_url))}" alt="${esc(u.title)}">
                 </div>
                 <div class="update-info">
                     <h4 class="update-title">${esc(u.title)}</h4>
@@ -843,7 +848,7 @@ async function searchTVDB(query) {
         container.innerHTML = results.map(r => `
             <div class="search-result" onclick="addSeries(${r.id})">
                 <div class="search-result-poster">
-                    <img src="${posterSrc(r.poster)}" alt="${esc(r.name)}">
+                    <img src="${esc(posterSrc(r.poster))}" alt="${esc(r.name)}">
                 </div>
                 <div class="search-result-info">
                     <div class="search-result-title">${esc(r.name)}</div>
@@ -980,7 +985,7 @@ async function searchTVDBForMatch(query) {
         container.innerHTML = results.map(r => `
             <div class="match-result-item">
                 <div class="match-result-poster">
-                    <img src="${posterSrc(r.poster)}" alt="${esc(r.name)}">
+                    <img src="${esc(posterSrc(r.poster))}" alt="${esc(r.name)}">
                 </div>
                 <div class="match-result-info">
                     <div class="match-result-title">${esc(r.name)}</div>

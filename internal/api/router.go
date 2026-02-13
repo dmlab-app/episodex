@@ -195,6 +195,7 @@ func (s *Server) handleListSeries(w http.ResponseWriter, _ *http.Request) {
 		var createdAt time.Time
 
 		if err := rows.Scan(&id, &tvdbID, &title, &originalTitle, &posterURL, &status, &totalSeasons, &createdAt, &watchedSeasons); err != nil {
+			slog.Error("Failed to scan series row", "error", err)
 			continue
 		}
 
@@ -430,6 +431,7 @@ func (s *Server) handleGetSeries(w http.ResponseWriter, r *http.Request) {
 		var discoveredAt *time.Time
 
 		if err := rows.Scan(&seasonNum, &folderPath, &isOwned, &voiceActorID, &voiceActorName, &discoveredAt); err != nil {
+			slog.Error("Failed to scan season row", "error", err)
 			continue
 		}
 
@@ -827,6 +829,7 @@ func (s *Server) handleGetAlerts(w http.ResponseWriter, _ *http.Request) {
 		var dismissed bool
 
 		if err := rows.Scan(&id, &alertType, &message, &createdAt, &dismissed); err != nil {
+			slog.Error("Failed to scan alert row", "error", err)
 			continue
 		}
 
@@ -955,6 +958,7 @@ func (s *Server) handleGetUpdates(w http.ResponseWriter, _ *http.Request) {
 		var totalSeasons, watchedSeasons int
 
 		if err := rows.Scan(&id, &tvdbID, &title, &originalTitle, &posterURL, &status, &totalSeasons, &watchedSeasons); err != nil {
+			slog.Error("Failed to scan updates row", "error", err)
 			continue
 		}
 
@@ -1024,6 +1028,7 @@ func (s *Server) handleCheckUpdates(w http.ResponseWriter, _ *http.Request) {
 		for rows.Next() {
 			var sc seriesCheck
 			if err := rows.Scan(&sc.ID, &sc.TVDBId, &sc.Title, &sc.TotalSeasons); err != nil {
+				slog.Error("Failed to scan series check row", "error", err)
 				continue
 			}
 			toCheck = append(toCheck, sc)
@@ -1129,6 +1134,7 @@ func (s *Server) handleListSeasons(w http.ResponseWriter, r *http.Request) {
 		var discoveredAt *time.Time
 
 		if err := rows.Scan(&seasonNum, &folderPath, &isOwned, &voiceActorID, &voiceActorName, &discoveredAt, &seasonPosterURL); err != nil {
+			slog.Error("Failed to scan season detail row", "error", err)
 			continue
 		}
 
@@ -1443,6 +1449,7 @@ func (s *Server) handleListVoices(w http.ResponseWriter, _ *http.Request) {
 		var id int
 		var name string
 		if err := rows.Scan(&id, &name); err != nil {
+			slog.Error("Failed to scan voice actor row", "error", err)
 			continue
 		}
 		voices = append(voices, map[string]interface{}{

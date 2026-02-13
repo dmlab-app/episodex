@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"sync"
 	"time"
 )
 
@@ -17,6 +18,7 @@ const (
 
 // Client represents a TVDB API client
 type Client struct {
+	mu         sync.Mutex
 	httpClient *http.Client
 	tokenExp   time.Time
 	apiKey     string
@@ -80,8 +82,10 @@ func (c *Client) Login() error {
 	return nil
 }
 
-// ensureToken makes sure we have a valid token
+// ensureToken makes sure we have a valid token (thread-safe)
 func (c *Client) ensureToken() error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
 	if c.token == "" || time.Now().After(c.tokenExp) {
 		return c.Login()
 	}

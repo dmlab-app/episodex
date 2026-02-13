@@ -3,7 +3,6 @@ package database
 import (
 	"database/sql"
 	"fmt"
-	"io"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -44,10 +43,11 @@ func (bm *BackupManager) Backup() error {
 
 	slog.Info("Starting database backup", "file", backupFile)
 
-	// Copy database file
-	if err := bm.copyFile(bm.dbPath, backupFile); err != nil {
+	// Use VACUUM INTO for an atomic, consistent backup that includes WAL contents.
+	// A simple file copy would miss pending WAL writes.
+	if _, err := bm.db.Exec("VACUUM INTO ?", backupFile); err != nil {
 		bm.createAlert("backup_failed", fmt.Sprintf("Backup failed: %v", err))
-		return fmt.Errorf("failed to copy database: %w", err)
+		return fmt.Errorf("failed to vacuum into backup: %w", err)
 	}
 
 	// Get file size
@@ -81,27 +81,6 @@ func (bm *BackupManager) Backup() error {
 	}
 
 	return nil
-}
-
-// copyFile copies a file from src to dst
-func (bm *BackupManager) copyFile(src, dst string) error {
-	sourceFile, err := os.Open(src)
-	if err != nil {
-		return err
-	}
-	defer sourceFile.Close() //nolint:errcheck // closing read-only file
-
-	destFile, err := os.Create(dst)
-	if err != nil {
-		return err
-	}
-	defer destFile.Close() //nolint:errcheck // file synced explicitly below
-
-	if _, err := io.Copy(destFile, sourceFile); err != nil {
-		return err
-	}
-
-	return destFile.Sync()
 }
 
 // checkIntegrity performs PRAGMA integrity_check on the backup
