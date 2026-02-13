@@ -3,7 +3,6 @@ package database
 import (
 	"database/sql"
 	"fmt"
-	"log/slog"
 )
 
 // Series represents a TV series with full metadata
@@ -332,7 +331,7 @@ func (db *DB) UpsertCharacters(seriesID int64, characters []Character) error {
 			char.CharacterName, char.ActorName, char.ImageURL, char.SortOrder,
 		)
 		if err != nil {
-			slog.Error("Failed to insert character", "error", err)
+			return fmt.Errorf("failed to insert character %v: %w", char.CharacterName, err)
 		}
 	}
 

@@ -73,7 +73,7 @@ SCAN_INTERVAL_HOURS=1
 - `POST /api/series/{id}/seasons/{num}/rescan` — rescan season folder
 - `GET /api/series/{id}/seasons/{num}/audio` — list audio tracks
 - `POST /api/series/{id}/seasons/{num}/audio/preview` — generate audio preview
-- `POST /api/series/{id}/seasons/{num}/audio/process` — process audio (SSE)
+- `POST /api/series/{id}/seasons/{num}/audio/process` — process audio (SSE); body: `{track_id, keep_original}`
 - `GET /api/voices` — list voice actor studios
 - `GET /api/audio/preview/{hash}` — serve audio preview file
 - `GET /api/alerts` — list alerts
@@ -96,3 +96,5 @@ SCAN_INTERVAL_HOURS=1
 - Uses `gateway_gateway` Docker network for reproxy
 - Voice studios pre-seeded on first run (LostFilm, Amedia, etc.)
 - Frontend uses Inter + JetBrains Mono fonts
+- SSE endpoints (audio process) registered outside `/api` group to bypass 60s timeout middleware
+- Requires mkvmerge (MKVToolNix) and ffmpeg in PATH for audio features

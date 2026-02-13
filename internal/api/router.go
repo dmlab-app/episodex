@@ -492,6 +492,9 @@ func (s *Server) handleGetSeries(w http.ResponseWriter, r *http.Request) {
 			}
 			characters = append(characters, char)
 		}
+		if err := charRows.Err(); err != nil {
+			slog.Error("Error iterating character rows", "error", err)
+		}
 	}
 
 	// Artwork fallback: if poster_url or backdrop_url is missing, try artworks table
@@ -1394,8 +1397,13 @@ func (s *Server) handleUpdateSeason(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Treat voice_actor_id <= 0 as "clear"
+	if req.VoiceActorID != nil && *req.VoiceActorID <= 0 {
+		req.VoiceActorID = nil
+	}
+
 	// Verify voice actor exists if provided
-	if req.VoiceActorID != nil && *req.VoiceActorID > 0 {
+	if req.VoiceActorID != nil {
 		var voiceExists bool
 		err := s.db.QueryRow(`SELECT COUNT(*) > 0 FROM voice_actors WHERE id = ?`, *req.VoiceActorID).Scan(&voiceExists)
 		if err != nil || !voiceExists {

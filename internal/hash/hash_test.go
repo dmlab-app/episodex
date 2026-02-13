@@ -129,9 +129,15 @@ func TestComputeMultiFileHash(t *testing.T) {
 	file2 := filepath.Join(tempDir, "episode2.mkv")
 	file3 := filepath.Join(tempDir, "episode3.mkv")
 
-	os.WriteFile(file1, []byte("Episode 1 content"), 0o644)
-	os.WriteFile(file2, []byte("Episode 2 content"), 0o644)
-	os.WriteFile(file3, []byte("Episode 3 content"), 0o644)
+	if err := os.WriteFile(file1, []byte("Episode 1 content"), 0o644); err != nil {
+		t.Fatalf("Failed to write file1: %v", err)
+	}
+	if err := os.WriteFile(file2, []byte("Episode 2 content"), 0o644); err != nil {
+		t.Fatalf("Failed to write file2: %v", err)
+	}
+	if err := os.WriteFile(file3, []byte("Episode 3 content"), 0o644); err != nil {
+		t.Fatalf("Failed to write file3: %v", err)
+	}
 
 	// Compute combined hash
 	hash1, err := ComputeMultiFileHash([]string{file1, file2, file3})
@@ -155,7 +161,9 @@ func TestComputeMultiFileHash(t *testing.T) {
 
 	// Modify one file
 	time.Sleep(10 * time.Millisecond)
-	os.WriteFile(file2, []byte("MODIFIED Episode 2 content"), 0o644)
+	if err := os.WriteFile(file2, []byte("MODIFIED Episode 2 content"), 0o644); err != nil {
+		t.Fatalf("Failed to write modified file2: %v", err)
+	}
 
 	// Hash should change
 	hash3, err := ComputeMultiFileHash([]string{file1, file2, file3})

@@ -18,6 +18,8 @@ Local web service for tracking watched TV series with automatic media folder sca
 
 - Go 1.25 or higher
 - Docker (optional)
+- mkvmerge (MKVToolNix) — for audio track management
+- ffmpeg — for audio preview generation
 
 ### Local Development
 
@@ -130,7 +132,7 @@ All settings are configured via environment variables (`.env` file):
 
 - `GET /api/series/:id/seasons/:num/audio` - list audio tracks
 - `POST /api/series/:id/seasons/:num/audio/preview` - generate audio preview
-- `POST /api/series/:id/seasons/:num/audio/process` - process audio (SSE)
+- `POST /api/series/:id/seasons/:num/audio/process` - process audio (SSE); body: `{track_id, keep_original}`
 - `GET /api/audio/preview/:hash` - serve audio preview file
 
 ### Voice Actors
