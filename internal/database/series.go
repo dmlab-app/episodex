@@ -177,7 +177,7 @@ func (db *DB) UpsertSeason(season *Season) (int64, error) {
 				episode_count = COALESCE(?, episode_count),
 				folder_path = COALESCE(?, folder_path),
 				voice_actor_id = COALESCE(?, voice_actor_id),
-				is_owned = ?,
+				is_owned = MAX(is_owned, ?),
 				discovered_at = COALESCE(?, discovered_at),
 				updated_at = CURRENT_TIMESTAMP
 			WHERE id = ?
@@ -237,7 +237,7 @@ func (db *DB) UpsertEpisode(episode *Episode) (int64, error) {
 				file_path = COALESCE(?, file_path),
 				file_hash = COALESCE(?, file_hash),
 				file_size = COALESCE(?, file_size),
-				is_owned = ?,
+				is_owned = MAX(is_owned, ?),
 				watched_at = COALESCE(?, watched_at),
 				updated_at = CURRENT_TIMESTAMP
 			WHERE id = ?

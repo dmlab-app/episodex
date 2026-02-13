@@ -1640,7 +1640,21 @@ func (s *Server) handleProcessAudioStream(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	// Set SSE headers
+	flusher, ok := w.(http.Flusher)
+	if !ok {
+		s.respondError(w, http.StatusInternalServerError, "streaming unsupported")
+		return
+	}
+
+	// Scan folder for MKV files before setting SSE headers so errors return proper JSON
+	results, err := s.audioCutter.ScanFolderAudioTracks(*folderPath)
+	if err != nil {
+		slog.Error("Failed to scan folder", "folder", *folderPath, "error", err)
+		s.respondError(w, http.StatusInternalServerError, "failed to scan folder")
+		return
+	}
+
+	// Set SSE headers after all validation — once set, respondError cannot override Content-Type
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("Cache-Control", "no-cache")
 	w.Header().Set("Connection", "keep-alive")
@@ -1650,20 +1664,6 @@ func (s *Server) handleProcessAudioStream(w http.ResponseWriter, r *http.Request
 	rc := http.NewResponseController(w)
 	if err := rc.SetWriteDeadline(time.Time{}); err != nil {
 		slog.Warn("Failed to disable write deadline for SSE", "error", err)
-	}
-
-	flusher, ok := w.(http.Flusher)
-	if !ok {
-		s.respondError(w, http.StatusInternalServerError, "streaming unsupported")
-		return
-	}
-
-	// Scan folder for MKV files
-	results, err := s.audioCutter.ScanFolderAudioTracks(*folderPath)
-	if err != nil {
-		slog.Error("Failed to scan folder", "folder", *folderPath, "error", err)
-		s.respondError(w, http.StatusInternalServerError, "failed to scan folder")
-		return
 	}
 
 	files := make([]string, 0, len(results))

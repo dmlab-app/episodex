@@ -698,7 +698,7 @@ function handleProgressEvent(data, stats) {
             progressPercent.textContent = percent + '%';
             currentFileInfo.innerHTML = `
                 <div class="file-label">Processing (${data.current}/${data.total}):</div>
-                <div class="file-name">${data.file}</div>
+                <div class="file-name">${esc(data.file)}</div>
             `;
             break;
 
@@ -719,7 +719,7 @@ function handleProgressEvent(data, stats) {
 
             filesList.innerHTML += `
                 <div class="file-item">
-                    <span class="file-name">${data.file}</span>
+                    <span class="file-name">${esc(data.file)}</span>
                     <span class="file-status ${statusClass}">${statusText}</span>
                 </div>
             `;
