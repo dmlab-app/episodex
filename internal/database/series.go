@@ -205,13 +205,22 @@ func (db *DB) UpsertEpisode(episode *Episode) (int64, error) {
 	`, episode.SeasonID, episode.EpisodeNumber).Scan(&existingID)
 
 	if err == nil {
-		// Update existing episode
+		// Update existing episode — use COALESCE for TVDB metadata fields
+		// so that a file scan (which has no TVDB data) won't overwrite synced metadata
 		_, err = db.Exec(`
 			UPDATE episodes SET
-				tvdb_episode_id = ?, title = ?, overview = ?, image_url = ?,
-				air_date = ?, runtime = ?, rating = ?,
-				file_path = ?, file_hash = ?, file_size = ?,
-				is_owned = ?, watched_at = ?,
+				tvdb_episode_id = COALESCE(?, tvdb_episode_id),
+				title = COALESCE(?, title),
+				overview = COALESCE(?, overview),
+				image_url = COALESCE(?, image_url),
+				air_date = COALESCE(?, air_date),
+				runtime = COALESCE(?, runtime),
+				rating = COALESCE(?, rating),
+				file_path = COALESCE(?, file_path),
+				file_hash = COALESCE(?, file_hash),
+				file_size = COALESCE(?, file_size),
+				is_owned = ?,
+				watched_at = COALESCE(?, watched_at),
 				updated_at = CURRENT_TIMESTAMP
 			WHERE id = ?
 		`, episode.TVDBEpisodeID, episode.Title, episode.Overview, episode.ImageURL,
@@ -293,14 +302,20 @@ func (db *DB) GetSeasonBySeriesAndNumber(seriesID int64, seasonNumber int) (*Sea
 
 // UpsertCharacters inserts or updates characters for a series
 func (db *DB) UpsertCharacters(seriesID int64, characters []Character) error {
+	tx, err := db.Begin()
+	if err != nil {
+		return fmt.Errorf("failed to begin transaction: %w", err)
+	}
+	defer tx.Rollback() //nolint:errcheck
+
 	// Delete existing characters
-	_, err := db.Exec(`DELETE FROM series_characters WHERE series_id = ?`, seriesID)
+	_, err = tx.Exec(`DELETE FROM series_characters WHERE series_id = ?`, seriesID)
 	if err != nil {
 		return fmt.Errorf("failed to delete old characters: %w", err)
 	}
 
 	// Insert new characters
-	stmt, err := db.Prepare(`
+	stmt, err := tx.Prepare(`
 		INSERT INTO series_characters (
 			series_id, tvdb_character_id, tvdb_person_id,
 			character_name, actor_name, image_url, sort_order
@@ -321,7 +336,7 @@ func (db *DB) UpsertCharacters(seriesID int64, characters []Character) error {
 		}
 	}
 
-	return nil
+	return tx.Commit()
 }
 
 // UpsertArtworks inserts or updates artworks for a series or season.
@@ -331,13 +346,19 @@ func (db *DB) UpsertArtworks(artworks []Artwork) error {
 		return nil
 	}
 
+	tx, err := db.Begin()
+	if err != nil {
+		return fmt.Errorf("failed to begin transaction: %w", err)
+	}
+	defer tx.Rollback() //nolint:errcheck
+
 	// Delete existing artworks for this series to prevent accumulating duplicates
 	seriesID := artworks[0].SeriesID
-	if _, err := db.Exec(`DELETE FROM artworks WHERE series_id = ?`, seriesID); err != nil {
+	if _, err := tx.Exec(`DELETE FROM artworks WHERE series_id = ?`, seriesID); err != nil {
 		return fmt.Errorf("failed to delete existing artworks: %w", err)
 	}
 
-	stmt, err := db.Prepare(`
+	stmt, err := tx.Prepare(`
 		INSERT INTO artworks (
 			series_id, season_id, tvdb_artwork_id, type,
 			url, thumbnail_url, language, score,
@@ -360,5 +381,5 @@ func (db *DB) UpsertArtworks(artworks []Artwork) error {
 		}
 	}
 
-	return nil
+	return tx.Commit()
 }

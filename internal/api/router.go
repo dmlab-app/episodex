@@ -680,7 +680,7 @@ func (s *Server) handleMatchSeries(w http.ResponseWriter, r *http.Request) {
 		// For overlapping seasons, preserve owned data from source into destination
 		_, err = tx.Exec(`
 			UPDATE seasons
-			SET folder_path = (SELECT src.folder_path FROM seasons src WHERE src.series_id = ? AND src.season_number = seasons.season_number),
+			SET folder_path = COALESCE((SELECT src.folder_path FROM seasons src WHERE src.series_id = ? AND src.season_number = seasons.season_number), folder_path),
 				is_owned = 1,
 				voice_actor_id = COALESCE(voice_actor_id, (SELECT src.voice_actor_id FROM seasons src WHERE src.series_id = ? AND src.season_number = seasons.season_number)),
 				discovered_at = COALESCE(discovered_at, (SELECT src.discovered_at FROM seasons src WHERE src.series_id = ? AND src.season_number = seasons.season_number))
@@ -705,6 +705,14 @@ func (s *Server) handleMatchSeries(w http.ResponseWriter, r *http.Request) {
 		if err != nil {
 			slog.Error("Failed to move seasons", "error", err)
 			s.respondError(w, http.StatusInternalServerError, "failed to merge seasons")
+			return
+		}
+
+		// Move media_files from old series to existing one
+		_, err = tx.Exec("UPDATE media_files SET series_id = ? WHERE series_id = ?", existingSeriesID, id)
+		if err != nil {
+			slog.Error("Failed to move media files", "error", err)
+			s.respondError(w, http.StatusInternalServerError, "failed to merge media files")
 			return
 		}
 

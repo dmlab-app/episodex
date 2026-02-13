@@ -1,6 +1,7 @@
 package database
 
 import (
+	"database/sql"
 	"fmt"
 	"io"
 	"log/slog"
@@ -105,15 +106,16 @@ func (bm *BackupManager) copyFile(src, dst string) error {
 
 // checkIntegrity performs PRAGMA integrity_check on the backup
 func (bm *BackupManager) checkIntegrity(backupFile string) (bool, error) {
-	// Open backup file for integrity check
-	db, err := New(backupFile)
+	// Open backup file directly without running migrations —
+	// we only need to check integrity, not modify the backup
+	sqlDB, err := sql.Open("sqlite", backupFile)
 	if err != nil {
 		return false, err
 	}
-	defer db.Close() //nolint:errcheck // closing temporary integrity-check connection
+	defer sqlDB.Close() //nolint:errcheck // closing temporary integrity-check connection
 
 	var result string
-	err = db.QueryRow("PRAGMA integrity_check").Scan(&result)
+	err = sqlDB.QueryRow("PRAGMA integrity_check").Scan(&result)
 	if err != nil {
 		return false, err
 	}

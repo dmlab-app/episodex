@@ -167,7 +167,7 @@ function renderSeries() {
     grid.innerHTML = list.map(s => {
         const hasNoMatch = !s.tvdb_id;
         return `
-        <div class="series-card ${hasNoMatch ? 'unmatched' : ''}" onclick="${hasNoMatch ? '' : `navigate('/series/${s.id}')`}">
+        <div class="series-card ${hasNoMatch ? 'unmatched' : ''}" onclick="navigate('/series/${s.id}')">
             <div class="series-poster">
                 <img src="${posterSrc(s.poster_url)}" alt="${esc(s.title)}" loading="lazy">
                 ${hasNoMatch ? '<div class="unmatched-overlay"></div>' : ''}
