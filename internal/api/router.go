@@ -859,7 +859,11 @@ func (s *Server) handleGetAlerts(w http.ResponseWriter, _ *http.Request) {
 }
 
 func (s *Server) handleDismissAlert(w http.ResponseWriter, r *http.Request) {
-	id := chi.URLParam(r, "id")
+	id, err := strconv.ParseInt(chi.URLParam(r, "id"), 10, 64)
+	if err != nil {
+		s.respondError(w, http.StatusBadRequest, "invalid alert ID")
+		return
+	}
 
 	query := "UPDATE system_alerts SET dismissed = 1 WHERE id = ?"
 	result, err := s.db.Exec(query, id)
@@ -927,6 +931,11 @@ func (s *Server) handleTriggerScan(w http.ResponseWriter, _ *http.Request) {
 	slog.Info("Manual scan triggered")
 
 	go func() {
+		defer func() {
+			if r := recover(); r != nil {
+				slog.Error("Panic in scan", "error", r)
+			}
+		}()
 		if err := s.scanner.Scan(); err != nil {
 			slog.Error("Scan failed", "error", err)
 		}
@@ -1014,6 +1023,11 @@ func (s *Server) handleCheckUpdates(w http.ResponseWriter, _ *http.Request) {
 
 	// Run check in background
 	go func() {
+		defer func() {
+			if r := recover(); r != nil {
+				slog.Error("Panic in TVDB check", "error", r)
+			}
+		}()
 		// Collect all series with TVDB IDs first, then close rows
 		type seriesCheck struct {
 			ID           int
@@ -1105,12 +1119,16 @@ func (s *Server) handleCheckUpdates(w http.ResponseWriter, _ *http.Request) {
 
 // Seasons handlers
 func (s *Server) handleListSeasons(w http.ResponseWriter, r *http.Request) {
-	seriesID := chi.URLParam(r, "id")
+	sid, err := strconv.ParseInt(chi.URLParam(r, "id"), 10, 64)
+	if err != nil {
+		s.respondError(w, http.StatusBadRequest, "invalid series ID")
+		return
+	}
 
 	// Get series info including poster
 	var totalSeasons int
 	var seriesPosterURL *string
-	err := s.db.QueryRow(`SELECT total_seasons, poster_url FROM series WHERE id = ?`, seriesID).Scan(&totalSeasons, &seriesPosterURL)
+	err = s.db.QueryRow(`SELECT total_seasons, poster_url FROM series WHERE id = ?`, sid).Scan(&totalSeasons, &seriesPosterURL)
 	if err != nil {
 		s.respondError(w, http.StatusNotFound, "series not found")
 		return
@@ -1125,7 +1143,7 @@ func (s *Server) handleListSeasons(w http.ResponseWriter, r *http.Request) {
 		ORDER BY sn.season_number
 	`
 
-	rows, err := s.db.Query(query, seriesID)
+	rows, err := s.db.Query(query, sid)
 	if err != nil {
 		s.respondError(w, http.StatusInternalServerError, "failed to fetch seasons")
 		return
@@ -1512,6 +1530,11 @@ func (s *Server) handleRescanSeason(w http.ResponseWriter, r *http.Request) {
 
 	// Run rescan asynchronously
 	go func() {
+		defer func() {
+			if r := recover(); r != nil {
+				slog.Error("Panic in rescan", "series_id", sid, "season", snum, "error", r)
+			}
+		}()
 		if err := s.scanner.RescanSeason(sid, snum); err != nil {
 			slog.Error("Rescan failed", "series_id", sid, "season", snum, "error", err)
 		} else {
@@ -1621,6 +1644,11 @@ func (s *Server) handleProcessAudioStream(w http.ResponseWriter, r *http.Request
 
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		s.respondError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+
+	if req.TrackID <= 0 {
+		s.respondError(w, http.StatusBadRequest, "track_id is required")
 		return
 	}
 

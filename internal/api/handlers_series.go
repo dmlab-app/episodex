@@ -105,23 +105,52 @@ func (s *Server) handleSyncSeriesFromTVDB(w http.ResponseWriter, r *http.Request
 
 	// Update series in database
 	seriesData := &database.Series{
-		TVDBId:           tvdbID,
-		Title:            title,
-		OriginalTitle:    &originalTitle,
-		Slug:             &extended.Slug,
-		Overview:         &overview,
-		PosterURL:        &extended.Image,
-		BackdropURL:      &extended.Backdrop,
-		Status:           &extended.Status,
-		FirstAired:       &extended.FirstAired,
-		LastAired:        &extended.LastAired,
-		ContentRating:    &contentRating,
-		OriginalCountry:  &extended.OriginalCountry,
-		OriginalLanguage: &extended.OriginalLanguage,
-		Genres:           &genres,
-		Networks:         &networks,
-		Studios:          &studios,
-		TotalSeasons:     len(extended.Seasons),
+		TVDBId:       tvdbID,
+		Title:        title,
+		TotalSeasons: len(extended.Seasons),
+	}
+	// Only set non-empty string fields to avoid overwriting existing values with ""
+	if originalTitle != "" {
+		seriesData.OriginalTitle = &originalTitle
+	}
+	if extended.Slug != "" {
+		seriesData.Slug = &extended.Slug
+	}
+	if overview != "" {
+		seriesData.Overview = &overview
+	}
+	if extended.Image != "" {
+		seriesData.PosterURL = &extended.Image
+	}
+	if extended.Backdrop != "" {
+		seriesData.BackdropURL = &extended.Backdrop
+	}
+	if extended.Status != "" {
+		seriesData.Status = &extended.Status
+	}
+	if extended.FirstAired != "" {
+		seriesData.FirstAired = &extended.FirstAired
+	}
+	if extended.LastAired != "" {
+		seriesData.LastAired = &extended.LastAired
+	}
+	if contentRating != "" {
+		seriesData.ContentRating = &contentRating
+	}
+	if extended.OriginalCountry != "" {
+		seriesData.OriginalCountry = &extended.OriginalCountry
+	}
+	if extended.OriginalLanguage != "" {
+		seriesData.OriginalLanguage = &extended.OriginalLanguage
+	}
+	if genres != "" {
+		seriesData.Genres = &genres
+	}
+	if networks != "" {
+		seriesData.Networks = &networks
+	}
+	if studios != "" {
+		seriesData.Studios = &studios
 	}
 	// Only store non-zero values so we don't overwrite NULL with meaningless 0
 	if extended.Year > 0 {

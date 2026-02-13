@@ -183,7 +183,7 @@ func main() {
 		Addr:         cfg.Host + ":" + cfg.Port,
 		Handler:      apiServer.Handler(),
 		ReadTimeout:  15 * time.Second,
-		WriteTimeout: 0, // Disabled: chi middleware.Timeout handles API routes; SSE needs unlimited writes
+		WriteTimeout: 120 * time.Second, // SSE handler uses ResponseController.SetWriteDeadline to override
 		IdleTimeout:  60 * time.Second,
 	}
 

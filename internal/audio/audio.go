@@ -158,6 +158,7 @@ func (ac *AudioCutter) RemoveAudioTracks(filePath string, keepTrackID int, keepO
 	dir := filepath.Dir(filePath)
 	base := filepath.Base(filePath)
 	tempFile := filepath.Join(dir, ".tmp_"+base)
+	defer func() { _ = os.Remove(tempFile) }() // Clean up temp file on failure; no-op after successful rename
 
 	// Build track selection arguments
 	// We need to keep video, subtitles, and the selected audio track
