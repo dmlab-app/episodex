@@ -338,7 +338,11 @@ func (s *Server) handleCreateSeries(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleGetSeries(w http.ResponseWriter, r *http.Request) {
-	id := chi.URLParam(r, "id")
+	id, err := strconv.ParseInt(chi.URLParam(r, "id"), 10, 64)
+	if err != nil {
+		s.respondError(w, http.StatusBadRequest, "invalid series ID")
+		return
+	}
 
 	// Get series info with full metadata
 	var seriesInfo struct {
@@ -376,7 +380,7 @@ func (s *Server) handleGetSeries(w http.ResponseWriter, r *http.Request) {
 		WHERE id = ?
 	`
 
-	err := s.db.QueryRow(query, id).Scan(
+	err = s.db.QueryRow(query, id).Scan(
 		&seriesInfo.ID,
 		&seriesInfo.TVDBId,
 		&seriesInfo.Title,
@@ -612,7 +616,11 @@ func (s *Server) handleGetSeries(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleDeleteSeries(w http.ResponseWriter, r *http.Request) {
-	id := chi.URLParam(r, "id")
+	id, err := strconv.ParseInt(chi.URLParam(r, "id"), 10, 64)
+	if err != nil {
+		s.respondError(w, http.StatusBadRequest, "invalid series ID")
+		return
+	}
 
 	query := "DELETE FROM series WHERE id = ?"
 	result, err := s.db.Exec(query, id)

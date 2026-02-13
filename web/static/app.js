@@ -224,9 +224,9 @@ async function loadSeriesDetail(seriesId) {
         // Hero backdrop
         const backdropEl = document.getElementById('series-hero-backdrop');
         if (series.backdrop_url) {
-            backdropEl.style.backgroundImage = `url(${series.backdrop_url})`;
+            backdropEl.style.backgroundImage = `url(${posterSrc(series.backdrop_url)})`;
         } else if (series.poster_url) {
-            backdropEl.style.backgroundImage = `url(${series.poster_url})`;
+            backdropEl.style.backgroundImage = `url(${posterSrc(series.poster_url)})`;
         } else {
             backdropEl.style.backgroundImage = 'none';
         }
@@ -455,7 +455,7 @@ async function loadSeasonDetail(seriesId, seasonNum) {
         if (audioData.files && audioData.files.length > 0) {
             filesList.innerHTML = audioData.files.map(file => `
                 <div class="file-item ${file.processed ? 'processed' : ''}">
-                    <span class="file-name">${file.name}</span>
+                    <span class="file-name">${esc(file.name)}</span>
                     <span class="file-status ${file.processed ? 'processed' : 'pending'}">
                         ${file.processed ? 'Processed' : 'Pending'}
                     </span>

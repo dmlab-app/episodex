@@ -37,6 +37,13 @@ func NewClient(apiKey string) *Client {
 
 // Login authenticates with TVDB API and obtains a token
 func (c *Client) Login() error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.loginLocked()
+}
+
+// loginLocked performs the actual login. Caller must hold c.mu.
+func (c *Client) loginLocked() error {
 	if c.apiKey == "" {
 		return fmt.Errorf("TVDB API key is not configured")
 	}
@@ -87,7 +94,7 @@ func (c *Client) ensureToken() error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if c.token == "" || time.Now().After(c.tokenExp) {
-		return c.Login()
+		return c.loginLocked()
 	}
 	return nil
 }
