@@ -2,6 +2,7 @@
 package api
 
 import (
+	"database/sql"
 	"encoding/json"
 	"fmt"
 	"log/slog"
@@ -481,6 +482,7 @@ func (s *Server) handleGetSeries(w http.ResponseWriter, r *http.Request) {
 			var characterName, actorName, imageURL *string
 			var sortOrder *int
 			if err := charRows.Scan(&characterName, &actorName, &imageURL, &sortOrder); err != nil {
+				slog.Error("Failed to scan character row", "error", err)
 				continue
 			}
 			char := map[string]interface{}{}
@@ -679,6 +681,11 @@ func (s *Server) handleMatchSeries(w http.ResponseWriter, r *http.Request) {
 	var existingSeriesID int
 	var existingTitle string
 	err = s.db.QueryRow("SELECT id, title FROM series WHERE tvdb_id = ? AND id != ?", req.TVDBId, id).Scan(&existingSeriesID, &existingTitle)
+	if err != nil && err != sql.ErrNoRows {
+		slog.Error("Failed to check for duplicate TVDB ID", "tvdb_id", req.TVDBId, "error", err)
+		s.respondError(w, http.StatusInternalServerError, "database error")
+		return
+	}
 	if err == nil {
 		// Another series already has this TVDB ID - merge seasons into existing and delete duplicate
 		slog.Info("Merging duplicate series", "from_id", id, "to_id", existingSeriesID, "tvdb_id", req.TVDBId)

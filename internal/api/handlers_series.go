@@ -219,12 +219,12 @@ func (s *Server) handleSyncSeriesFromTVDB(w http.ResponseWriter, r *http.Request
 					SeasonID:      season.ID,
 					TVDBEpisodeID: &ep.ID,
 					EpisodeNumber: ep.Number,
-					Title:         &ep.Name,
-					Overview:      &ep.Overview,
-					ImageURL:      &ep.Image,
-					AirDate:       &ep.AirDate,
-					Runtime:       &ep.Runtime,
-					Rating:        &ep.Rating,
+					Title:         strPtrOrNil(ep.Name),
+					Overview:      strPtrOrNil(ep.Overview),
+					ImageURL:      strPtrOrNil(ep.Image),
+					AirDate:       strPtrOrNil(ep.AirDate),
+					Runtime:       intPtrOrNil(ep.Runtime),
+					Rating:        floatPtrOrNil(ep.Rating),
 				}
 
 				_, err := s.db.UpsertEpisode(episodeData)
@@ -283,4 +283,28 @@ func (s *Server) handleSyncSeriesFromTVDB(w http.ResponseWriter, r *http.Request
 		"success": true,
 		"message": fmt.Sprintf("Synced series: %s", title),
 	})
+}
+
+// strPtrOrNil returns nil for empty strings, otherwise a pointer to the value.
+func strPtrOrNil(s string) *string {
+	if s == "" {
+		return nil
+	}
+	return &s
+}
+
+// intPtrOrNil returns nil for zero values, otherwise a pointer to the value.
+func intPtrOrNil(v int) *int {
+	if v == 0 {
+		return nil
+	}
+	return &v
+}
+
+// floatPtrOrNil returns nil for zero values, otherwise a pointer to the value.
+func floatPtrOrNil(v float64) *float64 {
+	if v == 0 {
+		return nil
+	}
+	return &v
 }

@@ -806,6 +806,9 @@ async function checkUpdates() {
     btn.disabled = true;
     try {
         await api.post('/api/updates/check');
+        showToast('Checking for updates...');
+        // Background check runs async on the server; wait before refreshing
+        await new Promise(r => setTimeout(r, 5000));
         await loadUpdates();
         showToast('Update check complete');
     } catch (e) {
