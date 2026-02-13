@@ -767,18 +767,8 @@ async function loadUpdates() {
         list.innerHTML = state.updates.map(u => {
             const total = u.total_seasons || 0;
             const watched = u.watched_seasons || 0;
-            // Build a list of which season numbers are new (not owned)
-            // We know total and watched count; show the range
+            // Calculate how many new (unowned) seasons are available
             const newCount = u.new_seasons || (total - watched);
-            let seasonDetail = '';
-            if (newCount === 1) {
-                seasonDetail = `Season ${total} available`;
-            } else if (newCount > 0) {
-                // Show range: e.g. "Seasons 3-5 available" (last N seasons are new)
-                const from = watched + 1;
-                const to = total;
-                seasonDetail = `Seasons ${from}\u2013${to} available`;
-            }
             return `
             <div class="update-card" onclick="navigate('/series/${u.id}')">
                 <div class="update-poster">
@@ -786,7 +776,7 @@ async function loadUpdates() {
                 </div>
                 <div class="update-info">
                     <h4 class="update-title">${esc(u.title)}</h4>
-                    <p class="update-detail"><span class="update-season">${newCount} new season${newCount !== 1 ? 's' : ''}</span> \u2014 ${seasonDetail}</p>
+                    <p class="update-detail"><span class="update-season">${newCount} new season${newCount !== 1 ? 's' : ''}</span> \u2014 ${total} total</p>
                 </div>
             </div>
             `;

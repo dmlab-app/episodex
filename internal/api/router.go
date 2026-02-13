@@ -677,6 +677,13 @@ func (s *Server) handleMatchSeries(w http.ResponseWriter, r *http.Request) {
 		}
 		defer tx.Rollback() //nolint:errcheck
 
+		// Defer FK checks to commit time — moving seasons changes parent keys
+		// referenced by media_files, which would fail mid-transaction without CASCADE
+		if _, err := tx.Exec("PRAGMA defer_foreign_keys = ON"); err != nil {
+			s.respondError(w, http.StatusInternalServerError, "failed to defer FK checks")
+			return
+		}
+
 		// For overlapping seasons, preserve owned data from source into destination
 		_, err = tx.Exec(`
 			UPDATE seasons

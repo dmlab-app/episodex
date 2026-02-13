@@ -377,7 +377,11 @@ func (db *DB) UpsertArtworks(artworks []Artwork) error {
 			art.Width, art.Height, art.IsPrimary,
 		)
 		if err != nil {
-			slog.Error("Failed to insert artwork", "error", err)
+			tvdbID := "<nil>"
+			if art.TVDBArtworkID != nil {
+				tvdbID = fmt.Sprintf("%d", *art.TVDBArtworkID)
+			}
+			return fmt.Errorf("failed to insert artwork (tvdb_id=%s): %w", tvdbID, err)
 		}
 	}
 
