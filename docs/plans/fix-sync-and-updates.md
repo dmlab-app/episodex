@@ -62,14 +62,14 @@ Three issues found during review:
 - [x] Run `make test` — must pass before next task
 
 ### Task 5: Verify acceptance criteria
-- [ ] Verify: no "Sync with TVDB" button on series detail page
-- [ ] Verify: Updates page does NOT show old deleted seasons as new
-- [ ] Verify: Updates page does NOT show unaired/announced seasons
-- [ ] Verify: Updates page correctly shows only aired seasons newer than user's latest owned
-- [ ] Verify: series with no owned seasons don't appear in updates
-- [ ] Verify: daily TVDB check syncs full metadata for stale series
-- [ ] Run full test suite `make test`
-- [ ] Run linter `make lint` — all issues must be fixed
+- [x] Verify: no "Sync with TVDB" button on series detail page
+- [x] Verify: Updates page does NOT show old deleted seasons as new
+- [x] Verify: Updates page does NOT show unaired/announced seasons
+- [x] Verify: Updates page correctly shows only aired seasons newer than user's latest owned
+- [x] Verify: series with no owned seasons don't appear in updates
+- [x] Verify: daily TVDB check syncs full metadata for stale series
+- [x] Run full test suite `make test`
+- [x] Run linter `make lint` — all issues must be fixed
 
 ## Technical Details
 
