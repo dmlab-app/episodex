@@ -262,10 +262,6 @@ async function loadSeriesDetail(seriesId) {
         overviewEl.textContent = series.overview || '';
         overviewEl.style.display = series.overview ? 'block' : 'none';
 
-        // Sync button (show only if series has tvdb_id)
-        const syncBtn = document.getElementById('sync-tvdb-btn');
-        syncBtn.style.display = series.tvdb_id ? 'inline-flex' : 'none';
-
         // Characters
         const charsSection = document.getElementById('series-characters');
         const charsRow = document.getElementById('characters-row');
@@ -340,21 +336,6 @@ function renderSeasons(series, seasons) {
     }).join('');
 }
 
-
-async function syncWithTVDB() {
-    if (!state.currentSeriesId) return;
-    const btn = document.getElementById('sync-tvdb-btn');
-    btn.disabled = true;
-    try {
-        await api.post(`/api/series/${state.currentSeriesId}/sync`);
-        showToast('Synced with TVDB');
-        await loadSeriesDetail(state.currentSeriesId);
-    } catch (e) {
-        showToast('Sync failed', 'error');
-    } finally {
-        btn.disabled = false;
-    }
-}
 
 async function deleteSeries() {
     if (!state.currentSeriesId) return;
@@ -1078,7 +1059,6 @@ document.addEventListener('DOMContentLoaded', () => {
     document.getElementById('scan-trigger')?.addEventListener('click', triggerScan);
     document.getElementById('check-updates-btn')?.addEventListener('click', checkUpdates);
     document.getElementById('delete-series-btn')?.addEventListener('click', deleteSeries);
-    document.getElementById('sync-tvdb-btn')?.addEventListener('click', syncWithTVDB);
 
     // Back buttons
     document.getElementById('back-to-series')?.addEventListener('click', () => navigate('/series'));
@@ -1114,5 +1094,4 @@ window.deleteSeries = deleteSeries;
 window.openMatchModal = openMatchModal;
 window.closeMatchModal = closeMatchModal;
 window.matchSeries = matchSeries;
-window.syncWithTVDB = syncWithTVDB;
 window.updateSeasonVoice = updateSeasonVoice;

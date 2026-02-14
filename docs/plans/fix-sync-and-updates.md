@@ -39,11 +39,11 @@ Three issues found during review:
 - [x] Run `make test` — must pass before next task
 
 ### Task 2: Remove Sync button from frontend
-- [ ] In `web/templates/index.html` — remove the "Sync with TVDB" button element (`#sync-tvdb-btn`)
-- [ ] In `web/static/app.js` — remove `syncWithTVDB()` function and its event listener binding
-- [ ] In `web/static/app.js` — remove any references to `sync-tvdb-btn` element
-- [ ] Verify in browser: series detail page renders without sync button, no console errors
-- [ ] No tests needed (frontend-only)
+- [x] In `web/templates/index.html` — remove the "Sync with TVDB" button element (`#sync-tvdb-btn`)
+- [x] In `web/static/app.js` — remove `syncWithTVDB()` function and its event listener binding
+- [x] In `web/static/app.js` — remove any references to `sync-tvdb-btn` element
+- [x] Verify in browser: series detail page renders without sync button, no console errors
+- [x] No tests needed (frontend-only)
 
 ### Task 3: Track aired seasons from TVDB
 - [ ] In `internal/tvdb/client.go` — ensure `GetSeriesDetailsWithRussian` (or a new method) returns season air dates. TVDB season objects have `firstAired` or episodes have `aired` dates. Add an `Aired` (bool or date) field to the Season struct returned by the client
