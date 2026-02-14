@@ -42,13 +42,11 @@ func (s *DailySchedule) NextRun(lastRun time.Time) time.Time {
 	now := time.Now()
 	next := time.Date(now.Year(), now.Month(), now.Day(), s.Hour, 0, 0, 0, now.Location())
 
-	// If we already passed today's scheduled time, schedule for tomorrow
-	if now.After(next) {
-		next = next.Add(24 * time.Hour)
-	}
-
 	// If we already ran today, schedule for tomorrow
 	if !lastRun.IsZero() && lastRun.Day() == now.Day() && lastRun.Month() == now.Month() && lastRun.Year() == now.Year() {
+		next = next.Add(24 * time.Hour)
+	} else if now.After(next) {
+		// If we haven't run today but already passed the scheduled time, schedule for tomorrow
 		next = next.Add(24 * time.Hour)
 	}
 

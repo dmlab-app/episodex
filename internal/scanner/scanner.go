@@ -596,16 +596,24 @@ func (s *Scanner) scanMediaFiles(seriesID int64, seasonNumber int, folderPath st
 	if season != nil {
 		seasonID = season.ID
 	} else {
-		// Create season if it doesn't exist
-		newSeason := &database.Season{
-			SeriesID:     seriesID,
-			SeasonNumber: seasonNumber,
-			FolderPath:   &folderPath,
-			IsWatched:    true,
+		// Create season if it doesn't exist — use direct SQL to set is_owned,
+		// since UpsertSeason intentionally excludes is_owned (scanner manages it).
+		result, execErr := s.db.Exec(`
+			INSERT INTO seasons (series_id, season_number, folder_path, is_watched, is_owned, created_at, updated_at)
+			VALUES (?, ?, ?, 1, 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+			ON CONFLICT(series_id, season_number) DO UPDATE SET
+				folder_path = excluded.folder_path,
+				is_watched = 1,
+				is_owned = 1,
+				updated_at = CURRENT_TIMESTAMP
+		`, seriesID, seasonNumber, folderPath)
+		if execErr != nil {
+			slog.Error("Failed to create season", "error", execErr)
+			return execErr
 		}
-		seasonID, err = s.db.UpsertSeason(newSeason)
+		seasonID, err = result.LastInsertId()
 		if err != nil {
-			slog.Error("Failed to create season", "error", err)
+			slog.Error("Failed to get season ID", "error", err)
 			return err
 		}
 	}
