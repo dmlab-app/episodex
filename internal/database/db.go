@@ -107,6 +107,7 @@ func (db *DB) initTables() error {
 		folder_path TEXT,
 		voice_actor_id INTEGER,
 		is_watched BOOLEAN DEFAULT 0,
+		is_owned BOOLEAN DEFAULT 0,
 		discovered_at TIMESTAMP,
 		created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
 		updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
@@ -378,6 +379,43 @@ func (db *DB) preMigrations() {
 
 		if exists == 0 {
 			slog.Info("Pre-migration: Adding column to series table", "column", col.name)
+			_, err := db.Exec(col.definition)
+			if err != nil {
+				slog.Warn("Failed to add column (may already exist)", "column", col.name, "error", err)
+			}
+		}
+	}
+
+	// Add new columns to seasons table if they don't exist
+	var seasonsExists int
+	err = db.QueryRow(`
+		SELECT COUNT(*) FROM sqlite_master
+		WHERE type='table' AND name='seasons'
+	`).Scan(&seasonsExists)
+	if err != nil || seasonsExists == 0 {
+		return
+	}
+
+	seasonColumns := []struct {
+		name       string
+		definition string
+	}{
+		{"is_owned", "ALTER TABLE seasons ADD COLUMN is_owned BOOLEAN DEFAULT 0"},
+	}
+
+	for _, col := range seasonColumns {
+		var exists int
+		err := db.QueryRow(`
+			SELECT COUNT(*)
+			FROM pragma_table_info('seasons')
+			WHERE name = ?
+		`, col.name).Scan(&exists)
+		if err != nil {
+			continue
+		}
+
+		if exists == 0 {
+			slog.Info("Pre-migration: Adding column to seasons table", "column", col.name)
 			_, err := db.Exec(col.definition)
 			if err != nil {
 				slog.Warn("Failed to add column (may already exist)", "column", col.name, "error", err)

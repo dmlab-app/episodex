@@ -54,10 +54,24 @@ func seedSeries(t *testing.T, db *database.DB, title string, totalSeasons int) i
 // seedSeason inserts a season into the seasons table.
 func seedSeason(t *testing.T, db *database.DB, seriesID int64, seasonNum int, folderPath string, isWatched bool, voiceActorID *int) {
 	t.Helper()
+	// Default: is_owned follows is_watched for backward-compatible tests
+	isOwned := isWatched
 	_, err := db.Exec(`
-		INSERT INTO seasons (series_id, season_number, folder_path, is_watched, voice_actor_id, discovered_at, created_at, updated_at)
+		INSERT INTO seasons (series_id, season_number, folder_path, is_watched, is_owned, voice_actor_id, discovered_at, created_at, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+	`, seriesID, seasonNum, folderPath, isWatched, isOwned, voiceActorID)
+	if err != nil {
+		t.Fatalf("failed to seed season: %v", err)
+	}
+}
+
+// seedSeasonWithOwned inserts a season with explicit is_watched and is_owned values.
+func seedSeasonWithOwned(t *testing.T, db *database.DB, seriesID int64, seasonNum int, folderPath string, isWatched, isOwned bool) {
+	t.Helper()
+	_, err := db.Exec(`
+		INSERT INTO seasons (series_id, season_number, folder_path, is_watched, is_owned, discovered_at, created_at, updated_at)
 		VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
-	`, seriesID, seasonNum, folderPath, isWatched, voiceActorID)
+	`, seriesID, seasonNum, folderPath, isWatched, isOwned)
 	if err != nil {
 		t.Fatalf("failed to seed season: %v", err)
 	}
@@ -928,5 +942,151 @@ func TestHandleGetUpdates_ScannerCreatedNoNonOwnedRows(t *testing.T) {
 	}
 	if len(newSeasons) != 0 {
 		t.Errorf("expected 0 new seasons (no non-owned rows), got %d: %v", len(newSeasons), newSeasons)
+	}
+}
+
+func TestHandleGetSeries_IsOwnedField(t *testing.T) {
+	srv, db := setupTestServer(t)
+
+	seriesID := seedSeries(t, db, "Breaking Bad", 5)
+
+	// Season 1: was watched, currently owned (files present)
+	seedSeasonWithOwned(t, db, seriesID, 1, "/media/bb/s01", true, true)
+	// Season 2: was watched, no longer owned (files removed)
+	seedSeasonWithOwned(t, db, seriesID, 2, "", true, false)
+
+	req := httptest.NewRequest(http.MethodGet, fmt.Sprintf("/api/series/%d", seriesID), http.NoBody)
+	w := httptest.NewRecorder()
+	srv.router.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected status 200, got %d: %s", w.Code, w.Body.String())
+	}
+
+	var result map[string]interface{}
+	if err := json.NewDecoder(w.Body).Decode(&result); err != nil {
+		t.Fatalf("failed to decode response: %v", err)
+	}
+
+	seasons, ok := result["seasons"].([]interface{})
+	if !ok || len(seasons) != 2 {
+		t.Fatalf("expected 2 seasons, got %v", result["seasons"])
+	}
+
+	// Season 1: watched=true, owned=true
+	s1 := seasons[0].(map[string]interface{})
+	if s1["watched"] != true {
+		t.Errorf("season 1: expected watched=true, got %v", s1["watched"])
+	}
+	if s1["owned"] != true {
+		t.Errorf("season 1: expected owned=true, got %v", s1["owned"])
+	}
+
+	// Season 2: watched=true, owned=false
+	s2 := seasons[1].(map[string]interface{})
+	if s2["watched"] != true {
+		t.Errorf("season 2: expected watched=true, got %v", s2["watched"])
+	}
+	if s2["owned"] != false {
+		t.Errorf("season 2: expected owned=false, got %v", s2["owned"])
+	}
+}
+
+func TestHandleListSeasons_IsOwnedField(t *testing.T) {
+	srv, db := setupTestServer(t)
+
+	seriesID := seedSeries(t, db, "Breaking Bad", 4)
+
+	// Season 1: watched + owned
+	seedSeasonWithOwned(t, db, seriesID, 1, "/media/bb/s01", true, true)
+	// Season 2: watched but not owned (files removed)
+	seedSeasonWithOwned(t, db, seriesID, 2, "", true, false)
+	// Season 3: not watched, not owned (from TVDB sync)
+	seedSeasonWithOwned(t, db, seriesID, 3, "", false, false)
+
+	req := httptest.NewRequest(http.MethodGet, fmt.Sprintf("/api/series/%d/seasons", seriesID), http.NoBody)
+	w := httptest.NewRecorder()
+	srv.router.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected status 200, got %d: %s", w.Code, w.Body.String())
+	}
+
+	var seasons []map[string]interface{}
+	if err := json.NewDecoder(w.Body).Decode(&seasons); err != nil {
+		t.Fatalf("failed to decode response: %v", err)
+	}
+
+	// Should have 4 seasons (3 from DB + 1 locked placeholder for season 4)
+	if len(seasons) != 4 {
+		t.Fatalf("expected 4 seasons, got %d", len(seasons))
+	}
+
+	// Season 1: watched=true, owned=true
+	if seasons[0]["watched"] != true || seasons[0]["owned"] != true {
+		t.Errorf("season 1: expected watched=true owned=true, got watched=%v owned=%v", seasons[0]["watched"], seasons[0]["owned"])
+	}
+
+	// Season 2: watched=true, owned=false
+	if seasons[1]["watched"] != true || seasons[1]["owned"] != false {
+		t.Errorf("season 2: expected watched=true owned=false, got watched=%v owned=%v", seasons[1]["watched"], seasons[1]["owned"])
+	}
+
+	// Season 3: watched=false, owned=false
+	if seasons[2]["watched"] != false || seasons[2]["owned"] != false {
+		t.Errorf("season 3: expected watched=false owned=false, got watched=%v owned=%v", seasons[2]["watched"], seasons[2]["owned"])
+	}
+
+	// Season 4: locked placeholder, watched=false, owned=false
+	if seasons[3]["watched"] != false || seasons[3]["owned"] != false {
+		t.Errorf("season 4 (locked): expected watched=false owned=false, got watched=%v owned=%v", seasons[3]["watched"], seasons[3]["owned"])
+	}
+}
+
+func TestHandleGetSeason_IsOwnedField(t *testing.T) {
+	srv, db := setupTestServer(t)
+
+	seriesID := seedSeries(t, db, "Breaking Bad", 5)
+	seedSeasonWithOwned(t, db, seriesID, 1, "/media/bb/s01", true, true)
+	seedSeasonWithOwned(t, db, seriesID, 2, "", true, false)
+
+	// Test season 1: owned
+	req := httptest.NewRequest(http.MethodGet, fmt.Sprintf("/api/series/%d/seasons/1", seriesID), http.NoBody)
+	w := httptest.NewRecorder()
+	srv.router.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected status 200, got %d: %s", w.Code, w.Body.String())
+	}
+
+	var s1 map[string]interface{}
+	if err := json.NewDecoder(w.Body).Decode(&s1); err != nil {
+		t.Fatalf("failed to decode response: %v", err)
+	}
+	if s1["owned"] != true {
+		t.Errorf("season 1: expected owned=true, got %v", s1["owned"])
+	}
+	if s1["watched"] != true {
+		t.Errorf("season 1: expected watched=true, got %v", s1["watched"])
+	}
+
+	// Test season 2: not owned but watched
+	req2 := httptest.NewRequest(http.MethodGet, fmt.Sprintf("/api/series/%d/seasons/2", seriesID), http.NoBody)
+	w2 := httptest.NewRecorder()
+	srv.router.ServeHTTP(w2, req2)
+
+	if w2.Code != http.StatusOK {
+		t.Fatalf("expected status 200, got %d: %s", w2.Code, w2.Body.String())
+	}
+
+	var s2 map[string]interface{}
+	if err := json.NewDecoder(w2.Body).Decode(&s2); err != nil {
+		t.Fatalf("failed to decode response: %v", err)
+	}
+	if s2["owned"] != false {
+		t.Errorf("season 2: expected owned=false, got %v", s2["owned"])
+	}
+	if s2["watched"] != true {
+		t.Errorf("season 2: expected watched=true, got %v", s2["watched"])
 	}
 }

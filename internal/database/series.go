@@ -45,7 +45,8 @@ type Season struct {
 	ID           int64
 	SeriesID     int64
 	SeasonNumber int
-	IsWatched      bool
+	IsWatched    bool
+	IsOwned      bool
 }
 
 // Episode represents an episode
@@ -295,13 +296,13 @@ func (db *DB) GetSeasonBySeriesAndNumber(seriesID int64, seasonNumber int) (*Sea
 	err := db.QueryRow(`
 		SELECT id, series_id, tvdb_season_id, season_number, name, overview,
 			poster_url, first_aired, episode_count, folder_path,
-			voice_actor_id, is_watched, discovered_at
+			voice_actor_id, is_watched, is_owned, discovered_at
 		FROM seasons WHERE series_id = ? AND season_number = ?
 	`, seriesID, seasonNumber).Scan(
 		&season.ID, &season.SeriesID, &season.TVDBSeasonID, &season.SeasonNumber,
 		&season.Name, &season.Overview, &season.PosterURL, &season.FirstAired,
 		&season.EpisodeCount, &season.FolderPath, &season.VoiceActorID,
-		&season.IsWatched, &season.DiscoveredAt,
+		&season.IsWatched, &season.IsOwned, &season.DiscoveredAt,
 	)
 	if err == sql.ErrNoRows {
 		return nil, nil

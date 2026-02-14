@@ -431,7 +431,7 @@ func (s *Server) handleGetSeries(w http.ResponseWriter, r *http.Request) {
 
 	// Get seasons from seasons table with voice actor JOIN
 	seasonsQuery := `
-		SELECT sn.season_number, sn.folder_path, sn.is_watched, sn.voice_actor_id, va.name, sn.discovered_at
+		SELECT sn.season_number, sn.folder_path, sn.is_watched, sn.is_owned, sn.voice_actor_id, va.name, sn.discovered_at
 		FROM seasons sn
 		LEFT JOIN voice_actors va ON sn.voice_actor_id = va.id
 		WHERE sn.series_id = ?
@@ -449,18 +449,19 @@ func (s *Server) handleGetSeries(w http.ResponseWriter, r *http.Request) {
 	for rows.Next() {
 		var seasonNum int
 		var folderPath, voiceActorName *string
-		var isWatched bool
+		var isWatched, isOwned bool
 		var voiceActorID *int
 		var discoveredAt *time.Time
 
-		if err := rows.Scan(&seasonNum, &folderPath, &isWatched, &voiceActorID, &voiceActorName, &discoveredAt); err != nil {
+		if err := rows.Scan(&seasonNum, &folderPath, &isWatched, &isOwned, &voiceActorID, &voiceActorName, &discoveredAt); err != nil {
 			slog.Error("Failed to scan season row", "error", err)
 			continue
 		}
 
 		season := map[string]interface{}{
 			"season_number": seasonNum,
-			"watched":         isWatched,
+			"watched":       isWatched,
+			"owned":         isOwned,
 		}
 
 		if folderPath != nil {
@@ -1249,7 +1250,7 @@ func (s *Server) handleListSeasons(w http.ResponseWriter, r *http.Request) {
 
 	// Get owned seasons from seasons table with voice actor JOIN (includes cached poster_url)
 	query := `
-		SELECT sn.season_number, sn.folder_path, sn.is_watched, sn.voice_actor_id, va.name, sn.discovered_at, sn.poster_url
+		SELECT sn.season_number, sn.folder_path, sn.is_watched, sn.is_owned, sn.voice_actor_id, va.name, sn.discovered_at, sn.poster_url
 		FROM seasons sn
 		LEFT JOIN voice_actors va ON sn.voice_actor_id = va.id
 		WHERE sn.series_id = ?
@@ -1268,18 +1269,19 @@ func (s *Server) handleListSeasons(w http.ResponseWriter, r *http.Request) {
 	for rows.Next() {
 		var seasonNum int
 		var folderPath, voiceActorName, seasonPosterURL *string
-		var isWatched bool
+		var isWatched, isOwned bool
 		var voiceActorID *int
 		var discoveredAt *time.Time
 
-		if err := rows.Scan(&seasonNum, &folderPath, &isWatched, &voiceActorID, &voiceActorName, &discoveredAt, &seasonPosterURL); err != nil {
+		if err := rows.Scan(&seasonNum, &folderPath, &isWatched, &isOwned, &voiceActorID, &voiceActorName, &discoveredAt, &seasonPosterURL); err != nil {
 			slog.Error("Failed to scan season detail row", "error", err)
 			continue
 		}
 
 		season := map[string]interface{}{
 			"season_number": seasonNum,
-			"watched":         isWatched,
+			"watched":       isWatched,
+			"owned":         isOwned,
 		}
 
 		if folderPath != nil {
@@ -1328,7 +1330,8 @@ func (s *Server) handleListSeasons(w http.ResponseWriter, r *http.Request) {
 			// Missing season - locked
 			lockedSeason := map[string]interface{}{
 				"season_number": i,
-				"watched":         false,
+				"watched":       false,
+				"owned":         false,
 			}
 
 			if seriesPosterURL != nil {
@@ -1483,16 +1486,16 @@ func (s *Server) handleGetSeason(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var folderPath *string
-	var isWatched bool
+	var isWatched, isOwned bool
 	var voiceActorID *int
 	var voiceActorName *string
 	var discoveredAt *time.Time
 	err = s.db.QueryRow(`
-		SELECT sn.folder_path, sn.is_watched, sn.voice_actor_id, va.name, sn.discovered_at
+		SELECT sn.folder_path, sn.is_watched, sn.is_owned, sn.voice_actor_id, va.name, sn.discovered_at
 		FROM seasons sn
 		LEFT JOIN voice_actors va ON sn.voice_actor_id = va.id
 		WHERE sn.series_id = ? AND sn.season_number = ?
-	`, sid, snum).Scan(&folderPath, &isWatched, &voiceActorID, &voiceActorName, &discoveredAt)
+	`, sid, snum).Scan(&folderPath, &isWatched, &isOwned, &voiceActorID, &voiceActorName, &discoveredAt)
 
 	if err == sql.ErrNoRows {
 		s.respondError(w, http.StatusNotFound, "season not found")
@@ -1507,7 +1510,8 @@ func (s *Server) handleGetSeason(w http.ResponseWriter, r *http.Request) {
 	response := map[string]interface{}{
 		"season_number": snum,
 		"folder_path":   folderPath,
-		"watched":         isWatched,
+		"watched":       isWatched,
+		"owned":         isOwned,
 	}
 
 	if voiceActorID != nil {

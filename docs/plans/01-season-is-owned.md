@@ -22,13 +22,13 @@ Add `is_owned` column to seasons. Scanner manages it exclusively based on file p
 ## Implementation Steps
 
 ### Task 1: Add `is_owned` column to seasons
-- [ ] Add `is_owned BOOLEAN DEFAULT 0` column to `seasons` table schema in `internal/database/db.go`
-- [ ] Add `IsOwned bool` field to `Season` struct in `internal/database/series.go`
-- [ ] **DO NOT** add `is_owned` to `UpsertSeason` — it is managed exclusively by the scanner
-- [ ] Update `GetSeasonBySeriesAndNumber` to scan `is_owned`
-- [ ] Update API handlers in `internal/api/router.go` that query seasons to include `is_owned` and return it as `"owned"` in JSON responses (`handleGetSeries`, `handleListSeasons`, `handleGetSeason`)
-- [ ] Write tests for season with `is_watched=1, is_owned=0` and `is_watched=1, is_owned=1`
-- [ ] Run project tests — must pass before task 2
+- [x] Add `is_owned BOOLEAN DEFAULT 0` column to `seasons` table schema in `internal/database/db.go`
+- [x] Add `IsOwned bool` field to `Season` struct in `internal/database/series.go`
+- [x] **DO NOT** add `is_owned` to `UpsertSeason` — it is managed exclusively by the scanner
+- [x] Update `GetSeasonBySeriesAndNumber` to scan `is_owned`
+- [x] Update API handlers in `internal/api/router.go` that query seasons to include `is_owned` and return it as `"owned"` in JSON responses (`handleGetSeries`, `handleListSeasons`, `handleGetSeason`)
+- [x] Write tests for season with `is_watched=1, is_owned=0` and `is_watched=1, is_owned=1`
+- [x] Run project tests — must pass before task 2
 
 ### Task 2: Scanner manages `is_owned`
 - [ ] In `internal/scanner/scanner.go` `processSeriesInfo()`, update the raw SQL `INSERT ... ON CONFLICT DO UPDATE` (line ~472) to set `is_owned = 1` when files are found
