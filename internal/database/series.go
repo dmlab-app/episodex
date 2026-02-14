@@ -104,15 +104,29 @@ func (db *DB) UpsertSeries(series *Series) (int64, error) {
 			return 0, fmt.Errorf("failed to check existing series: %w", err)
 		}
 		if err == nil {
-			// Update existing series
+			// Update existing series — COALESCE keeps existing values when new value is NULL
 			_, err = db.Exec(`
 				UPDATE series SET
-					title = ?, original_title = ?, slug = ?, overview = ?,
-					poster_url = ?, backdrop_url = ?, status = ?,
-					first_aired = ?, last_aired = ?, year = ?, runtime = ?,
-					rating = ?, content_rating = ?, original_country = ?,
-					original_language = ?, genres = ?, networks = ?, studios = ?,
-					total_seasons = ?, updated_at = CURRENT_TIMESTAMP
+					title = COALESCE(?, title),
+					original_title = COALESCE(?, original_title),
+					slug = COALESCE(?, slug),
+					overview = COALESCE(?, overview),
+					poster_url = COALESCE(?, poster_url),
+					backdrop_url = COALESCE(?, backdrop_url),
+					status = COALESCE(?, status),
+					first_aired = COALESCE(?, first_aired),
+					last_aired = COALESCE(?, last_aired),
+					year = COALESCE(?, year),
+					runtime = COALESCE(?, runtime),
+					rating = COALESCE(?, rating),
+					content_rating = COALESCE(?, content_rating),
+					original_country = COALESCE(?, original_country),
+					original_language = COALESCE(?, original_language),
+					genres = COALESCE(?, genres),
+					networks = COALESCE(?, networks),
+					studios = COALESCE(?, studios),
+					total_seasons = COALESCE(?, total_seasons),
+					updated_at = CURRENT_TIMESTAMP
 				WHERE id = ?
 			`, series.Title, series.OriginalTitle, series.Slug, series.Overview,
 				series.PosterURL, series.BackdropURL, series.Status,

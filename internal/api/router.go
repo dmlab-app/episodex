@@ -77,6 +77,13 @@ func (s *Server) setupRoutes() {
 	s.router.Route("/api", func(r chi.Router) {
 		// Apply timeout to all API routes (SSE is registered above, outside this group)
 		r.Use(middleware.Timeout(60 * time.Second))
+		// Limit request body size to 1MB to prevent memory exhaustion
+		r.Use(func(next http.Handler) http.Handler {
+			return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
+				next.ServeHTTP(w, r)
+			})
+		})
 
 		// Series endpoints
 		r.Route("/series", func(r chi.Router) {
@@ -704,17 +711,21 @@ func (s *Server) handleMatchSeries(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
-		// For overlapping seasons, preserve owned data from source into destination
+		// For overlapping seasons, merge all data from source into destination
 		_, err = tx.Exec(`
 			UPDATE seasons
 			SET folder_path = COALESCE((SELECT src.folder_path FROM seasons src WHERE src.series_id = ? AND src.season_number = seasons.season_number), folder_path),
 				is_owned = MAX(is_owned, (SELECT src.is_owned FROM seasons src WHERE src.series_id = ? AND src.season_number = seasons.season_number)),
 				voice_actor_id = COALESCE(voice_actor_id, (SELECT src.voice_actor_id FROM seasons src WHERE src.series_id = ? AND src.season_number = seasons.season_number)),
-				discovered_at = COALESCE(discovered_at, (SELECT src.discovered_at FROM seasons src WHERE src.series_id = ? AND src.season_number = seasons.season_number))
+				discovered_at = COALESCE(discovered_at, (SELECT src.discovered_at FROM seasons src WHERE src.series_id = ? AND src.season_number = seasons.season_number)),
+				tvdb_season_id = COALESCE(tvdb_season_id, (SELECT src.tvdb_season_id FROM seasons src WHERE src.series_id = ? AND src.season_number = seasons.season_number)),
+				name = COALESCE(name, (SELECT src.name FROM seasons src WHERE src.series_id = ? AND src.season_number = seasons.season_number)),
+				poster_url = COALESCE(poster_url, (SELECT src.poster_url FROM seasons src WHERE src.series_id = ? AND src.season_number = seasons.season_number)),
+				episode_count = COALESCE(episode_count, (SELECT src.episode_count FROM seasons src WHERE src.series_id = ? AND src.season_number = seasons.season_number))
 			WHERE series_id = ? AND season_number IN (
-				SELECT season_number FROM seasons WHERE series_id = ? AND is_owned = 1
+				SELECT season_number FROM seasons WHERE series_id = ?
 			)
-		`, id, id, id, id, existingSeriesID, id)
+		`, id, id, id, id, id, id, id, id, existingSeriesID, id)
 		if err != nil {
 			slog.Error("Failed to update overlapping seasons", "error", err)
 			s.respondError(w, http.StatusInternalServerError, "failed to merge seasons")
@@ -1770,11 +1781,12 @@ func (s *Server) handleProcessAudioStream(w http.ResponseWriter, r *http.Request
 		err := s.audioCutter.RemoveAudioTracks(filePath, req.TrackID, req.KeepOriginal)
 		if err != nil {
 			errorCount++
+			slog.Error("Failed to process audio file", "file", filePath, "error", err)
 			event := map[string]interface{}{
 				"type":    "file_done",
 				"file":    filepath.Base(filePath),
 				"status":  "error",
-				"message": err.Error(),
+				"message": "processing failed",
 				"current": idx + 1,
 				"total":   len(files),
 			}
