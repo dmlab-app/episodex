@@ -4,10 +4,119 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"time"
 
 	"github.com/episodex/episodex/internal/database"
 	"github.com/episodex/episodex/internal/tvdb"
 )
+
+// TVDBCheckResult holds the outcome of a TVDB update check run.
+type TVDBCheckResult struct {
+	Checked int
+	Updated int
+	Synced  int
+	Errors  int
+}
+
+// CheckForTVDBUpdates checks all series with TVDB IDs for season count changes,
+// creates alerts for new aired seasons, and optionally auto-syncs stale metadata.
+// This function is used by both the scheduled tvdb_check task and the manual API trigger.
+func CheckForTVDBUpdates(db *database.DB, tvdbClient *tvdb.Client, autoSync bool) TVDBCheckResult {
+	var result TVDBCheckResult
+
+	type seriesRow struct {
+		id, tvdbID, totalSeasons, airedSeasons, maxOwned int
+		title                                            string
+		updatedAt                                        time.Time
+	}
+
+	rows, err := db.Query(`
+		SELECT s.id, s.tvdb_id, s.title, s.total_seasons, s.aired_seasons,
+			COALESCE((SELECT MAX(sn.season_number) FROM seasons sn WHERE sn.series_id = s.id AND sn.is_owned = 1 AND sn.season_number > 0), 0),
+			s.updated_at
+		FROM series s
+		WHERE s.tvdb_id IS NOT NULL
+	`)
+	if err != nil {
+		slog.Error("Failed to fetch series for TVDB check", "error", err)
+		return result
+	}
+
+	var seriesList []seriesRow
+	for rows.Next() {
+		var s seriesRow
+		if err := rows.Scan(&s.id, &s.tvdbID, &s.title, &s.totalSeasons, &s.airedSeasons, &s.maxOwned, &s.updatedAt); err != nil {
+			slog.Error("Failed to scan series check row", "error", err)
+			continue
+		}
+		seriesList = append(seriesList, s)
+	}
+	rows.Close() //nolint:errcheck
+	if err := rows.Err(); err != nil {
+		slog.Error("Error iterating series for TVDB check", "error", err)
+		return result
+	}
+
+	for _, s := range seriesList {
+		result.Checked++
+
+		details, err := tvdbClient.GetSeriesDetails(s.tvdbID)
+		if err != nil {
+			slog.Error("Failed to get TVDB seasons", "series_id", s.id, "tvdb_id", s.tvdbID, "error", err)
+			result.Errors++
+			continue
+		}
+
+		newTotalSeasons := len(details.Seasons)
+		newAiredSeasons := tvdb.MaxAiredSeasonNumber(details.Seasons)
+
+		if newTotalSeasons != s.totalSeasons || newAiredSeasons != s.airedSeasons {
+			_, err = db.Exec(`
+				UPDATE series
+				SET total_seasons = ?, aired_seasons = ?, updated_at = CURRENT_TIMESTAMP
+				WHERE id = ?
+			`, newTotalSeasons, newAiredSeasons, s.id)
+
+			if err != nil {
+				slog.Error("Failed to update series seasons", "series_id", s.id, "error", err)
+				result.Errors++
+				continue
+			}
+
+			if newAiredSeasons > s.maxOwned && s.maxOwned > 0 {
+				message := "New seasons available for " + s.title
+
+				if _, err = db.Exec(`
+					INSERT INTO system_alerts (type, message, created_at, dismissed)
+					SELECT ?, ?, CURRENT_TIMESTAMP, 0
+					WHERE NOT EXISTS (
+						SELECT 1 FROM system_alerts WHERE type = ? AND message = ? AND dismissed = 0
+					)
+				`, "new_seasons", message, "new_seasons", message); err != nil {
+					slog.Error("Failed to create alert", "series_id", s.id, "error", err)
+				}
+			}
+
+			slog.Info("Detected season changes", "series", s.title,
+				"old_total", s.totalSeasons, "new_total", newTotalSeasons,
+				"old_aired", s.airedSeasons, "new_aired", newAiredSeasons)
+			result.Updated++
+		}
+
+		// Auto-sync full metadata for series not updated in 7+ days
+		if autoSync && time.Since(s.updatedAt) > 7*24*time.Hour {
+			slog.Info("Auto-syncing stale series metadata", "series", s.title, "last_updated", s.updatedAt)
+			if err := SyncSeriesMetadata(db, tvdbClient, int64(s.id), s.tvdbID); err != nil {
+				slog.Error("Failed to auto-sync series", "series_id", s.id, "error", err)
+			} else {
+				result.Synced++
+			}
+		}
+	}
+
+	slog.Info("TVDB check completed", "checked", result.Checked, "updated", result.Updated, "synced", result.Synced, "errors", result.Errors)
+	return result
+}
 
 // SyncSeriesMetadata fetches full metadata from TVDB and updates the database.
 // It syncs series info, seasons, episodes, characters, and artworks.

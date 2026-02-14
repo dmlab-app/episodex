@@ -1098,51 +1098,71 @@ func (s *Server) handleGetUpdates(w http.ResponseWriter, _ *http.Request) {
 		s.respondError(w, http.StatusInternalServerError, "failed to fetch updates")
 		return
 	}
-	defer rows.Close() //nolint:errcheck
 
-	updates := []map[string]interface{}{}
+	// Collect all rows first, then close rows before doing secondary queries.
+	// SQLite with MaxOpenConns(1) would deadlock if we query inside the loop.
+	type updateRow struct {
+		id            int
+		tvdbID        *int
+		title         string
+		originalTitle *string
+		posterURL     *string
+		status        *string
+		airedSeasons  int
+		maxOwned      *int
+	}
+	var collected []updateRow
 	for rows.Next() {
-		var id int
-		var tvdbID *int
-		var title string
-		var originalTitle, posterURL, status *string
-		var airedSeasons int
-		var maxOwned *int
-
-		if err := rows.Scan(&id, &tvdbID, &title, &originalTitle, &posterURL, &status, &airedSeasons, &maxOwned); err != nil {
+		var r updateRow
+		if err := rows.Scan(&r.id, &r.tvdbID, &r.title, &r.originalTitle, &r.posterURL, &r.status, &r.airedSeasons, &r.maxOwned); err != nil {
 			slog.Error("Failed to scan updates row", "error", err)
 			continue
 		}
+		collected = append(collected, r)
+	}
+	rows.Close() //nolint:errcheck
+	if err := rows.Err(); err != nil {
+		s.respondError(w, http.StatusInternalServerError, "error reading updates")
+		return
+	}
 
-		// Compute which new season numbers are available (beyond max owned)
+	updates := make([]map[string]interface{}, 0, len(collected))
+	for _, r := range collected {
 		maxOwnedNum := 0
-		if maxOwned != nil {
-			maxOwnedNum = *maxOwned
+		if r.maxOwned != nil {
+			maxOwnedNum = *r.maxOwned
 		}
-		var newSeasons []int
-		for i := maxOwnedNum + 1; i <= airedSeasons; i++ {
-			newSeasons = append(newSeasons, i)
+
+		// Query actual non-owned season numbers from the DB that are beyond max owned.
+		// This avoids generating phantom season numbers for non-contiguous TVDB data.
+		newSeasons, err := s.queryNewSeasonNumbers(r.id, maxOwnedNum, r.airedSeasons)
+		if err != nil {
+			slog.Warn("Failed to query new season numbers, using range", "series_id", r.id, "error", err)
+			newSeasons = make([]int, 0, r.airedSeasons-maxOwnedNum)
+			for i := maxOwnedNum + 1; i <= r.airedSeasons; i++ {
+				newSeasons = append(newSeasons, i)
+			}
 		}
 
 		update := map[string]interface{}{
-			"id":            id,
-			"title":         title,
-			"aired_seasons": airedSeasons,
+			"id":            r.id,
+			"title":         r.title,
+			"aired_seasons": r.airedSeasons,
 			"max_owned":     maxOwnedNum,
 			"new_seasons":   newSeasons,
 		}
 
-		if tvdbID != nil {
-			update["tvdb_id"] = *tvdbID
+		if r.tvdbID != nil {
+			update["tvdb_id"] = *r.tvdbID
 		}
-		if originalTitle != nil {
-			update["original_title"] = *originalTitle
+		if r.originalTitle != nil {
+			update["original_title"] = *r.originalTitle
 		}
-		if posterURL != nil {
-			update["poster_url"] = *posterURL
+		if r.posterURL != nil {
+			update["poster_url"] = *r.posterURL
 		}
-		if status != nil {
-			update["status"] = *status
+		if r.status != nil {
+			update["status"] = *r.status
 		} else {
 			update["status"] = "unknown"
 		}
@@ -1150,12 +1170,47 @@ func (s *Server) handleGetUpdates(w http.ResponseWriter, _ *http.Request) {
 		updates = append(updates, update)
 	}
 
+	s.respondJSON(w, http.StatusOK, updates)
+}
+
+// queryNewSeasonNumbers returns season numbers from the DB that are > maxOwned
+// and <= airedSeasons, and are not owned. If no such seasons exist in the DB,
+// it returns a contiguous range as fallback.
+func (s *Server) queryNewSeasonNumbers(seriesID, maxOwned, airedSeasons int) ([]int, error) {
+	rows, err := s.db.Query(`
+		SELECT season_number FROM seasons
+		WHERE series_id = ? AND season_number > ? AND season_number <= ? AND (is_owned = 0 OR is_owned IS NULL)
+		ORDER BY season_number
+	`, seriesID, maxOwned, airedSeasons)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close() //nolint:errcheck
+
+	var nums []int
+	for rows.Next() {
+		var n int
+		if err := rows.Scan(&n); err != nil {
+			continue
+		}
+		nums = append(nums, n)
+	}
 	if err := rows.Err(); err != nil {
-		s.respondError(w, http.StatusInternalServerError, "error reading updates")
-		return
+		return nil, err
 	}
 
-	s.respondJSON(w, http.StatusOK, updates)
+	// If seasons table has entries in this range, use them.
+	// Otherwise fall back to contiguous range (seasons may not be synced yet).
+	if len(nums) > 0 {
+		return nums, nil
+	}
+
+	// Fallback: generate contiguous range
+	nums = make([]int, 0, airedSeasons-maxOwned)
+	for i := maxOwned + 1; i <= airedSeasons; i++ {
+		nums = append(nums, i)
+	}
+	return nums, nil
 }
 
 func (s *Server) handleCheckUpdates(w http.ResponseWriter, _ *http.Request) {
@@ -1166,106 +1221,14 @@ func (s *Server) handleCheckUpdates(w http.ResponseWriter, _ *http.Request) {
 		return
 	}
 
-	// Run check in background
+	// Run check in background (includes auto-sync for stale series)
 	go func() {
 		defer func() {
 			if r := recover(); r != nil {
 				slog.Error("Panic in TVDB check", "error", r)
 			}
 		}()
-		// Collect all series with TVDB IDs first, then close rows
-		type seriesCheck struct {
-			ID           int
-			TVDBId       int
-			Title        string
-			TotalSeasons int
-			AiredSeasons int
-			MaxOwned     int // max owned season number (0 if none)
-		}
-
-		rows, err := s.db.Query(`
-			SELECT s.id, s.tvdb_id, s.title, s.total_seasons, s.aired_seasons,
-				COALESCE((SELECT MAX(sn.season_number) FROM seasons sn WHERE sn.series_id = s.id AND sn.is_owned = 1 AND sn.season_number > 0), 0)
-			FROM series s
-			WHERE s.tvdb_id IS NOT NULL
-		`)
-		if err != nil {
-			slog.Error("Failed to fetch series for TVDB check", "error", err)
-			return
-		}
-
-		var toCheck []seriesCheck
-		for rows.Next() {
-			var sc seriesCheck
-			if err := rows.Scan(&sc.ID, &sc.TVDBId, &sc.Title, &sc.TotalSeasons, &sc.AiredSeasons, &sc.MaxOwned); err != nil {
-				slog.Error("Failed to scan series check row", "error", err)
-				continue
-			}
-			toCheck = append(toCheck, sc)
-		}
-		rows.Close() //nolint:errcheck
-
-		if err := rows.Err(); err != nil {
-			slog.Error("Error iterating series for TVDB check", "error", err)
-			return
-		}
-
-		var checked, updated, errored int
-
-		for _, sc := range toCheck {
-			checked++
-
-			// Get current season details from TVDB (includes aired status)
-			details, err := s.tvdbClient.GetSeriesDetails(sc.TVDBId)
-			if err != nil {
-				slog.Error("Failed to get TVDB seasons", "series_id", sc.ID, "tvdb_id", sc.TVDBId, "error", err)
-				errored++
-				continue
-			}
-
-			newTotalSeasons := len(details.Seasons)
-			newAiredSeasons := tvdb.MaxAiredSeasonNumber(details.Seasons)
-
-			// Compare with database - update if total or aired count changed
-			if newTotalSeasons != sc.TotalSeasons || newAiredSeasons != sc.AiredSeasons {
-				_, err = s.db.Exec(`
-					UPDATE series
-					SET total_seasons = ?, aired_seasons = ?, updated_at = CURRENT_TIMESTAMP
-					WHERE id = ?
-				`, newTotalSeasons, newAiredSeasons, sc.ID)
-
-				if err != nil {
-					slog.Error("Failed to update series seasons", "series_id", sc.ID, "error", err)
-					errored++
-					continue
-				}
-
-				// Create alert only if new aired seasons exist beyond user's max owned season
-				// and user actually has owned seasons (MaxOwned > 0)
-				if newAiredSeasons > sc.MaxOwned && sc.MaxOwned > 0 {
-					message := fmt.Sprintf("New seasons available for %s", sc.Title)
-
-					_, err = s.db.Exec(`
-						INSERT INTO system_alerts (type, message, created_at, dismissed)
-						SELECT ?, ?, CURRENT_TIMESTAMP, 0
-						WHERE NOT EXISTS (
-							SELECT 1 FROM system_alerts WHERE type = ? AND message = ? AND dismissed = 0
-						)
-					`, "new_seasons", message, "new_seasons", message)
-
-					if err != nil {
-						slog.Error("Failed to create alert", "series_id", sc.ID, "error", err)
-					}
-				}
-
-				slog.Info("Detected season changes", "series", sc.Title,
-					"old_total", sc.TotalSeasons, "new_total", newTotalSeasons,
-					"old_aired", sc.AiredSeasons, "new_aired", newAiredSeasons)
-				updated++
-			}
-		}
-
-		slog.Info("TVDB check completed", "checked", checked, "updated", updated, "errors", errored)
+		CheckForTVDBUpdates(s.db, s.tvdbClient, true)
 	}()
 
 	s.respondJSON(w, http.StatusOK, map[string]interface{}{

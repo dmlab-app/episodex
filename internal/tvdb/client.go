@@ -311,6 +311,52 @@ type SeasonInfo struct {
 	Aired  bool   `json:"aired"`
 }
 
+// rawSeason represents the season data as returned by TVDB API responses.
+// Used internally to deduplicate the filtering logic across API methods.
+type rawSeason struct {
+	Type struct {
+		Name string `json:"name"`
+		Type string `json:"type"`
+	} `json:"type"`
+	Name   string `json:"name"`
+	Year   string `json:"year"`
+	Image  string `json:"image"`
+	ID     int    `json:"id"`
+	Number int    `json:"number"`
+}
+
+// filterSeasons converts raw TVDB season data into SeasonInfo, filtering out
+// specials (season 0), non-official types, and seasons without air date info.
+func filterSeasons(raw []rawSeason) []SeasonInfo {
+	seasons := make([]SeasonInfo, 0, len(raw))
+	for _, season := range raw {
+		if season.Number <= 0 {
+			continue
+		}
+		seasonType := season.Type.Type
+		if seasonType != "official" && seasonType != "aired" && seasonType != "" {
+			continue
+		}
+		if season.Year == "" && seasonType != "official" {
+			continue
+		}
+		aired := isSeasonAired(season.Year)
+		if season.Year == "" && seasonType == "official" {
+			aired = true
+		}
+		seasons = append(seasons, SeasonInfo{
+			ID:     season.ID,
+			Number: season.Number,
+			Name:   season.Name,
+			Type:   season.Type.Name,
+			Year:   season.Year,
+			Image:  season.Image,
+			Aired:  aired,
+		})
+	}
+	return seasons
+}
+
 // isSeasonAired checks whether a season has aired based on its year.
 // A season is considered aired if its year is non-empty and <= the current year.
 func isSeasonAired(year string) bool {
@@ -334,6 +380,17 @@ func MaxAiredSeasonNumber(seasons []SeasonInfo) int {
 		}
 	}
 	return maxNum
+}
+
+// AiredSeasonNumbers returns the season numbers of all aired seasons.
+func AiredSeasonNumbers(seasons []SeasonInfo) []int {
+	nums := make([]int, 0)
+	for _, s := range seasons {
+		if s.Aired {
+			nums = append(nums, s.Number)
+		}
+	}
+	return nums
 }
 
 // SeasonExtended represents detailed information about a season with episodes
@@ -384,24 +441,14 @@ func (c *Client) GetSeriesDetails(tvdbID int) (*SeriesDetails, error) {
 			Status struct {
 				Name string `json:"name"`
 			} `json:"status"`
-			Name         string `json:"name"`
-			Image        string `json:"image"`
-			Overview     string `json:"overview"`
-			FirstAired   string `json:"firstAired"`
-			LastAired    string `json:"lastAired"`
-			OriginalName string `json:"originalName"`
-			Seasons      []struct {
-				Type struct {
-					Name string `json:"name"`
-					Type string `json:"type"`
-				} `json:"type"`
-				Name   string `json:"name"`
-				Year   string `json:"year"`
-				Image  string `json:"image"`
-				ID     int    `json:"id"`
-				Number int    `json:"number"`
-			} `json:"seasons"`
-			ID int `json:"id"`
+			Name         string      `json:"name"`
+			Image        string      `json:"image"`
+			Overview     string      `json:"overview"`
+			FirstAired   string      `json:"firstAired"`
+			LastAired    string      `json:"lastAired"`
+			OriginalName string      `json:"originalName"`
+			Seasons      []rawSeason `json:"seasons"`
+			ID           int         `json:"id"`
 		} `json:"data"`
 	}
 
@@ -418,37 +465,7 @@ func (c *Client) GetSeriesDetails(tvdbID int) (*SeriesDetails, error) {
 		FirstAired:   result.Data.FirstAired,
 		LastAired:    result.Data.LastAired,
 		OriginalName: result.Data.OriginalName,
-		Seasons:      make([]SeasonInfo, 0),
-	}
-
-	// Filter out special seasons (season 0) and only include aired seasons
-	// We only include seasons with type "official" or "aired" that have a year set
-	for _, season := range result.Data.Seasons {
-		if season.Number > 0 {
-			// Only include seasons that are "official" type (already aired)
-			// Skip seasons marked as "upcoming" or without a type
-			seasonType := season.Type.Type
-			if seasonType == "official" || seasonType == "aired" || seasonType == "" {
-				// If year is set and not empty, it means the season has aired
-				// If no year info but type is "official", we assume it's aired (backwards compatibility)
-				if season.Year != "" || seasonType == "official" {
-					aired := isSeasonAired(season.Year)
-					// Official seasons with no year info are assumed aired
-					if season.Year == "" && seasonType == "official" {
-						aired = true
-					}
-					details.Seasons = append(details.Seasons, SeasonInfo{
-						ID:     season.ID,
-						Number: season.Number,
-						Name:   season.Name,
-						Type:   season.Type.Name,
-						Year:   season.Year,
-						Image:  season.Image,
-						Aired:  aired,
-					})
-				}
-			}
-		}
+		Seasons:      filterSeasons(result.Data.Seasons),
 	}
 
 	return details, nil
@@ -479,22 +496,12 @@ func (c *Client) GetSeriesExtendedFull(tvdbID int) (*SeriesExtended, error) {
 			Status           struct {
 				Name string `json:"name"`
 			} `json:"status"`
-			Name      string `json:"name"`
-			Image     string `json:"image"`
-			Overview  string `json:"overview"`
-			LastAired string `json:"lastAired"`
-			Seasons   []struct {
-				Type struct {
-					Name string `json:"name"`
-					Type string `json:"type"`
-				} `json:"type"`
-				Name   string `json:"name"`
-				Year   string `json:"year"`
-				Image  string `json:"image"`
-				ID     int    `json:"id"`
-				Number int    `json:"number"`
-			} `json:"seasons"`
-			Genres []struct {
+			Name      string      `json:"name"`
+			Image     string      `json:"image"`
+			Overview  string      `json:"overview"`
+			LastAired string      `json:"lastAired"`
+			Seasons   []rawSeason `json:"seasons"`
+			Genres    []struct {
 				Name string `json:"name"`
 				Slug string `json:"slug"`
 				ID   int    `json:"id"`
@@ -635,29 +642,7 @@ func (c *Client) GetSeriesExtendedFull(tvdbID int) (*SeriesExtended, error) {
 	}
 
 	// Parse seasons (filter aired only)
-	for _, season := range result.Data.Seasons {
-		if season.Number > 0 {
-			seasonType := season.Type.Type
-			if seasonType == "official" || seasonType == "aired" || seasonType == "" {
-				if season.Year != "" || seasonType == "official" {
-					aired := isSeasonAired(season.Year)
-					// Official seasons with no year info are assumed aired
-					if season.Year == "" && seasonType == "official" {
-						aired = true
-					}
-					extended.Seasons = append(extended.Seasons, SeasonInfo{
-						ID:     season.ID,
-						Number: season.Number,
-						Name:   season.Name,
-						Type:   season.Type.Name,
-						Year:   season.Year,
-						Image:  season.Image,
-						Aired:  aired,
-					})
-				}
-			}
-		}
-	}
+	extended.Seasons = filterSeasons(result.Data.Seasons)
 
 	return extended, nil
 }
