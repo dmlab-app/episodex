@@ -299,7 +299,7 @@ function renderSeasons(series, seasons) {
     const grid = document.getElementById('seasons-grid');
 
     grid.innerHTML = seasons.map(season => {
-        const owned = season.watched === true;
+        const owned = season.owned === true;
         const seasonImage = season.image || series.poster_url || PLACEHOLDER_SVG;
 
         if (!owned) {
@@ -425,8 +425,8 @@ async function loadSeasonDetail(seriesId, seasonNum) {
             voiceSelect.addEventListener('change', voiceSelectHandler);
         }
 
-        // Check if season is owned
-        if (!seasonInfo.watched) {
+        // Check if season is owned (files present on disk)
+        if (!seasonInfo.owned) {
             document.getElementById('season-not-watched').style.display = 'block';
             document.getElementById('voice-selector-panel').style.display = 'none';
             document.getElementById('season-files-box').style.display = 'none';

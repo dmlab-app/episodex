@@ -41,10 +41,10 @@ Add `is_owned` column to seasons. Scanner manages it exclusively based on file p
 - [x] Run project tests — must pass before task 3
 
 ### Task 3: Frontend uses `is_owned` for clickability
-- [ ] In `web/static/app.js` `renderSeasons()`, use `season.owned` to determine if season card is clickable
-- [ ] Both `owned=false` states (previously had files, never had files) render identically as grey/locked
-- [ ] In `loadSeasonDetail()`, check `seasonInfo.owned` — if false, show "files not available" and hide audio/voice panels
-- [ ] Run project tests
+- [x] In `web/static/app.js` `renderSeasons()`, use `season.owned` to determine if season card is clickable
+- [x] Both `owned=false` states (previously had files, never had files) render identically as grey/locked
+- [x] In `loadSeasonDetail()`, check `seasonInfo.owned` — if false, show "files not available" and hide audio/voice panels
+- [x] Run project tests
 
 ## Technical Details
 - `seasons` table gets new column: `is_owned BOOLEAN DEFAULT 0`
