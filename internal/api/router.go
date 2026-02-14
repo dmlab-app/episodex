@@ -1133,15 +1133,12 @@ func (s *Server) handleGetUpdates(w http.ResponseWriter, _ *http.Request) {
 			maxOwnedNum = *r.maxOwned
 		}
 
-		// Query actual non-owned season numbers from the DB that are beyond max owned.
-		// This avoids generating phantom season numbers for non-contiguous TVDB data.
+		// Query actual non-owned season rows from the DB that are beyond max owned.
+		// Only returns seasons that exist in TVDB (synced to DB), avoiding phantom numbers.
 		newSeasons, err := s.queryNewSeasonNumbers(r.id, maxOwnedNum, r.airedSeasons)
 		if err != nil {
-			slog.Warn("Failed to query new season numbers, using range", "series_id", r.id, "error", err)
-			newSeasons = make([]int, 0, r.airedSeasons-maxOwnedNum)
-			for i := maxOwnedNum + 1; i <= r.airedSeasons; i++ {
-				newSeasons = append(newSeasons, i)
-			}
+			slog.Warn("Failed to query new season numbers", "series_id", r.id, "error", err)
+			newSeasons = []int{}
 		}
 
 		update := map[string]interface{}{
@@ -1173,13 +1170,13 @@ func (s *Server) handleGetUpdates(w http.ResponseWriter, _ *http.Request) {
 	s.respondJSON(w, http.StatusOK, updates)
 }
 
-// queryNewSeasonNumbers returns season numbers from the DB that are > maxOwned
-// and <= airedSeasons, and are not owned. If no such seasons exist in the DB,
-// it returns a contiguous range as fallback.
+// queryNewSeasonNumbers returns non-owned season numbers that are > maxOwned
+// and <= airedSeasons, based on actual season rows in the DB (synced from TVDB).
+// This avoids generating phantom season numbers for non-contiguous TVDB data.
 func (s *Server) queryNewSeasonNumbers(seriesID, maxOwned, airedSeasons int) ([]int, error) {
 	rows, err := s.db.Query(`
 		SELECT season_number FROM seasons
-		WHERE series_id = ? AND season_number > ? AND season_number <= ? AND (is_owned = 0 OR is_owned IS NULL)
+		WHERE series_id = ? AND season_number > ? AND season_number <= ? AND is_owned = 0
 		ORDER BY season_number
 	`, seriesID, maxOwned, airedSeasons)
 	if err != nil {
@@ -1198,17 +1195,8 @@ func (s *Server) queryNewSeasonNumbers(seriesID, maxOwned, airedSeasons int) ([]
 	if err := rows.Err(); err != nil {
 		return nil, err
 	}
-
-	// If seasons table has entries in this range, use them.
-	// Otherwise fall back to contiguous range (seasons may not be synced yet).
-	if len(nums) > 0 {
-		return nums, nil
-	}
-
-	// Fallback: generate contiguous range
-	nums = make([]int, 0, airedSeasons-maxOwned)
-	for i := maxOwned + 1; i <= airedSeasons; i++ {
-		nums = append(nums, i)
+	if nums == nil {
+		nums = []int{}
 	}
 	return nums, nil
 }

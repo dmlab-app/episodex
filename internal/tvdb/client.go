@@ -341,9 +341,6 @@ func filterSeasons(raw []rawSeason) []SeasonInfo {
 			continue
 		}
 		aired := isSeasonAired(season.Year)
-		if season.Year == "" && seasonType == "official" {
-			aired = true
-		}
 		seasons = append(seasons, SeasonInfo{
 			ID:     season.ID,
 			Number: season.Number,

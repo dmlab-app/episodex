@@ -397,12 +397,17 @@ func (s *Scanner) processSeriesInfo(info SeriesInfo) error {
 						"id", seriesID,
 						"total_seasons", len(details.Seasons))
 				} else {
-					// Update existing series with fresh TVDB metadata
+					// Series already exists — only update cosmetic fields (title, poster, etc.).
+					// Do NOT update total_seasons, aired_seasons, or updated_at here:
+					// those are managed by CheckForTVDBUpdates + SyncSeriesMetadata which also
+					// creates the corresponding non-owned season rows. Updating counts here
+					// without creating season rows would break GET /api/updates (empty new_seasons)
+					// and consume the "changed" signal that CheckForTVDBUpdates needs for retry.
 					_, err = s.db.Exec(`
 						UPDATE series
-						SET title = ?, original_title = ?, poster_url = ?, status = ?, total_seasons = ?, aired_seasons = ?, updated_at = CURRENT_TIMESTAMP
+						SET title = ?, original_title = ?, poster_url = ?, status = ?
 						WHERE id = ?
-					`, details.Name, details.OriginalName, details.Image, details.Status, len(details.Seasons), tvdb.MaxAiredSeasonNumber(details.Seasons), seriesID)
+					`, details.Name, details.OriginalName, details.Image, details.Status, seriesID)
 
 					if err != nil {
 						slog.Error("Failed to update series metadata", "id", seriesID, "error", err)
@@ -434,7 +439,10 @@ func (s *Scanner) processSeriesInfo(info SeriesInfo) error {
 			// Check if series exists by title
 			err = s.db.QueryRow(`SELECT id FROM series WHERE title = ? COLLATE NOCASE`, info.Title).Scan(&seriesID)
 
-			if err != nil {
+			if err != nil && err != sql.ErrNoRows {
+				return fmt.Errorf("failed to check existing series by title %q: %w", info.Title, err)
+			}
+			if err == sql.ErrNoRows {
 				// Create new series without TVDB data
 				result, err := s.db.Exec(`
 					INSERT INTO series (title, status, created_at, updated_at)

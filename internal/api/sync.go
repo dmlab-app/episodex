@@ -4,11 +4,15 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"sync"
 	"time"
 
 	"github.com/episodex/episodex/internal/database"
 	"github.com/episodex/episodex/internal/tvdb"
 )
+
+// tvdbCheckMu prevents concurrent TVDB update checks (manual + scheduler overlap).
+var tvdbCheckMu sync.Mutex
 
 // TVDBCheckResult holds the outcome of a TVDB update check run.
 type TVDBCheckResult struct {
@@ -22,6 +26,12 @@ type TVDBCheckResult struct {
 // creates alerts for new aired seasons, and optionally auto-syncs stale metadata.
 // This function is used by both the scheduled tvdb_check task and the manual API trigger.
 func CheckForTVDBUpdates(db *database.DB, tvdbClient *tvdb.Client, autoSync bool) TVDBCheckResult {
+	if !tvdbCheckMu.TryLock() {
+		slog.Info("TVDB check already in progress, skipping")
+		return TVDBCheckResult{}
+	}
+	defer tvdbCheckMu.Unlock()
+
 	var result TVDBCheckResult
 
 	type seriesRow struct {
@@ -70,19 +80,8 @@ func CheckForTVDBUpdates(db *database.DB, tvdbClient *tvdb.Client, autoSync bool
 		newTotalSeasons := len(details.Seasons)
 		newAiredSeasons := tvdb.MaxAiredSeasonNumber(details.Seasons)
 
-		if newTotalSeasons != s.totalSeasons || newAiredSeasons != s.airedSeasons {
-			_, err = db.Exec(`
-				UPDATE series
-				SET total_seasons = ?, aired_seasons = ?, updated_at = CURRENT_TIMESTAMP
-				WHERE id = ?
-			`, newTotalSeasons, newAiredSeasons, s.id)
-
-			if err != nil {
-				slog.Error("Failed to update series seasons", "series_id", s.id, "error", err)
-				result.Errors++
-				continue
-			}
-
+		seasonCountChanged := newTotalSeasons != s.totalSeasons || newAiredSeasons != s.airedSeasons
+		if seasonCountChanged {
 			if newAiredSeasons > s.maxOwned && s.maxOwned > 0 {
 				message := "New seasons available for " + s.title
 
@@ -103,13 +102,35 @@ func CheckForTVDBUpdates(db *database.DB, tvdbClient *tvdb.Client, autoSync bool
 			result.Updated++
 		}
 
-		// Auto-sync full metadata for series not updated in 7+ days
-		if autoSync && time.Since(s.updatedAt) > 7*24*time.Hour {
-			slog.Info("Auto-syncing stale series metadata", "series", s.title, "last_updated", s.updatedAt)
+		// Auto-sync full metadata when season counts changed (so new season rows are
+		// created immediately, not after a 7-day delay) or for stale series.
+		needsSync := autoSync && (seasonCountChanged || time.Since(s.updatedAt) > 7*24*time.Hour)
+		if needsSync {
+			if seasonCountChanged {
+				slog.Info("Syncing series metadata after season count change", "series", s.title)
+			} else {
+				slog.Info("Auto-syncing stale series metadata", "series", s.title, "last_updated", s.updatedAt)
+			}
 			if err := SyncSeriesMetadata(db, tvdbClient, int64(s.id), s.tvdbID); err != nil {
 				slog.Error("Failed to auto-sync series", "series_id", s.id, "error", err)
+				// Don't fall back to updating season counts without creating season rows:
+				// that would leave aired_seasons ahead of actual rows, causing GET /api/updates
+				// to return the series with an empty new_seasons list. The next scheduled
+				// check will retry the full sync.
+				result.Errors++
 			} else {
 				result.Synced++
+			}
+		} else if seasonCountChanged {
+			// autoSync disabled — update season counts directly.
+			if _, err = db.Exec(`
+				UPDATE series
+				SET total_seasons = ?, aired_seasons = ?, updated_at = CURRENT_TIMESTAMP
+				WHERE id = ?
+			`, newTotalSeasons, newAiredSeasons, s.id); err != nil {
+				slog.Error("Failed to update series seasons", "series_id", s.id, "error", err)
+				result.Errors++
+				continue
 			}
 		}
 	}

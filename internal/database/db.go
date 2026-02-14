@@ -533,8 +533,96 @@ func (db *DB) migrateToSchemaV2() error {
 		slog.Warn("Failed to backfill seasons from media_files", "error", err)
 	}
 
+	// Rebuild media_files table if its FK still references watched_seasons.
+	// SQLite cannot ALTER FK constraints, so we recreate the table.
+	if err := db.migrateMediaFilesFK(); err != nil {
+		return fmt.Errorf("failed to migrate media_files FK: %w", err)
+	}
+
 	// Note: New columns are added in preMigrations() which runs before initTables()
 	// This is necessary because initTables creates indexes on these columns
 
+	return nil
+}
+
+// migrateMediaFilesFK rebuilds the media_files table if its FK still references
+// watched_seasons instead of seasons. On existing DBs, CREATE TABLE IF NOT EXISTS
+// preserves the old FK, so we must recreate the table to update it.
+func (db *DB) migrateMediaFilesFK() error {
+	// Check if media_files table exists
+	var tableExists int
+	if err := db.QueryRow(`
+		SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='media_files'
+	`).Scan(&tableExists); err != nil {
+		return fmt.Errorf("failed to check media_files table existence: %w", err)
+	}
+	if tableExists == 0 {
+		return nil // Table doesn't exist yet, will be created by initTables
+	}
+
+	// Check if the FK references watched_seasons (the old target)
+	var fkRefersOld int
+	if err := db.QueryRow(`
+		SELECT COUNT(*) FROM pragma_foreign_key_list('media_files')
+		WHERE "table" = 'watched_seasons'
+	`).Scan(&fkRefersOld); err != nil {
+		return fmt.Errorf("failed to check media_files FK target: %w", err)
+	}
+	if fkRefersOld == 0 {
+		return nil // FK already references seasons, no migration needed
+	}
+
+	slog.Info("Rebuilding media_files table to update FK from watched_seasons to seasons")
+
+	// Rebuild with correct FK using the rename-and-copy pattern inside a transaction.
+	// Without a transaction, a crash between DROP and RENAME would lose data.
+	tx, err := db.Begin()
+	if err != nil {
+		return fmt.Errorf("failed to begin media_files FK migration transaction: %w", err)
+	}
+	defer tx.Rollback() //nolint:errcheck
+
+	// Drop leftover temp table first in case a previous migration attempt failed mid-way.
+	if _, err := tx.Exec(`DROP TABLE IF EXISTS media_files_new`); err != nil {
+		return fmt.Errorf("failed to drop leftover media_files_new: %w", err)
+	}
+	if _, err := tx.Exec(`
+		CREATE TABLE media_files_new (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			series_id INTEGER NOT NULL,
+			season_number INTEGER NOT NULL,
+			file_path TEXT NOT NULL UNIQUE,
+			file_name TEXT NOT NULL,
+			file_size INTEGER NOT NULL,
+			file_hash TEXT NOT NULL,
+			mod_time INTEGER,
+			first_seen TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+			last_checked TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+			FOREIGN KEY (series_id, season_number) REFERENCES seasons(series_id, season_number) ON DELETE CASCADE
+		)
+	`); err != nil {
+		return fmt.Errorf("failed to create media_files_new: %w", err)
+	}
+	if _, err := tx.Exec(`INSERT INTO media_files_new SELECT * FROM media_files`); err != nil {
+		return fmt.Errorf("failed to copy data to media_files_new: %w", err)
+	}
+	if _, err := tx.Exec(`DROP TABLE media_files`); err != nil {
+		return fmt.Errorf("failed to drop old media_files: %w", err)
+	}
+	if _, err := tx.Exec(`ALTER TABLE media_files_new RENAME TO media_files`); err != nil {
+		return fmt.Errorf("failed to rename media_files_new: %w", err)
+	}
+	if _, err := tx.Exec(`CREATE INDEX IF NOT EXISTS idx_media_files_series ON media_files(series_id, season_number)`); err != nil {
+		return fmt.Errorf("failed to create media_files series index: %w", err)
+	}
+	if _, err := tx.Exec(`CREATE INDEX IF NOT EXISTS idx_media_files_hash ON media_files(file_hash)`); err != nil {
+		return fmt.Errorf("failed to create media_files hash index: %w", err)
+	}
+
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("failed to commit media_files FK migration: %w", err)
+	}
+
+	slog.Info("Successfully rebuilt media_files table with updated FK")
 	return nil
 }

@@ -106,7 +106,7 @@ func (db *DB) UpsertSeries(series *Series) (int64, error) {
 		}
 		if err == nil {
 			// Update existing series — COALESCE keeps existing values when new value is NULL.
-			// NULLIF converts empty string/zero to NULL for non-pointer fields (Title, TotalSeasons).
+			// NULLIF converts empty string to NULL for the Title field.
 			_, err = db.Exec(`
 				UPDATE series SET
 					title = COALESCE(NULLIF(?, ''), title),
@@ -127,8 +127,8 @@ func (db *DB) UpsertSeries(series *Series) (int64, error) {
 					genres = COALESCE(?, genres),
 					networks = COALESCE(?, networks),
 					studios = COALESCE(?, studios),
-					total_seasons = COALESCE(NULLIF(?, 0), total_seasons),
-					aired_seasons = COALESCE(NULLIF(?, 0), aired_seasons),
+					total_seasons = ?,
+					aired_seasons = ?,
 					updated_at = CURRENT_TIMESTAMP
 				WHERE id = ?
 			`, series.Title, series.OriginalTitle, series.Slug, series.Overview,
