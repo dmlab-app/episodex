@@ -16,6 +16,9 @@ const (
 	baseURL = "https://api4.thetvdb.com/v4"
 )
 
+// nowFunc is the time function used for aired detection. Override in tests.
+var nowFunc = time.Now
+
 // Client represents a TVDB API client
 type Client struct {
 	mu         sync.Mutex
@@ -305,6 +308,31 @@ type SeasonInfo struct {
 	Image  string `json:"image"`
 	ID     int    `json:"id"`
 	Number int    `json:"number"`
+	Aired  bool   `json:"aired"`
+}
+
+// isSeasonAired checks whether a season has aired based on its year.
+// A season is considered aired if its year is non-empty and <= the current year.
+func isSeasonAired(year string) bool {
+	if year == "" {
+		return false
+	}
+	var y int
+	if _, err := fmt.Sscanf(year, "%d", &y); err != nil || y <= 0 {
+		return false
+	}
+	return y <= nowFunc().Year()
+}
+
+// CountAiredSeasons returns the number of seasons that have actually aired.
+func CountAiredSeasons(seasons []SeasonInfo) int {
+	count := 0
+	for _, s := range seasons {
+		if s.Aired {
+			count++
+		}
+	}
+	return count
 }
 
 // SeasonExtended represents detailed information about a season with episodes
@@ -410,6 +438,7 @@ func (c *Client) GetSeriesDetails(tvdbID int) (*SeriesDetails, error) {
 						Type:   season.Type.Name,
 						Year:   season.Year,
 						Image:  season.Image,
+						Aired:  isSeasonAired(season.Year),
 					})
 				}
 			}
@@ -612,6 +641,7 @@ func (c *Client) GetSeriesExtendedFull(tvdbID int) (*SeriesExtended, error) {
 						Type:   season.Type.Name,
 						Year:   season.Year,
 						Image:  season.Image,
+						Aired:  isSeasonAired(season.Year),
 					})
 				}
 			}

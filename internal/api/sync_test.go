@@ -154,9 +154,9 @@ func TestSyncSeriesMetadata_Success(t *testing.T) {
 
 	// Verify series was updated
 	var title, overview string
-	var totalSeasons int
-	err = db.QueryRow(`SELECT title, overview, total_seasons FROM series WHERE id = ?`, seriesID).
-		Scan(&title, &overview, &totalSeasons)
+	var totalSeasons, airedSeasons int
+	err = db.QueryRow(`SELECT title, overview, total_seasons, aired_seasons FROM series WHERE id = ?`, seriesID).
+		Scan(&title, &overview, &totalSeasons, &airedSeasons)
 	if err != nil {
 		t.Fatalf("failed to query series: %v", err)
 	}
@@ -169,6 +169,10 @@ func TestSyncSeriesMetadata_Success(t *testing.T) {
 	}
 	if totalSeasons != 5 {
 		t.Errorf("expected 5 total seasons, got %d", totalSeasons)
+	}
+	// All 5 seasons have years in the past (2008-2012), so all should be aired
+	if airedSeasons != 5 {
+		t.Errorf("expected 5 aired seasons, got %d", airedSeasons)
 	}
 
 	// Verify seasons were created

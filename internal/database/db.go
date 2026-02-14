@@ -88,6 +88,7 @@ func (db *DB) initTables() error {
 		networks TEXT,
 		studios TEXT,
 		total_seasons INTEGER DEFAULT 0,
+		aired_seasons INTEGER DEFAULT 0,
 		created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
 		updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 	);
@@ -361,6 +362,7 @@ func (db *DB) preMigrations() {
 		{"genres", "ALTER TABLE series ADD COLUMN genres TEXT"},
 		{"networks", "ALTER TABLE series ADD COLUMN networks TEXT"},
 		{"studios", "ALTER TABLE series ADD COLUMN studios TEXT"},
+		{"aired_seasons", "ALTER TABLE series ADD COLUMN aired_seasons INTEGER DEFAULT 0"},
 	}
 
 	for _, col := range newColumns {

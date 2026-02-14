@@ -101,13 +101,13 @@ func main() {
 			// Collect all series first to avoid holding rows open during network calls.
 			// SQLite with MaxOpenConns(1) would deadlock if we query and exec in the same loop.
 			type seriesRow struct {
-				id, tvdbID, totalSeasons int
-				title                    string
-				updatedAt                time.Time
+				id, tvdbID, totalSeasons, airedSeasons int
+				title                                  string
+				updatedAt                              time.Time
 			}
 
 			rows, err := db.Query(`
-				SELECT id, tvdb_id, title, total_seasons, updated_at
+				SELECT id, tvdb_id, title, total_seasons, aired_seasons, updated_at
 				FROM series
 				WHERE tvdb_id IS NOT NULL
 			`)
@@ -118,7 +118,7 @@ func main() {
 			var seriesList []seriesRow
 			for rows.Next() {
 				var s seriesRow
-				if err := rows.Scan(&s.id, &s.tvdbID, &s.title, &s.totalSeasons, &s.updatedAt); err != nil {
+				if err := rows.Scan(&s.id, &s.tvdbID, &s.title, &s.totalSeasons, &s.airedSeasons, &s.updatedAt); err != nil {
 					continue
 				}
 				seriesList = append(seriesList, s)
@@ -133,38 +133,44 @@ func main() {
 			for _, s := range seriesList {
 				checked++
 
-				// Get current season count from TVDB
-				newTotalSeasons, err := tvdbClient.GetTotalSeasons(s.tvdbID)
+				// Get current season details from TVDB (includes aired status)
+				details, err := tvdbClient.GetSeriesDetails(s.tvdbID)
 				if err != nil {
 					slog.Error("Failed to get TVDB seasons", "series_id", s.id, "error", err)
 					continue
 				}
 
-				// Compare with database
-				if newTotalSeasons > s.totalSeasons {
-					// Update database
+				newTotalSeasons := len(details.Seasons)
+				newAiredSeasons := tvdb.CountAiredSeasons(details.Seasons)
+
+				// Compare with database - update if total or aired count changed
+				if newTotalSeasons > s.totalSeasons || newAiredSeasons > s.airedSeasons {
 					_, err = db.Exec(`
 						UPDATE series
-						SET total_seasons = ?, updated_at = CURRENT_TIMESTAMP
+						SET total_seasons = ?, aired_seasons = ?, updated_at = CURRENT_TIMESTAMP
 						WHERE id = ?
-					`, newTotalSeasons, s.id)
+					`, newTotalSeasons, newAiredSeasons, s.id)
 
 					if err != nil {
 						slog.Error("Failed to update series", "series_id", s.id, "error", err)
 						continue
 					}
 
-					// Create alert
-					message := "New seasons available for " + s.title
+					// Create alert only if new aired seasons appeared
+					if newAiredSeasons > s.airedSeasons {
+						message := "New seasons available for " + s.title
 
-					if _, err = db.Exec(`
-						INSERT INTO system_alerts (type, message, created_at, dismissed)
-						VALUES (?, ?, CURRENT_TIMESTAMP, 0)
-					`, "new_seasons", message); err != nil {
-						slog.Error("Failed to create alert", "series_id", s.id, "error", err)
+						if _, err = db.Exec(`
+							INSERT INTO system_alerts (type, message, created_at, dismissed)
+							VALUES (?, ?, CURRENT_TIMESTAMP, 0)
+						`, "new_seasons", message); err != nil {
+							slog.Error("Failed to create alert", "series_id", s.id, "error", err)
+						}
 					}
 
-					slog.Info("Detected new seasons", "series", s.title, "old", s.totalSeasons, "new", newTotalSeasons)
+					slog.Info("Detected season changes", "series", s.title,
+						"old_total", s.totalSeasons, "new_total", newTotalSeasons,
+						"old_aired", s.airedSeasons, "new_aired", newAiredSeasons)
 					updated++
 				}
 

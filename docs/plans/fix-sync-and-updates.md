@@ -46,11 +46,11 @@ Three issues found during review:
 - [x] No tests needed (frontend-only)
 
 ### Task 3: Track aired seasons from TVDB
-- [ ] In `internal/tvdb/client.go` — ensure `GetSeriesDetailsWithRussian` (or a new method) returns season air dates. TVDB season objects have `firstAired` or episodes have `aired` dates. Add an `Aired` (bool or date) field to the Season struct returned by the client
-- [ ] A season is considered "aired" if: it has at least one episode with an `aired` date in the past (or the season's own `firstAired` is in the past)
-- [ ] In `cmd/server/main.go` `tvdb_check` task — when checking for new seasons, count only AIRED seasons (not just total listed on TVDB). Store `aired_seasons` count on the `series` table (add column if needed) or filter in the query
-- [ ] Write tests for aired season detection logic
-- [ ] Run `make test` — must pass before next task
+- [x] In `internal/tvdb/client.go` — ensure `GetSeriesDetailsWithRussian` (or a new method) returns season air dates. TVDB season objects have `firstAired` or episodes have `aired` dates. Add an `Aired` (bool or date) field to the Season struct returned by the client
+- [x] A season is considered "aired" if: it has at least one episode with an `aired` date in the past (or the season's own `firstAired` is in the past)
+- [x] In `cmd/server/main.go` `tvdb_check` task — when checking for new seasons, count only AIRED seasons (not just total listed on TVDB). Store `aired_seasons` count on the `series` table (add column if needed) or filter in the query
+- [x] Write tests for aired season detection logic
+- [x] Run `make test` — must pass before next task
 
 ### Task 4: Fix Updates logic — only show genuinely new aired seasons
 - [ ] In `internal/api/router.go` — rewrite `handleGetUpdates`: an update is shown only when there are aired seasons with number HIGHER than `MAX(season_number)` from user's owned seasons for that series

@@ -278,12 +278,13 @@ func (s *Server) handleCreateSeries(w http.ResponseWriter, r *http.Request) {
 		posterURL = details.Image
 		status = details.Status
 		totalSeasons = len(details.Seasons)
+		airedSeasons := tvdb.CountAiredSeasons(details.Seasons)
 
 		// Insert series with TVDB metadata
 		result, err := s.db.Exec(`
-			INSERT INTO series (tvdb_id, title, original_title, poster_url, status, total_seasons, created_at, updated_at)
-			VALUES (?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
-		`, *req.TVDBId, title, originalTitle, posterURL, status, totalSeasons)
+			INSERT INTO series (tvdb_id, title, original_title, poster_url, status, total_seasons, aired_seasons, created_at, updated_at)
+			VALUES (?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+		`, *req.TVDBId, title, originalTitle, posterURL, status, totalSeasons, airedSeasons)
 		if err != nil {
 			if strings.Contains(err.Error(), "UNIQUE constraint failed") {
 				s.respondError(w, http.StatusConflict, "series already exists")
@@ -910,9 +911,9 @@ func (s *Server) handleMatchSeries(w http.ResponseWriter, r *http.Request) {
 	// Update series with TVDB metadata (Name = Russian, OriginalName = English)
 	_, err = s.db.Exec(`
 		UPDATE series
-		SET tvdb_id = ?, title = ?, original_title = ?, poster_url = ?, status = ?, total_seasons = ?, updated_at = CURRENT_TIMESTAMP
+		SET tvdb_id = ?, title = ?, original_title = ?, poster_url = ?, status = ?, total_seasons = ?, aired_seasons = ?, updated_at = CURRENT_TIMESTAMP
 		WHERE id = ?
-	`, req.TVDBId, details.Name, details.OriginalName, details.Image, details.Status, len(details.Seasons), id)
+	`, req.TVDBId, details.Name, details.OriginalName, details.Image, details.Status, len(details.Seasons), tvdb.CountAiredSeasons(details.Seasons), id)
 
 	if err != nil {
 		slog.Error("Failed to update series", "id", id, "error", err)
@@ -1193,10 +1194,11 @@ func (s *Server) handleCheckUpdates(w http.ResponseWriter, _ *http.Request) {
 			TVDBId       int
 			Title        string
 			TotalSeasons int
+			AiredSeasons int
 		}
 
 		rows, err := s.db.Query(`
-			SELECT id, tvdb_id, title, total_seasons
+			SELECT id, tvdb_id, title, total_seasons, aired_seasons
 			FROM series
 			WHERE tvdb_id IS NOT NULL
 		`)
@@ -1208,7 +1210,7 @@ func (s *Server) handleCheckUpdates(w http.ResponseWriter, _ *http.Request) {
 		var toCheck []seriesCheck
 		for rows.Next() {
 			var sc seriesCheck
-			if err := rows.Scan(&sc.ID, &sc.TVDBId, &sc.Title, &sc.TotalSeasons); err != nil {
+			if err := rows.Scan(&sc.ID, &sc.TVDBId, &sc.Title, &sc.TotalSeasons, &sc.AiredSeasons); err != nil {
 				slog.Error("Failed to scan series check row", "error", err)
 				continue
 			}
@@ -1226,22 +1228,24 @@ func (s *Server) handleCheckUpdates(w http.ResponseWriter, _ *http.Request) {
 		for _, sc := range toCheck {
 			checked++
 
-			// Get current season count from TVDB
-			newTotalSeasons, err := s.tvdbClient.GetTotalSeasons(sc.TVDBId)
+			// Get current season details from TVDB (includes aired status)
+			details, err := s.tvdbClient.GetSeriesDetails(sc.TVDBId)
 			if err != nil {
 				slog.Error("Failed to get TVDB seasons", "series_id", sc.ID, "tvdb_id", sc.TVDBId, "error", err)
 				errored++
 				continue
 			}
 
-			// Compare with database
-			if newTotalSeasons > sc.TotalSeasons {
-				// Update database
+			newTotalSeasons := len(details.Seasons)
+			newAiredSeasons := tvdb.CountAiredSeasons(details.Seasons)
+
+			// Compare with database - update if total or aired count changed
+			if newTotalSeasons > sc.TotalSeasons || newAiredSeasons > sc.AiredSeasons {
 				_, err = s.db.Exec(`
 					UPDATE series
-					SET total_seasons = ?, updated_at = CURRENT_TIMESTAMP
+					SET total_seasons = ?, aired_seasons = ?, updated_at = CURRENT_TIMESTAMP
 					WHERE id = ?
-				`, newTotalSeasons, sc.ID)
+				`, newTotalSeasons, newAiredSeasons, sc.ID)
 
 				if err != nil {
 					slog.Error("Failed to update series seasons", "series_id", sc.ID, "error", err)
@@ -1249,20 +1253,23 @@ func (s *Server) handleCheckUpdates(w http.ResponseWriter, _ *http.Request) {
 					continue
 				}
 
-				// Create alert
-				newSeasons := newTotalSeasons - sc.TotalSeasons
-				message := fmt.Sprintf("New seasons available for %s: %d new season(s)", sc.Title, newSeasons)
+				// Create alert only if new aired seasons appeared
+				if newAiredSeasons > sc.AiredSeasons {
+					message := fmt.Sprintf("New seasons available for %s", sc.Title)
 
-				_, err = s.db.Exec(`
-					INSERT INTO system_alerts (type, message, created_at, dismissed)
-					VALUES (?, ?, CURRENT_TIMESTAMP, 0)
-				`, "new_seasons", message)
+					_, err = s.db.Exec(`
+						INSERT INTO system_alerts (type, message, created_at, dismissed)
+						VALUES (?, ?, CURRENT_TIMESTAMP, 0)
+					`, "new_seasons", message)
 
-				if err != nil {
-					slog.Error("Failed to create alert", "series_id", sc.ID, "error", err)
+					if err != nil {
+						slog.Error("Failed to create alert", "series_id", sc.ID, "error", err)
+					}
 				}
 
-				slog.Info("Detected new seasons", "series", sc.Title, "old", sc.TotalSeasons, "new", newTotalSeasons)
+				slog.Info("Detected season changes", "series", sc.Title,
+					"old_total", sc.TotalSeasons, "new_total", newTotalSeasons,
+					"old_aired", sc.AiredSeasons, "new_aired", newAiredSeasons)
 				updated++
 			}
 		}

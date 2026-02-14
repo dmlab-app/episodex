@@ -28,6 +28,7 @@ type Series struct {
 	Title            string
 	ID               int64
 	TotalSeasons     int
+	AiredSeasons     int
 }
 
 // Season represents a season of a series
@@ -127,6 +128,7 @@ func (db *DB) UpsertSeries(series *Series) (int64, error) {
 					networks = COALESCE(?, networks),
 					studios = COALESCE(?, studios),
 					total_seasons = COALESCE(NULLIF(?, 0), total_seasons),
+					aired_seasons = COALESCE(NULLIF(?, 0), aired_seasons),
 					updated_at = CURRENT_TIMESTAMP
 				WHERE id = ?
 			`, series.Title, series.OriginalTitle, series.Slug, series.Overview,
@@ -134,7 +136,7 @@ func (db *DB) UpsertSeries(series *Series) (int64, error) {
 				series.FirstAired, series.LastAired, series.Year, series.Runtime,
 				series.Rating, series.ContentRating, series.OriginalCountry,
 				series.OriginalLanguage, series.Genres, series.Networks, series.Studios,
-				series.TotalSeasons, existingID)
+				series.TotalSeasons, series.AiredSeasons, existingID)
 			if err != nil {
 				return 0, fmt.Errorf("failed to update series: %w", err)
 			}
@@ -150,14 +152,14 @@ func (db *DB) UpsertSeries(series *Series) (int64, error) {
 			first_aired, last_aired, year, runtime,
 			rating, content_rating, original_country,
 			original_language, genres, networks, studios,
-			total_seasons, created_at, updated_at
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+			total_seasons, aired_seasons, created_at, updated_at
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
 	`, series.TVDBId, series.Title, series.OriginalTitle, series.Slug, series.Overview,
 		series.PosterURL, series.BackdropURL, series.Status,
 		series.FirstAired, series.LastAired, series.Year, series.Runtime,
 		series.Rating, series.ContentRating, series.OriginalCountry,
 		series.OriginalLanguage, series.Genres, series.Networks, series.Studios,
-		series.TotalSeasons)
+		series.TotalSeasons, series.AiredSeasons)
 
 	if err != nil {
 		return 0, fmt.Errorf("failed to insert series: %w", err)
