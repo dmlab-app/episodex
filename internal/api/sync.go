@@ -36,8 +36,8 @@ func CheckForTVDBUpdates(db *database.DB, tvdbClient *tvdb.Client, autoSync bool
 
 	type seriesRow struct {
 		id, tvdbID, totalSeasons, airedSeasons, maxWatched int
-		title                                            string
-		updatedAt                                        time.Time
+		title                                              string
+		updatedAt                                          time.Time
 	}
 
 	rows, err := db.Query(`

@@ -185,7 +185,8 @@ func TestSyncSeriesMetadata_Success(t *testing.T) {
 		t.Errorf("expected 5 seasons, got %d", seasonCount)
 	}
 
-	// Verify episodes were created for at least one season
+	// SyncSeriesMetadata syncs series, seasons, characters, and artworks — not episodes.
+	// Verify no episodes were created (episode sync was removed).
 	var episodeCount int
 	err = db.QueryRow(`
 		SELECT COUNT(*) FROM episodes e
@@ -195,9 +196,8 @@ func TestSyncSeriesMetadata_Success(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to count episodes: %v", err)
 	}
-	// Each of 5 seasons gets the same 2 mock episodes
-	if episodeCount < 2 {
-		t.Errorf("expected at least 2 episodes, got %d", episodeCount)
+	if episodeCount != 0 {
+		t.Errorf("expected 0 episodes (sync does not create episodes), got %d", episodeCount)
 	}
 }
 

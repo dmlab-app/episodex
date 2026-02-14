@@ -39,27 +39,3 @@ func (s *Server) handleSyncSeriesFromTVDB(w http.ResponseWriter, r *http.Request
 		"message": fmt.Sprintf("Synced series ID %d from TVDB", id),
 	})
 }
-
-// strPtrOrNil returns nil for empty strings, otherwise a pointer to the value.
-func strPtrOrNil(s string) *string {
-	if s == "" {
-		return nil
-	}
-	return &s
-}
-
-// intPtrOrNil returns nil for zero values, otherwise a pointer to the value.
-func intPtrOrNil(v int) *int {
-	if v == 0 {
-		return nil
-	}
-	return &v
-}
-
-// floatPtrOrNil returns nil for zero values, otherwise a pointer to the value.
-func floatPtrOrNil(v float64) *float64 {
-	if v == 0 {
-		return nil
-	}
-	return &v
-}

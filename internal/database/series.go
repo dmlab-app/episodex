@@ -65,7 +65,7 @@ type Episode struct {
 	ID            int64
 	SeasonID      int64
 	EpisodeNumber int
-	IsWatched       bool
+	IsWatched     bool
 }
 
 // Character represents a character in a series

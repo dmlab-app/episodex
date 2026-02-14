@@ -106,4 +106,5 @@ TVDB_CHECK_HOUR=5
 - `UpsertSeason`/`UpsertEpisode` use `COALESCE(?, column)` so partial updates don't overwrite existing metadata with NULL
 - Database backup uses `VACUUM INTO` (atomic, includes WAL contents)
 - TVDB client is thread-safe: token refresh protected by `sync.Mutex`
+- `is_owned` is managed exclusively by the scanner via direct SQL — never set by `UpsertSeason`. Scanner sets `is_owned=1` when files are found, clears it (along with `media_files` and episode file fields, but not `voice_actor_id`) when the folder is gone or empty. `is_watched` is set once and never cleared.
 - golangci-lint uses v2 config format (`version: "2"`) — requires golangci-lint v2.x

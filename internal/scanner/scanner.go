@@ -183,6 +183,9 @@ func (s *Scanner) cleanupRemovedSeasons() error {
 		toCheck = append(toCheck, sn)
 	}
 	rows.Close() //nolint:errcheck
+	if err := rows.Err(); err != nil {
+		return fmt.Errorf("error iterating owned seasons: %w", err)
+	}
 
 	for _, sn := range toCheck {
 		// Check if the folder still exists and has video files
@@ -598,7 +601,7 @@ func (s *Scanner) scanMediaFiles(seriesID int64, seasonNumber int, folderPath st
 			SeriesID:     seriesID,
 			SeasonNumber: seasonNumber,
 			FolderPath:   &folderPath,
-			IsWatched:      true,
+			IsWatched:    true,
 		}
 		seasonID, err = s.db.UpsertSeason(newSeason)
 		if err != nil {
@@ -689,7 +692,7 @@ func (s *Scanner) scanMediaFiles(seriesID int64, seasonNumber int, folderPath st
 				FilePath:      &path,
 				FileHash:      &fileHash.Hash,
 				FileSize:      &fileHash.Size,
-				IsWatched:       true,
+				IsWatched:     true,
 			}
 
 			_, err := s.db.UpsertEpisode(episode)
@@ -741,6 +744,14 @@ func (s *Scanner) RescanSeason(seriesID int64, seasonNumber int) error {
 	// Invalidate all cached data first
 	if err := s.db.InvalidateCachedDataForSeason(seriesID, seasonNumber); err != nil {
 		slog.Error("Failed to invalidate cached data", "error", err)
+	}
+
+	// Ensure is_owned is set (may have been cleared if folder was temporarily unavailable)
+	if _, err := s.db.Exec(`
+		UPDATE seasons SET is_owned = 1, updated_at = CURRENT_TIMESTAMP
+		WHERE series_id = ? AND season_number = ?
+	`, seriesID, seasonNumber); err != nil {
+		slog.Error("Failed to set is_owned on rescan", "error", err)
 	}
 
 	// Rescan all files

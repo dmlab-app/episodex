@@ -733,6 +733,7 @@ func (s *Server) handleMatchSeries(w http.ResponseWriter, r *http.Request) {
 			UPDATE seasons
 			SET folder_path = COALESCE((SELECT src.folder_path FROM seasons src WHERE src.series_id = ? AND src.season_number = seasons.season_number), folder_path),
 				is_watched = MAX(is_watched, COALESCE((SELECT src.is_watched FROM seasons src WHERE src.series_id = ? AND src.season_number = seasons.season_number), 0)),
+				is_owned = MAX(is_owned, COALESCE((SELECT src.is_owned FROM seasons src WHERE src.series_id = ? AND src.season_number = seasons.season_number), 0)),
 				voice_actor_id = COALESCE(voice_actor_id, (SELECT src.voice_actor_id FROM seasons src WHERE src.series_id = ? AND src.season_number = seasons.season_number)),
 				discovered_at = COALESCE(discovered_at, (SELECT src.discovered_at FROM seasons src WHERE src.series_id = ? AND src.season_number = seasons.season_number)),
 				tvdb_season_id = COALESCE(tvdb_season_id, (SELECT src.tvdb_season_id FROM seasons src WHERE src.series_id = ? AND src.season_number = seasons.season_number)),
@@ -742,7 +743,7 @@ func (s *Server) handleMatchSeries(w http.ResponseWriter, r *http.Request) {
 			WHERE series_id = ? AND season_number IN (
 				SELECT season_number FROM seasons WHERE series_id = ?
 			)
-		`, id, id, id, id, id, id, id, id, existingSeriesID, id)
+		`, id, id, id, id, id, id, id, id, id, existingSeriesID, id)
 		if err != nil {
 			slog.Error("Failed to update overlapping seasons", "error", err)
 			s.respondError(w, http.StatusInternalServerError, "failed to merge seasons")
@@ -1110,7 +1111,7 @@ func (s *Server) handleGetUpdates(w http.ResponseWriter, _ *http.Request) {
 		posterURL     *string
 		status        *string
 		airedSeasons  int
-		maxWatched      *int
+		maxWatched    *int
 	}
 	var collected []updateRow
 	for rows.Next() {
@@ -1146,7 +1147,7 @@ func (s *Server) handleGetUpdates(w http.ResponseWriter, _ *http.Request) {
 			"id":            r.id,
 			"title":         r.title,
 			"aired_seasons": r.airedSeasons,
-			"max_watched":     maxWatchedNum,
+			"max_watched":   maxWatchedNum,
 			"new_seasons":   newSeasons,
 		}
 
