@@ -53,13 +53,13 @@ Three issues found during review:
 - [x] Run `make test` — must pass before next task
 
 ### Task 4: Fix Updates logic — only show genuinely new aired seasons
-- [ ] In `internal/api/router.go` — rewrite `handleGetUpdates`: an update is shown only when there are aired seasons with number HIGHER than `MAX(season_number)` from user's owned seasons for that series
-- [ ] Handle edge case: series with no owned seasons at all (user added manually via TVDB, never had files) — do NOT show in updates
-- [ ] Handle edge case: series where TVDB lists future unaired season — do NOT show as update
-- [ ] In `cmd/server/main.go` — update the `tvdb_check` alert creation: only create "new seasons" alert when new aired seasons exist beyond user's max owned season
-- [ ] Update the frontend updates page response to include which specific season numbers are new (not just a count)
-- [ ] Update tests for handleGetUpdates (aired vs unaired, gaps in seasons, deleted old seasons, no owned seasons)
-- [ ] Run `make test` — must pass before next task
+- [x] In `internal/api/router.go` — rewrite `handleGetUpdates`: an update is shown only when there are aired seasons with number HIGHER than `MAX(season_number)` from user's owned seasons for that series
+- [x] Handle edge case: series with no owned seasons at all (user added manually via TVDB, never had files) — do NOT show in updates
+- [x] Handle edge case: series where TVDB lists future unaired season — do NOT show as update
+- [x] In `cmd/server/main.go` — update the `tvdb_check` alert creation: only create "new seasons" alert when new aired seasons exist beyond user's max owned season
+- [x] Update the frontend updates page response to include which specific season numbers are new (not just a count)
+- [x] Update tests for handleGetUpdates (aired vs unaired, gaps in seasons, deleted old seasons, no owned seasons)
+- [x] Run `make test` — must pass before next task
 
 ### Task 5: Verify acceptance criteria
 - [ ] Verify: no "Sync with TVDB" button on series detail page

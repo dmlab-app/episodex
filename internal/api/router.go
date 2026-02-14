@@ -1078,15 +1078,18 @@ func (s *Server) handleTriggerScan(w http.ResponseWriter, _ *http.Request) {
 
 // Updates handlers
 func (s *Server) handleGetUpdates(w http.ResponseWriter, _ *http.Request) {
-	// Query series that have unwatched seasons (total_seasons > owned count)
+	// Show series where aired seasons exist HIGHER than the user's max owned season.
+	// Excludes: series with no owned seasons, unaired/future seasons.
 	query := `
 		SELECT s.id, s.tvdb_id, s.title, s.original_title, s.poster_url, s.status,
-			s.total_seasons,
-			(SELECT COUNT(*) FROM seasons sn WHERE sn.series_id = s.id AND sn.is_owned = 1 AND sn.season_number > 0) as watched_seasons,
-			(SELECT GROUP_CONCAT(sn.season_number) FROM seasons sn WHERE sn.series_id = s.id AND sn.is_owned = 1 AND sn.season_number > 0) as owned_numbers,
-			(SELECT GROUP_CONCAT(sn.season_number) FROM seasons sn WHERE sn.series_id = s.id AND sn.season_number > 0) as all_season_numbers
+			s.aired_seasons,
+			(SELECT MAX(sn.season_number) FROM seasons sn WHERE sn.series_id = s.id AND sn.is_owned = 1 AND sn.season_number > 0) as max_owned
 		FROM series s
-		WHERE s.total_seasons > (SELECT COUNT(*) FROM seasons sn WHERE sn.series_id = s.id AND sn.is_owned = 1 AND sn.season_number > 0)
+		WHERE s.aired_seasons > COALESCE(
+			(SELECT MAX(sn.season_number) FROM seasons sn WHERE sn.series_id = s.id AND sn.is_owned = 1 AND sn.season_number > 0),
+			0
+		)
+		AND (SELECT COUNT(*) FROM seasons sn WHERE sn.series_id = s.id AND sn.is_owned = 1 AND sn.season_number > 0) > 0
 		ORDER BY s.updated_at DESC
 	`
 
@@ -1102,49 +1105,31 @@ func (s *Server) handleGetUpdates(w http.ResponseWriter, _ *http.Request) {
 		var id int
 		var tvdbID *int
 		var title string
-		var originalTitle, posterURL, status, ownedNumbers, allSeasonNumbers *string
-		var totalSeasons, watchedSeasons int
+		var originalTitle, posterURL, status *string
+		var airedSeasons int
+		var maxOwned *int
 
-		if err := rows.Scan(&id, &tvdbID, &title, &originalTitle, &posterURL, &status, &totalSeasons, &watchedSeasons, &ownedNumbers, &allSeasonNumbers); err != nil {
+		if err := rows.Scan(&id, &tvdbID, &title, &originalTitle, &posterURL, &status, &airedSeasons, &maxOwned); err != nil {
 			slog.Error("Failed to scan updates row", "error", err)
 			continue
 		}
 
-		// Compute missing season numbers from actual known seasons
-		ownedSet := map[int]bool{}
-		if ownedNumbers != nil {
-			for _, s := range strings.Split(*ownedNumbers, ",") {
-				if n, err := strconv.Atoi(strings.TrimSpace(s)); err == nil {
-					ownedSet[n] = true
-				}
-			}
+		// Compute which new season numbers are available (beyond max owned)
+		maxOwnedNum := 0
+		if maxOwned != nil {
+			maxOwnedNum = *maxOwned
 		}
-		var missingSeasons []int
-		if allSeasonNumbers != nil {
-			// Use actual season numbers from DB (handles non-contiguous numbering)
-			for _, s := range strings.Split(*allSeasonNumbers, ",") {
-				if n, err := strconv.Atoi(strings.TrimSpace(s)); err == nil {
-					if !ownedSet[n] {
-						missingSeasons = append(missingSeasons, n)
-					}
-				}
-			}
-		} else {
-			// Fallback: assume contiguous 1..N
-			for i := 1; i <= totalSeasons; i++ {
-				if !ownedSet[i] {
-					missingSeasons = append(missingSeasons, i)
-				}
-			}
+		var newSeasons []int
+		for i := maxOwnedNum + 1; i <= airedSeasons; i++ {
+			newSeasons = append(newSeasons, i)
 		}
 
 		update := map[string]interface{}{
-			"id":              id,
-			"title":           title,
-			"total_seasons":   totalSeasons,
-			"watched_seasons": watchedSeasons,
-			"new_seasons":     totalSeasons - watchedSeasons,
-			"missing_seasons": missingSeasons,
+			"id":            id,
+			"title":         title,
+			"aired_seasons": airedSeasons,
+			"max_owned":     maxOwnedNum,
+			"new_seasons":   newSeasons,
 		}
 
 		if tvdbID != nil {
@@ -1195,12 +1180,14 @@ func (s *Server) handleCheckUpdates(w http.ResponseWriter, _ *http.Request) {
 			Title        string
 			TotalSeasons int
 			AiredSeasons int
+			MaxOwned     int // max owned season number (0 if none)
 		}
 
 		rows, err := s.db.Query(`
-			SELECT id, tvdb_id, title, total_seasons, aired_seasons
-			FROM series
-			WHERE tvdb_id IS NOT NULL
+			SELECT s.id, s.tvdb_id, s.title, s.total_seasons, s.aired_seasons,
+				COALESCE((SELECT MAX(sn.season_number) FROM seasons sn WHERE sn.series_id = s.id AND sn.is_owned = 1 AND sn.season_number > 0), 0)
+			FROM series s
+			WHERE s.tvdb_id IS NOT NULL
 		`)
 		if err != nil {
 			slog.Error("Failed to fetch series for TVDB check", "error", err)
@@ -1210,7 +1197,7 @@ func (s *Server) handleCheckUpdates(w http.ResponseWriter, _ *http.Request) {
 		var toCheck []seriesCheck
 		for rows.Next() {
 			var sc seriesCheck
-			if err := rows.Scan(&sc.ID, &sc.TVDBId, &sc.Title, &sc.TotalSeasons, &sc.AiredSeasons); err != nil {
+			if err := rows.Scan(&sc.ID, &sc.TVDBId, &sc.Title, &sc.TotalSeasons, &sc.AiredSeasons, &sc.MaxOwned); err != nil {
 				slog.Error("Failed to scan series check row", "error", err)
 				continue
 			}
@@ -1253,8 +1240,9 @@ func (s *Server) handleCheckUpdates(w http.ResponseWriter, _ *http.Request) {
 					continue
 				}
 
-				// Create alert only if new aired seasons appeared
-				if newAiredSeasons > sc.AiredSeasons {
+				// Create alert only if new aired seasons exist beyond user's max owned season
+				// and user actually has owned seasons (MaxOwned > 0)
+				if newAiredSeasons > sc.MaxOwned && sc.MaxOwned > 0 {
 					message := fmt.Sprintf("New seasons available for %s", sc.Title)
 
 					_, err = s.db.Exec(`

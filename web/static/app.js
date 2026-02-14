@@ -755,14 +755,11 @@ async function loadUpdates() {
         updateBadge(state.updates.length);
 
         list.innerHTML = state.updates.map(u => {
-            const total = u.total_seasons || 0;
-            const watched = u.watched_seasons || 0;
-            // Calculate how many new (unowned) seasons are available
-            const newCount = u.new_seasons || (total - watched);
-            const missing = u.missing_seasons || [];
-            const missingLabel = missing.length > 0
-                ? missing.map(n => `S${String(n).padStart(2, '0')}`).join(', ')
-                : `${newCount} new`;
+            const newSeasons = u.new_seasons || [];
+            const airedSeasons = u.aired_seasons || 0;
+            const seasonLabel = newSeasons.length > 0
+                ? newSeasons.map(n => `S${String(n).padStart(2, '0')}`).join(', ')
+                : 'New seasons';
             return `
             <div class="update-card" onclick="navigate('/series/${u.id}')">
                 <div class="update-poster">
@@ -770,7 +767,7 @@ async function loadUpdates() {
                 </div>
                 <div class="update-info">
                     <h4 class="update-title">${esc(u.title)}</h4>
-                    <p class="update-detail"><span class="update-season">${esc(missingLabel)}</span> \u2014 ${total} total</p>
+                    <p class="update-detail"><span class="update-season">${esc(seasonLabel)}</span> \u2014 ${airedSeasons} aired</p>
                 </div>
             </div>
             `;

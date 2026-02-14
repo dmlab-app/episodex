@@ -101,15 +101,17 @@ func main() {
 			// Collect all series first to avoid holding rows open during network calls.
 			// SQLite with MaxOpenConns(1) would deadlock if we query and exec in the same loop.
 			type seriesRow struct {
-				id, tvdbID, totalSeasons, airedSeasons int
-				title                                  string
-				updatedAt                              time.Time
+				id, tvdbID, totalSeasons, airedSeasons, maxOwned int
+				title                                            string
+				updatedAt                                        time.Time
 			}
 
 			rows, err := db.Query(`
-				SELECT id, tvdb_id, title, total_seasons, aired_seasons, updated_at
-				FROM series
-				WHERE tvdb_id IS NOT NULL
+				SELECT s.id, s.tvdb_id, s.title, s.total_seasons, s.aired_seasons,
+					COALESCE((SELECT MAX(sn.season_number) FROM seasons sn WHERE sn.series_id = s.id AND sn.is_owned = 1 AND sn.season_number > 0), 0),
+					s.updated_at
+				FROM series s
+				WHERE s.tvdb_id IS NOT NULL
 			`)
 			if err != nil {
 				return err
@@ -118,7 +120,7 @@ func main() {
 			var seriesList []seriesRow
 			for rows.Next() {
 				var s seriesRow
-				if err := rows.Scan(&s.id, &s.tvdbID, &s.title, &s.totalSeasons, &s.airedSeasons, &s.updatedAt); err != nil {
+				if err := rows.Scan(&s.id, &s.tvdbID, &s.title, &s.totalSeasons, &s.airedSeasons, &s.maxOwned, &s.updatedAt); err != nil {
 					continue
 				}
 				seriesList = append(seriesList, s)
@@ -156,8 +158,9 @@ func main() {
 						continue
 					}
 
-					// Create alert only if new aired seasons appeared
-					if newAiredSeasons > s.airedSeasons {
+					// Create alert only if new aired seasons exist beyond user's max owned season
+					// and user actually has owned seasons (maxOwned > 0)
+					if newAiredSeasons > s.maxOwned && s.maxOwned > 0 {
 						message := "New seasons available for " + s.title
 
 						if _, err = db.Exec(`
