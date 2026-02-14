@@ -38,6 +38,7 @@ type AudioTrack struct { //nolint:revive // name is used across the codebase
 	Language string `json:"language"`
 	Name     string `json:"name"`
 	ID       int    `json:"id"`
+	Channels int    `json:"channels"`
 	Default  bool   `json:"default"`
 }
 
@@ -47,9 +48,10 @@ type MKVInfo struct {
 		Type       string `json:"type"`
 		Codec      string `json:"codec"`
 		Properties struct {
-			Language     string `json:"language"`
-			TrackName    string `json:"track_name"`
-			DefaultTrack bool   `json:"default_track"`
+			Language      string `json:"language"`
+			TrackName     string `json:"track_name"`
+			AudioChannels int    `json:"audio_channels"`
+			DefaultTrack  bool   `json:"default_track"`
 		} `json:"properties"`
 		ID int `json:"id"`
 	} `json:"tracks"`
@@ -85,6 +87,7 @@ func (ac *AudioCutter) GetAudioTracks(filePath string) ([]AudioTrack, error) {
 				Codec:    track.Codec,
 				Language: track.Properties.Language,
 				Name:     track.Properties.TrackName,
+				Channels: track.Properties.AudioChannels,
 				Default:  track.Properties.DefaultTrack,
 			})
 		}

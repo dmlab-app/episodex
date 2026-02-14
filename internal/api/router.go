@@ -285,7 +285,12 @@ func (s *Server) handleCreateSeries(w http.ResponseWriter, r *http.Request) {
 			VALUES (?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
 		`, *req.TVDBId, title, originalTitle, posterURL, status, totalSeasons)
 		if err != nil {
-			s.respondError(w, http.StatusConflict, "series already exists or database error")
+			if strings.Contains(err.Error(), "UNIQUE constraint failed") {
+				s.respondError(w, http.StatusConflict, "series already exists")
+				return
+			}
+			slog.Error("Failed to create series", "tvdb_id", *req.TVDBId, "error", err)
+			s.respondError(w, http.StatusInternalServerError, "failed to create series")
 			return
 		}
 
@@ -413,8 +418,13 @@ func (s *Server) handleGetSeries(w http.ResponseWriter, r *http.Request) {
 		&seriesInfo.CreatedAt,
 	)
 
-	if err != nil {
+	if err == sql.ErrNoRows {
 		s.respondError(w, http.StatusNotFound, "series not found")
+		return
+	}
+	if err != nil {
+		slog.Error("Failed to fetch series", "id", id, "error", err)
+		s.respondError(w, http.StatusInternalServerError, "failed to fetch series")
 		return
 	}
 
@@ -679,8 +689,13 @@ func (s *Server) handleMatchSeries(w http.ResponseWriter, r *http.Request) {
 	var currentTVDBId *int
 	var title string
 	err = s.db.QueryRow("SELECT tvdb_id, title FROM series WHERE id = ?", id).Scan(&currentTVDBId, &title)
-	if err != nil {
+	if err == sql.ErrNoRows {
 		s.respondError(w, http.StatusNotFound, "series not found")
+		return
+	}
+	if err != nil {
+		slog.Error("Failed to fetch series for match", "id", id, "error", err)
+		s.respondError(w, http.StatusInternalServerError, "failed to fetch series")
 		return
 	}
 
@@ -1351,7 +1366,7 @@ func (s *Server) handleGetAudioTracks(w http.ResponseWriter, r *http.Request) {
 				"language": track.Language,
 				"name":     track.Name,
 				"default":  track.Default,
-				"channels": 2, // You may need to parse this from the track properties
+				"channels": track.Channels,
 			})
 		}
 	}

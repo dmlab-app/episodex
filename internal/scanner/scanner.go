@@ -2,6 +2,8 @@
 package scanner
 
 import (
+	"database/sql"
+	"fmt"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -375,7 +377,10 @@ func (s *Scanner) processSeriesInfo(info SeriesInfo) error {
 				// Check if series with this tvdb_id already exists
 				err = s.db.QueryRow(`SELECT id FROM series WHERE tvdb_id = ?`, tvdbID).Scan(&seriesID)
 
-				if err != nil {
+				if err != nil && err != sql.ErrNoRows {
+					return fmt.Errorf("failed to check existing series by tvdb_id %d: %w", tvdbID, err)
+				}
+				if err == sql.ErrNoRows {
 					// Create new series with TVDB metadata
 					result, err := s.db.Exec(`
 						INSERT INTO series (tvdb_id, title, original_title, poster_url, status, total_seasons, created_at, updated_at)
@@ -451,32 +456,20 @@ func (s *Scanner) processSeriesInfo(info SeriesInfo) error {
 		}
 	}
 
-	// Now add or update the season in the seasons table
-	var exists int
-	err := s.db.QueryRow(`
-		SELECT COUNT(*) FROM seasons
-		WHERE series_id = ? AND season_number = ?
-	`, seriesID, info.Season).Scan(&exists)
-
-	if err != nil || exists == 0 {
-		// Add season
-		_, err = s.db.Exec(`
-			INSERT INTO seasons (series_id, season_number, folder_path, is_owned, discovered_at, created_at, updated_at)
-			VALUES (?, ?, ?, 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
-		`, seriesID, info.Season, info.Path)
-		if err != nil {
-			return err
-		}
-		slog.Info("Added season", "series", seriesTitle, "season", info.Season, "path", info.Path)
-	} else {
-		// Update folder path if changed
-		_, err = s.db.Exec(`
-			UPDATE seasons SET folder_path = ?, is_owned = 1, updated_at = CURRENT_TIMESTAMP
-			WHERE series_id = ? AND season_number = ?
-		`, info.Path, seriesID, info.Season)
-		if err == nil {
-			slog.Info("Updated season path", "series", seriesTitle, "season", info.Season, "path", info.Path)
-		}
+	// Upsert the season — avoids race condition with concurrent TVDB sync
+	result, err := s.db.Exec(`
+		INSERT INTO seasons (series_id, season_number, folder_path, is_owned, discovered_at, created_at, updated_at)
+		VALUES (?, ?, ?, 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+		ON CONFLICT(series_id, season_number) DO UPDATE SET
+			folder_path = excluded.folder_path,
+			is_owned = 1,
+			updated_at = CURRENT_TIMESTAMP
+	`, seriesID, info.Season, info.Path)
+	if err != nil {
+		return fmt.Errorf("failed to upsert season %d for series %d: %w", info.Season, seriesID, err)
+	}
+	if rows, _ := result.RowsAffected(); rows > 0 {
+		slog.Info("Upserted season", "series", seriesTitle, "season", info.Season, "path", info.Path)
 	}
 
 	// Scan and hash media files in this season
