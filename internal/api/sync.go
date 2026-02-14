@@ -86,7 +86,7 @@ func SyncSeriesMetadata(db *database.DB, tvdbClient *tvdb.Client, seriesID int64
 		TVDBId:       &tvdbID,
 		Title:        title,
 		TotalSeasons: len(extended.Seasons),
-		AiredSeasons: tvdb.CountAiredSeasons(extended.Seasons),
+		AiredSeasons: tvdb.MaxAiredSeasonNumber(extended.Seasons),
 	}
 	if originalTitle != "" {
 		seriesData.OriginalTitle = &originalTitle

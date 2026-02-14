@@ -278,7 +278,7 @@ func (s *Server) handleCreateSeries(w http.ResponseWriter, r *http.Request) {
 		posterURL = details.Image
 		status = details.Status
 		totalSeasons = len(details.Seasons)
-		airedSeasons := tvdb.CountAiredSeasons(details.Seasons)
+		airedSeasons := tvdb.MaxAiredSeasonNumber(details.Seasons)
 
 		// Insert series with TVDB metadata
 		result, err := s.db.Exec(`
@@ -913,7 +913,7 @@ func (s *Server) handleMatchSeries(w http.ResponseWriter, r *http.Request) {
 		UPDATE series
 		SET tvdb_id = ?, title = ?, original_title = ?, poster_url = ?, status = ?, total_seasons = ?, aired_seasons = ?, updated_at = CURRENT_TIMESTAMP
 		WHERE id = ?
-	`, req.TVDBId, details.Name, details.OriginalName, details.Image, details.Status, len(details.Seasons), tvdb.CountAiredSeasons(details.Seasons), id)
+	`, req.TVDBId, details.Name, details.OriginalName, details.Image, details.Status, len(details.Seasons), tvdb.MaxAiredSeasonNumber(details.Seasons), id)
 
 	if err != nil {
 		slog.Error("Failed to update series", "id", id, "error", err)
@@ -1224,7 +1224,7 @@ func (s *Server) handleCheckUpdates(w http.ResponseWriter, _ *http.Request) {
 			}
 
 			newTotalSeasons := len(details.Seasons)
-			newAiredSeasons := tvdb.CountAiredSeasons(details.Seasons)
+			newAiredSeasons := tvdb.MaxAiredSeasonNumber(details.Seasons)
 
 			// Compare with database - update if total or aired count changed
 			if newTotalSeasons != sc.TotalSeasons || newAiredSeasons != sc.AiredSeasons {

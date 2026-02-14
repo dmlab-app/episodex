@@ -465,11 +465,11 @@ async function loadSeasonDetail(seriesId, seasonNum) {
                         ${index === 0 ? 'checked' : ''} onchange="selectTrack(${track.id}, ${index})">
                     <div class="track-info" onclick="selectTrack(${track.id}, ${index}); document.getElementById('track-radio-${index}').checked = true;">
                         <div class="track-name">
-                            ${track.name || `Track ${track.id}`}
+                            ${esc(track.name) || `Track ${track.id}`}
                             ${track.default ? ' <span class="default-badge">default</span>' : ''}
                         </div>
                         <div class="track-details">
-                            ID: ${track.id} | Lang: ${track.language} | Codec: ${track.codec} | Channels: ${track.channels || 'N/A'}
+                            ID: ${track.id} | Lang: ${esc(track.language)} | Codec: ${esc(track.codec)} | Channels: ${esc(track.channels) || 'N/A'}
                         </div>
                     </div>
                     <div class="track-actions">

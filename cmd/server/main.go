@@ -143,7 +143,7 @@ func main() {
 				}
 
 				newTotalSeasons := len(details.Seasons)
-				newAiredSeasons := tvdb.CountAiredSeasons(details.Seasons)
+				newAiredSeasons := tvdb.MaxAiredSeasonNumber(details.Seasons)
 
 				// Compare with database - update if total or aired count changed
 				if newTotalSeasons != s.totalSeasons || newAiredSeasons != s.airedSeasons {

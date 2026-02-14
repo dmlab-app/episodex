@@ -385,7 +385,7 @@ func (s *Scanner) processSeriesInfo(info SeriesInfo) error {
 					result, err := s.db.Exec(`
 						INSERT INTO series (tvdb_id, title, original_title, poster_url, status, total_seasons, aired_seasons, created_at, updated_at)
 						VALUES (?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
-					`, tvdbID, details.Name, details.OriginalName, details.Image, details.Status, len(details.Seasons), tvdb.CountAiredSeasons(details.Seasons))
+					`, tvdbID, details.Name, details.OriginalName, details.Image, details.Status, len(details.Seasons), tvdb.MaxAiredSeasonNumber(details.Seasons))
 
 					if err != nil {
 						return err
@@ -400,9 +400,9 @@ func (s *Scanner) processSeriesInfo(info SeriesInfo) error {
 					// Update existing series with fresh TVDB metadata
 					_, err = s.db.Exec(`
 						UPDATE series
-						SET title = ?, original_title = ?, poster_url = ?, status = ?, total_seasons = ?, updated_at = CURRENT_TIMESTAMP
+						SET title = ?, original_title = ?, poster_url = ?, status = ?, total_seasons = ?, aired_seasons = ?, updated_at = CURRENT_TIMESTAMP
 						WHERE id = ?
-					`, details.Name, details.OriginalName, details.Image, details.Status, len(details.Seasons), seriesID)
+					`, details.Name, details.OriginalName, details.Image, details.Status, len(details.Seasons), tvdb.MaxAiredSeasonNumber(details.Seasons), seriesID)
 
 					if err != nil {
 						slog.Error("Failed to update series metadata", "id", seriesID, "error", err)
@@ -445,11 +445,15 @@ func (s *Scanner) processSeriesInfo(info SeriesInfo) error {
 				}
 				seriesID, _ = result.LastInsertId()
 
-				// Create alert about series not found in TVDB
+				// Create alert about series not found in TVDB (deduplicate)
+				msg := "Series '" + info.Title + "' not found in TVDB database"
 				_, _ = s.db.Exec(`
 					INSERT INTO system_alerts (type, message, created_at, dismissed)
-					VALUES (?, ?, CURRENT_TIMESTAMP, 0)
-				`, "tvdb_not_found", "Series '"+info.Title+"' not found in TVDB database")
+					SELECT ?, ?, CURRENT_TIMESTAMP, 0
+					WHERE NOT EXISTS (
+						SELECT 1 FROM system_alerts WHERE type = ? AND message = ? AND dismissed = 0
+					)
+				`, "tvdb_not_found", msg, "tvdb_not_found", msg)
 
 				slog.Info("Added new series without TVDB", "title", info.Title, "id", seriesID)
 			}

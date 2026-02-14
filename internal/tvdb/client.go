@@ -324,15 +324,16 @@ func isSeasonAired(year string) bool {
 	return y <= nowFunc().Year()
 }
 
-// CountAiredSeasons returns the number of seasons that have actually aired.
-func CountAiredSeasons(seasons []SeasonInfo) int {
-	count := 0
+// MaxAiredSeasonNumber returns the highest season number among aired seasons.
+// This is used for comparison against the user's max owned season number.
+func MaxAiredSeasonNumber(seasons []SeasonInfo) int {
+	maxNum := 0
 	for _, s := range seasons {
-		if s.Aired {
-			count++
+		if s.Aired && s.Number > maxNum {
+			maxNum = s.Number
 		}
 	}
-	return count
+	return maxNum
 }
 
 // SeasonExtended represents detailed information about a season with episodes
