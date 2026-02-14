@@ -104,10 +104,11 @@ func (db *DB) UpsertSeries(series *Series) (int64, error) {
 			return 0, fmt.Errorf("failed to check existing series: %w", err)
 		}
 		if err == nil {
-			// Update existing series — COALESCE keeps existing values when new value is NULL
+			// Update existing series — COALESCE keeps existing values when new value is NULL.
+			// NULLIF converts empty string/zero to NULL for non-pointer fields (Title, TotalSeasons).
 			_, err = db.Exec(`
 				UPDATE series SET
-					title = COALESCE(?, title),
+					title = COALESCE(NULLIF(?, ''), title),
 					original_title = COALESCE(?, original_title),
 					slug = COALESCE(?, slug),
 					overview = COALESCE(?, overview),
@@ -125,7 +126,7 @@ func (db *DB) UpsertSeries(series *Series) (int64, error) {
 					genres = COALESCE(?, genres),
 					networks = COALESCE(?, networks),
 					studios = COALESCE(?, studios),
-					total_seasons = COALESCE(?, total_seasons),
+					total_seasons = COALESCE(NULLIF(?, 0), total_seasons),
 					updated_at = CURRENT_TIMESTAMP
 				WHERE id = ?
 			`, series.Title, series.OriginalTitle, series.Slug, series.Overview,

@@ -1600,12 +1600,12 @@ func (s *Server) handleGenerateAudioPreview(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	absFolder, err := filepath.Abs(*folderPath)
+	absFolder, err := filepath.EvalSymlinks(*folderPath)
 	if err != nil {
 		s.respondError(w, http.StatusInternalServerError, "failed to resolve folder path")
 		return
 	}
-	absFile, err := filepath.Abs(req.FilePath)
+	absFile, err := filepath.EvalSymlinks(req.FilePath)
 	if err != nil {
 		s.respondError(w, http.StatusBadRequest, "invalid file path")
 		return
@@ -1650,8 +1650,12 @@ func (s *Server) handleServeAudioPreview(w http.ResponseWriter, r *http.Request)
 	http.ServeFile(w, r, filePath)
 }
 
-// handleProcessAudioStream processes audio with SSE progress updates
+// handleProcessAudioStream processes audio with SSE progress updates.
+// This endpoint is registered outside the /api group to bypass timeout middleware,
+// so we apply body size limit directly here.
 func (s *Server) handleProcessAudioStream(w http.ResponseWriter, r *http.Request) {
+	r.Body = http.MaxBytesReader(w, r.Body, 1<<20) // 1MB limit
+
 	seriesID := chi.URLParam(r, "id")
 	seasonNum := chi.URLParam(r, "num")
 

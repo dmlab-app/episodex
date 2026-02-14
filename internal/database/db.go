@@ -523,6 +523,21 @@ func (db *DB) migrateToSchemaV2() error {
 		}
 	}
 
+	// Ensure all (series_id, season_number) pairs referenced by media_files exist in seasons.
+	// Without this, FK enforcement would reject orphaned media_files rows from before migration.
+	_, err = db.Exec(`
+		INSERT OR IGNORE INTO seasons (series_id, season_number, is_owned)
+		SELECT DISTINCT mf.series_id, mf.season_number, 1
+		FROM media_files mf
+		WHERE NOT EXISTS (
+			SELECT 1 FROM seasons sn
+			WHERE sn.series_id = mf.series_id AND sn.season_number = mf.season_number
+		)
+	`)
+	if err != nil {
+		slog.Warn("Failed to backfill seasons from media_files", "error", err)
+	}
+
 	// Note: New columns are added in preMigrations() which runs before initTables()
 	// This is necessary because initTables creates indexes on these columns
 

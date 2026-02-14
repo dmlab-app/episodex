@@ -224,9 +224,9 @@ async function loadSeriesDetail(seriesId) {
         // Hero backdrop
         const backdropEl = document.getElementById('series-hero-backdrop');
         if (series.backdrop_url) {
-            backdropEl.style.backgroundImage = `url(${posterSrc(series.backdrop_url)})`;
+            backdropEl.style.backgroundImage = `url('${posterSrc(series.backdrop_url)}')`;
         } else if (series.poster_url) {
-            backdropEl.style.backgroundImage = `url(${posterSrc(series.poster_url)})`;
+            backdropEl.style.backgroundImage = `url('${posterSrc(series.poster_url)}')`;
         } else {
             backdropEl.style.backgroundImage = 'none';
         }

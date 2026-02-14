@@ -27,10 +27,10 @@ type FileHash struct {
 // - File size
 // - First ChunkSize bytes
 // - Last ChunkSize bytes
-// - Modification time (as additional signal)
 //
-// This approach is much faster than hashing the entire file while still
-// detecting most changes (file replacement, re-encoding, different version).
+// ModTime is tracked in the result for quick-check optimization but excluded
+// from the hash itself so that touching or restoring a file doesn't cause
+// false change detection.
 func ComputeFileHash(filePath string) (*FileHash, error) {
 	file, err := os.Open(filePath)
 	if err != nil {
@@ -52,9 +52,6 @@ func ComputeFileHash(filePath string) (*FileHash, error) {
 
 	// Write size to hash
 	fmt.Fprintf(hasher, "size:%d|", size) //nolint:errcheck
-
-	// Write modification time to hash (optional signal)
-	fmt.Fprintf(hasher, "mtime:%d|", modTime) //nolint:errcheck
 
 	// Read first ChunkSize bytes
 	firstChunk := make([]byte, ChunkSize)

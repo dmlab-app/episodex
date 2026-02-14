@@ -8,6 +8,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"sync"
 
 	ptn "github.com/middelink/go-parse-torrent-name"
 
@@ -74,6 +75,7 @@ type Scanner struct {
 	db        *database.DB
 	tvdb      *tvdb.Client
 	mediaPath string
+	scanMu    sync.Mutex
 }
 
 // SeriesInfo holds parsed series information
@@ -92,8 +94,15 @@ func New(db *database.DB, tvdbClient *tvdb.Client, mediaPath string) *Scanner {
 	}
 }
 
-// Scan scans the media folder for series and seasons
+// Scan scans the media folder for series and seasons.
+// Only one scan can run at a time; concurrent calls return immediately.
 func (s *Scanner) Scan() error {
+	if !s.scanMu.TryLock() {
+		slog.Info("Scan already in progress, skipping")
+		return nil
+	}
+	defer s.scanMu.Unlock()
+
 	slog.Info("Starting media scan", "path", s.mediaPath)
 
 	entries, err := os.ReadDir(s.mediaPath)
