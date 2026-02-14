@@ -54,8 +54,11 @@ docker-compose up -d   # Deploy with reproxy
 MEDIA_PATH_HOST=/Volumes/Plex/TV Show
 TVDB_API_KEY=xxx
 PORT=8080
+HOST=0.0.0.0
 BACKUP_RETENTION=10
+BACKUP_HOUR=3
 SCAN_INTERVAL_HOURS=1
+TVDB_CHECK_HOUR=5
 ```
 
 ## API Endpoints
@@ -96,5 +99,10 @@ SCAN_INTERVAL_HOURS=1
 - Uses `gateway_gateway` Docker network for reproxy
 - Voice studios pre-seeded on first run (LostFilm, Amedia, etc.)
 - Frontend uses Inter + JetBrains Mono fonts
-- SSE endpoints (audio process) registered outside `/api` group to bypass 60s timeout middleware
+- SSE endpoints (audio process) registered outside `/api` group to bypass 60s timeout middleware; server WriteTimeout is 120s, SSE handler uses `http.ResponseController.SetWriteDeadline` to disable per-request
 - Requires mkvmerge (MKVToolNix) and ffmpeg in PATH for audio features
+- SQLite uses `MaxOpenConns(1)`: always close rows before Exec in the same loop to avoid deadlocks
+- `UpsertSeason`/`UpsertEpisode` use `COALESCE(?, column)` so partial updates don't overwrite existing metadata with NULL
+- Database backup uses `VACUUM INTO` (atomic, includes WAL contents)
+- TVDB client is thread-safe: token refresh protected by `sync.Mutex`
+- golangci-lint uses v2 config format (`version: "2"`) — requires golangci-lint v2.x

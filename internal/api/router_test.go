@@ -44,7 +44,10 @@ func seedSeries(t *testing.T, db *database.DB, title string, totalSeasons int) i
 	if err != nil {
 		t.Fatalf("failed to seed series: %v", err)
 	}
-	id, _ := result.LastInsertId()
+	id, err := result.LastInsertId()
+	if err != nil {
+		t.Fatalf("failed to get last insert ID: %v", err)
+	}
 	return id
 }
 
@@ -288,7 +291,10 @@ func seedSeriesWithMetadata(t *testing.T, db *database.DB) int64 {
 	if err != nil {
 		t.Fatalf("failed to seed series with metadata: %v", err)
 	}
-	id, _ := result.LastInsertId()
+	id, err := result.LastInsertId()
+	if err != nil {
+		t.Fatalf("failed to get last insert ID: %v", err)
+	}
 	return id
 }
 
@@ -485,7 +491,10 @@ func TestHandleGetSeries_ArtworkFallback(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to seed series: %v", err)
 	}
-	seriesID, _ := result.LastInsertId()
+	seriesID, err := result.LastInsertId()
+	if err != nil {
+		t.Fatalf("failed to get last insert ID: %v", err)
+	}
 
 	// Seed artwork as fallback
 	seedArtwork(t, db, seriesID, "poster", "https://art/fallback-poster.jpg", 8.0)

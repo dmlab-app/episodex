@@ -89,19 +89,22 @@ func (c *Client) loginLocked() error {
 	return nil
 }
 
-// ensureToken makes sure we have a valid token (thread-safe)
-func (c *Client) ensureToken() error {
+// getToken returns a valid token, refreshing if needed (thread-safe)
+func (c *Client) getToken() (string, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if c.token == "" || time.Now().After(c.tokenExp) {
-		return c.loginLocked()
+		if err := c.loginLocked(); err != nil {
+			return "", err
+		}
 	}
-	return nil
+	return c.token, nil
 }
 
 // makeRequest makes an authenticated request to TVDB API
 func (c *Client) makeRequest(method, path string, body interface{}) (*http.Response, error) { //nolint:unparam
-	if err := c.ensureToken(); err != nil {
+	token, err := c.getToken()
+	if err != nil {
 		return nil, err
 	}
 
@@ -119,7 +122,7 @@ func (c *Client) makeRequest(method, path string, body interface{}) (*http.Respo
 		return nil, fmt.Errorf("failed to create request: %w", err)
 	}
 
-	req.Header.Set("Authorization", "Bearer "+c.token)
+	req.Header.Set("Authorization", "Bearer "+token)
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Accept", "application/json")
 

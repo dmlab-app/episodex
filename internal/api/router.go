@@ -708,13 +708,13 @@ func (s *Server) handleMatchSeries(w http.ResponseWriter, r *http.Request) {
 		_, err = tx.Exec(`
 			UPDATE seasons
 			SET folder_path = COALESCE((SELECT src.folder_path FROM seasons src WHERE src.series_id = ? AND src.season_number = seasons.season_number), folder_path),
-				is_owned = 1,
+				is_owned = MAX(is_owned, (SELECT src.is_owned FROM seasons src WHERE src.series_id = ? AND src.season_number = seasons.season_number)),
 				voice_actor_id = COALESCE(voice_actor_id, (SELECT src.voice_actor_id FROM seasons src WHERE src.series_id = ? AND src.season_number = seasons.season_number)),
 				discovered_at = COALESCE(discovered_at, (SELECT src.discovered_at FROM seasons src WHERE src.series_id = ? AND src.season_number = seasons.season_number))
 			WHERE series_id = ? AND season_number IN (
 				SELECT season_number FROM seasons WHERE series_id = ? AND is_owned = 1
 			)
-		`, id, id, id, existingSeriesID, id)
+		`, id, id, id, id, existingSeriesID, id)
 		if err != nil {
 			slog.Error("Failed to update overlapping seasons", "error", err)
 			s.respondError(w, http.StatusInternalServerError, "failed to merge seasons")
@@ -1660,12 +1660,12 @@ func (s *Server) handleProcessAudioStream(w http.ResponseWriter, r *http.Request
 	}
 
 	// Validate series ID and season number before database query
-	sid, err := strconv.Atoi(seriesID)
+	sid, err := strconv.ParseInt(seriesID, 10, 64)
 	if err != nil {
 		s.respondError(w, http.StatusBadRequest, "invalid series ID")
 		return
 	}
-	snum, err := strconv.Atoi(seasonNum)
+	snum, err := strconv.ParseInt(seasonNum, 10, 64)
 	if err != nil {
 		s.respondError(w, http.StatusBadRequest, "invalid season number")
 		return
@@ -1729,6 +1729,14 @@ func (s *Server) handleProcessAudioStream(w http.ResponseWriter, r *http.Request
 	skippedCount := 0
 
 	for idx, filePath := range files {
+		// Stop if client disconnected
+		select {
+		case <-r.Context().Done():
+			slog.Info("Client disconnected, stopping audio processing")
+			return
+		default:
+		}
+
 		// Check if already processed
 		var alreadyProcessed bool
 		_ = s.db.QueryRow(`SELECT COUNT(*) > 0 FROM processed_files WHERE file_path = ?`, filePath).Scan(&alreadyProcessed)

@@ -143,13 +143,13 @@ func (s *Server) handleSyncSeriesFromTVDB(w http.ResponseWriter, r *http.Request
 	if extended.OriginalLanguage != "" {
 		seriesData.OriginalLanguage = &extended.OriginalLanguage
 	}
-	if genres != "" {
+	if genres != "" && genres != "[]" {
 		seriesData.Genres = &genres
 	}
-	if networks != "" {
+	if networks != "" && networks != "[]" {
 		seriesData.Networks = &networks
 	}
-	if studios != "" {
+	if studios != "" && studios != "[]" {
 		seriesData.Studios = &studios
 	}
 	// Only store non-zero values so we don't overwrite NULL with meaningless 0
