@@ -369,8 +369,8 @@ func (s *Scanner) processSeriesInfo(info SeriesInfo) error {
 				"tvdb_title", seriesTitle,
 				"tvdb_id", tvdbID)
 
-			// Get detailed information about the series
-			details, err := s.tvdb.GetSeriesDetails(tvdbID)
+			// Get detailed information about the series (with Russian translation)
+			details, err := s.tvdb.GetSeriesDetailsWithRussian(tvdbID)
 			if err != nil {
 				slog.Warn("Failed to get series details from TVDB", "tvdb_id", tvdbID, "error", err)
 			} else {

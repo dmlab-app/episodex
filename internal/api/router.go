@@ -700,7 +700,7 @@ func (s *Server) handleMatchSeries(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Check if this TVDB ID is already used by another series
-	var existingSeriesID int
+	var existingSeriesID int64
 	var existingTitle string
 	err = s.db.QueryRow("SELECT id, title FROM series WHERE tvdb_id = ? AND id != ?", req.TVDBId, id).Scan(&existingSeriesID, &existingTitle)
 	if err != nil && err != sql.ErrNoRows {
@@ -961,6 +961,11 @@ func countOwnedSeasons(seasons []map[string]interface{}) int {
 
 // Scan handler
 func (s *Server) handleTriggerScan(w http.ResponseWriter, _ *http.Request) {
+	if s.scanner == nil {
+		s.respondError(w, http.StatusServiceUnavailable, "scanner not configured")
+		return
+	}
+
 	slog.Info("Manual scan triggered")
 
 	go func() {
@@ -1162,8 +1167,13 @@ func (s *Server) handleListSeasons(w http.ResponseWriter, r *http.Request) {
 	var totalSeasons int
 	var seriesPosterURL *string
 	err = s.db.QueryRow(`SELECT total_seasons, poster_url FROM series WHERE id = ?`, sid).Scan(&totalSeasons, &seriesPosterURL)
-	if err != nil {
+	if err == sql.ErrNoRows {
 		s.respondError(w, http.StatusNotFound, "series not found")
+		return
+	}
+	if err != nil {
+		slog.Error("Failed to fetch series for seasons", "id", sid, "error", err)
+		s.respondError(w, http.StatusInternalServerError, "failed to fetch series")
 		return
 	}
 
@@ -1317,8 +1327,17 @@ func (s *Server) handleGetAudioTracks(w http.ResponseWriter, r *http.Request) {
 		WHERE series_id = ? AND season_number = ?
 	`, sid, snum).Scan(&folderPath)
 
-	if err != nil || folderPath == nil {
-		s.respondError(w, http.StatusNotFound, "season not found or no folder path")
+	if err == sql.ErrNoRows {
+		s.respondError(w, http.StatusNotFound, "season not found")
+		return
+	}
+	if err != nil {
+		slog.Error("Failed to fetch season for audio tracks", "series_id", sid, "season", snum, "error", err)
+		s.respondError(w, http.StatusInternalServerError, "failed to fetch season")
+		return
+	}
+	if folderPath == nil {
+		s.respondError(w, http.StatusNotFound, "season has no folder path")
 		return
 	}
 
@@ -1405,8 +1424,13 @@ func (s *Server) handleGetSeason(w http.ResponseWriter, r *http.Request) {
 		WHERE sn.series_id = ? AND sn.season_number = ?
 	`, sid, snum).Scan(&folderPath, &isOwned, &voiceActorID, &voiceActorName, &discoveredAt)
 
-	if err != nil {
+	if err == sql.ErrNoRows {
 		s.respondError(w, http.StatusNotFound, "season not found")
+		return
+	}
+	if err != nil {
+		slog.Error("Failed to fetch season", "series_id", sid, "season", snum, "error", err)
+		s.respondError(w, http.StatusInternalServerError, "failed to fetch season")
 		return
 	}
 
@@ -1527,6 +1551,11 @@ func (s *Server) handleListVoices(w http.ResponseWriter, _ *http.Request) {
 
 // handleRescanSeason forces a rescan of a specific season to detect file changes
 func (s *Server) handleRescanSeason(w http.ResponseWriter, r *http.Request) {
+	if s.scanner == nil {
+		s.respondError(w, http.StatusServiceUnavailable, "scanner not configured")
+		return
+	}
+
 	seriesID := chi.URLParam(r, "id")
 	seasonNum := chi.URLParam(r, "num")
 
@@ -1550,8 +1579,13 @@ func (s *Server) handleRescanSeason(w http.ResponseWriter, r *http.Request) {
 		WHERE series_id = ? AND season_number = ?
 	`, sid, snum).Scan(&folderPath)
 
-	if err != nil {
+	if err == sql.ErrNoRows {
 		s.respondError(w, http.StatusNotFound, "season not found")
+		return
+	}
+	if err != nil {
+		slog.Error("Failed to fetch season for rescan", "series_id", sid, "season", snum, "error", err)
+		s.respondError(w, http.StatusInternalServerError, "failed to fetch season")
 		return
 	}
 	if folderPath == nil {
