@@ -103,10 +103,11 @@ func main() {
 			type seriesRow struct {
 				id, tvdbID, totalSeasons int
 				title                    string
+				updatedAt                time.Time
 			}
 
 			rows, err := db.Query(`
-				SELECT id, tvdb_id, title, total_seasons
+				SELECT id, tvdb_id, title, total_seasons, updated_at
 				FROM series
 				WHERE tvdb_id IS NOT NULL
 			`)
@@ -117,7 +118,7 @@ func main() {
 			var seriesList []seriesRow
 			for rows.Next() {
 				var s seriesRow
-				if err := rows.Scan(&s.id, &s.tvdbID, &s.title, &s.totalSeasons); err != nil {
+				if err := rows.Scan(&s.id, &s.tvdbID, &s.title, &s.totalSeasons, &s.updatedAt); err != nil {
 					continue
 				}
 				seriesList = append(seriesList, s)
@@ -127,7 +128,7 @@ func main() {
 				return fmt.Errorf("error reading series rows: %w", err)
 			}
 
-			var checked, updated int
+			var checked, updated, synced int
 
 			for _, s := range seriesList {
 				checked++
@@ -166,9 +167,19 @@ func main() {
 					slog.Info("Detected new seasons", "series", s.title, "old", s.totalSeasons, "new", newTotalSeasons)
 					updated++
 				}
+
+				// Auto-sync full metadata for series not updated in 7+ days
+				if time.Since(s.updatedAt) > 7*24*time.Hour {
+					slog.Info("Auto-syncing stale series metadata", "series", s.title, "last_updated", s.updatedAt)
+					if err := api.SyncSeriesMetadata(db, tvdbClient, int64(s.id), s.tvdbID); err != nil {
+						slog.Error("Failed to auto-sync series", "series_id", s.id, "error", err)
+					} else {
+						synced++
+					}
+				}
 			}
 
-			slog.Info("TVDB check completed", "checked", checked, "updated", updated)
+			slog.Info("TVDB check completed", "checked", checked, "updated", updated, "synced", synced)
 			return nil
 		},
 	})

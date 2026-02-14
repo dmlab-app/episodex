@@ -23,12 +23,25 @@ type Client struct {
 	tokenExp   time.Time
 	apiKey     string
 	token      string
+	baseURL    string
 }
 
 // NewClient creates a new TVDB API client
 func NewClient(apiKey string) *Client {
 	return &Client{
-		apiKey: apiKey,
+		apiKey:  apiKey,
+		baseURL: baseURL,
+		httpClient: &http.Client{
+			Timeout: 30 * time.Second,
+		},
+	}
+}
+
+// NewClientWithBaseURL creates a TVDB client with a custom base URL (for testing).
+func NewClientWithBaseURL(apiKey, base string) *Client {
+	return &Client{
+		apiKey:  apiKey,
+		baseURL: base,
 		httpClient: &http.Client{
 			Timeout: 30 * time.Second,
 		},
@@ -57,7 +70,7 @@ func (c *Client) loginLocked() error {
 		return fmt.Errorf("failed to marshal login request: %w", err)
 	}
 
-	resp, err := c.httpClient.Post(baseURL+"/login", "application/json", bytes.NewBuffer(jsonData))
+	resp, err := c.httpClient.Post(c.baseURL+"/login", "application/json", bytes.NewBuffer(jsonData))
 	if err != nil {
 		return fmt.Errorf("failed to login to TVDB: %w", err)
 	}
@@ -117,7 +130,7 @@ func (c *Client) makeRequest(method, path string, body interface{}) (*http.Respo
 		reqBody = bytes.NewBuffer(jsonData)
 	}
 
-	req, err := http.NewRequest(method, baseURL+path, reqBody)
+	req, err := http.NewRequest(method, c.baseURL+path, reqBody)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create request: %w", err)
 	}
