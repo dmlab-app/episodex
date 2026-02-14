@@ -1041,7 +1041,7 @@ func isValidHash(h string) bool {
 	return true
 }
 
-// countWatchedSeasons counts seasons where owned == true
+// countWatchedSeasons counts seasons where watched == true
 func countWatchedSeasons(seasons []map[string]interface{}) int {
 	count := 0
 	for _, s := range seasons {

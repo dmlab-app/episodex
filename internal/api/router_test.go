@@ -189,7 +189,7 @@ func TestHandleGetSeries_ReturnsSeasonsWithVoiceActors(t *testing.T) {
 		t.Errorf("season 1: expected voice_actor_name 'LostFilm', got %v", s1["voice_actor_name"])
 	}
 	if s1["watched"] != true {
-		t.Errorf("season 1: expected owned=true, got %v", s1["watched"])
+		t.Errorf("season 1: expected watched=true, got %v", s1["watched"])
 	}
 
 	// Check season 2 has no voice actor
@@ -244,7 +244,7 @@ func TestHandleListSeasons_OwnedVsLocked(t *testing.T) {
 	// Season 1: owned with voice actor
 	s1 := seasons[0]
 	if s1["watched"] != true {
-		t.Errorf("season 1: expected owned=true, got %v", s1["watched"])
+		t.Errorf("season 1: expected watched=true, got %v", s1["watched"])
 	}
 	if s1["voice_actor_name"] != "Amedia" {
 		t.Errorf("season 1: expected voice_actor_name 'Amedia', got %v", s1["voice_actor_name"])
@@ -253,19 +253,19 @@ func TestHandleListSeasons_OwnedVsLocked(t *testing.T) {
 	// Season 2: locked (not owned)
 	s2 := seasons[1]
 	if s2["watched"] != false {
-		t.Errorf("season 2: expected owned=false, got %v", s2["watched"])
+		t.Errorf("season 2: expected watched=false, got %v", s2["watched"])
 	}
 
 	// Season 3: owned without voice actor
 	s3 := seasons[2]
 	if s3["watched"] != true {
-		t.Errorf("season 3: expected owned=true, got %v", s3["watched"])
+		t.Errorf("season 3: expected watched=true, got %v", s3["watched"])
 	}
 
 	// Season 4: locked
 	s4 := seasons[3]
 	if s4["watched"] != false {
-		t.Errorf("season 4: expected owned=false, got %v", s4["watched"])
+		t.Errorf("season 4: expected watched=false, got %v", s4["watched"])
 	}
 }
 

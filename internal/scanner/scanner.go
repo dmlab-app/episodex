@@ -746,14 +746,20 @@ func (s *Scanner) RescanSeason(seriesID int64, seasonNumber int) error {
 		slog.Error("Failed to invalidate cached data", "error", err)
 	}
 
-	// Ensure is_owned is set (may have been cleared if folder was temporarily unavailable)
-	if _, err := s.db.Exec(`
-		UPDATE seasons SET is_owned = 1, updated_at = CURRENT_TIMESTAMP
-		WHERE series_id = ? AND season_number = ?
-	`, seriesID, seasonNumber); err != nil {
-		slog.Error("Failed to set is_owned on rescan", "error", err)
+	// Rescan all files
+	if err := s.scanMediaFiles(seriesID, seasonNumber, folderPath); err != nil {
+		return err
 	}
 
-	// Rescan all files
-	return s.scanMediaFiles(seriesID, seasonNumber, folderPath)
+	// Set is_owned only if the folder actually contains video files
+	if folderHasVideoFiles(folderPath) {
+		if _, err := s.db.Exec(`
+			UPDATE seasons SET is_owned = 1, updated_at = CURRENT_TIMESTAMP
+			WHERE series_id = ? AND season_number = ?
+		`, seriesID, seasonNumber); err != nil {
+			slog.Error("Failed to set is_owned on rescan", "error", err)
+		}
+	}
+
+	return nil
 }

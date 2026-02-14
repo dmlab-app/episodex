@@ -61,11 +61,12 @@ func CheckForTVDBUpdates(db *database.DB, tvdbClient *tvdb.Client, autoSync bool
 		}
 		seriesList = append(seriesList, s)
 	}
-	rows.Close() //nolint:errcheck
 	if err := rows.Err(); err != nil {
+		rows.Close() //nolint:errcheck
 		slog.Error("Error iterating series for TVDB check", "error", err)
 		return result
 	}
+	rows.Close() //nolint:errcheck
 
 	for _, s := range seriesList {
 		result.Checked++
