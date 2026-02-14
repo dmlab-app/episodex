@@ -45,7 +45,7 @@ type Season struct {
 	ID           int64
 	SeriesID     int64
 	SeasonNumber int
-	IsOwned      bool
+	IsWatched      bool
 }
 
 // Episode represents an episode
@@ -64,7 +64,7 @@ type Episode struct {
 	ID            int64
 	SeasonID      int64
 	EpisodeNumber int
-	IsOwned       bool
+	IsWatched       bool
 }
 
 // Character represents a character in a series
@@ -194,13 +194,13 @@ func (db *DB) UpsertSeason(season *Season) (int64, error) {
 				episode_count = COALESCE(?, episode_count),
 				folder_path = COALESCE(?, folder_path),
 				voice_actor_id = COALESCE(?, voice_actor_id),
-				is_owned = MAX(is_owned, ?),
+				is_watched = MAX(is_watched, ?),
 				discovered_at = COALESCE(?, discovered_at),
 				updated_at = CURRENT_TIMESTAMP
 			WHERE id = ?
 		`, season.TVDBSeasonID, season.Name, season.Overview, season.PosterURL,
 			season.FirstAired, season.EpisodeCount, season.FolderPath,
-			season.VoiceActorID, season.IsOwned, season.DiscoveredAt, existingID)
+			season.VoiceActorID, season.IsWatched, season.DiscoveredAt, existingID)
 		if err != nil {
 			return 0, fmt.Errorf("failed to update season: %w", err)
 		}
@@ -212,12 +212,12 @@ func (db *DB) UpsertSeason(season *Season) (int64, error) {
 		INSERT INTO seasons (
 			series_id, tvdb_season_id, season_number, name, overview,
 			poster_url, first_aired, episode_count, folder_path,
-			voice_actor_id, is_owned, discovered_at,
+			voice_actor_id, is_watched, discovered_at,
 			created_at, updated_at
 		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
 	`, season.SeriesID, season.TVDBSeasonID, season.SeasonNumber, season.Name, season.Overview,
 		season.PosterURL, season.FirstAired, season.EpisodeCount, season.FolderPath,
-		season.VoiceActorID, season.IsOwned, season.DiscoveredAt)
+		season.VoiceActorID, season.IsWatched, season.DiscoveredAt)
 
 	if err != nil {
 		return 0, fmt.Errorf("failed to insert season: %w", err)
@@ -254,14 +254,14 @@ func (db *DB) UpsertEpisode(episode *Episode) (int64, error) {
 				file_path = COALESCE(?, file_path),
 				file_hash = COALESCE(?, file_hash),
 				file_size = COALESCE(?, file_size),
-				is_owned = MAX(is_owned, ?),
+				is_watched = MAX(is_watched, ?),
 				watched_at = COALESCE(?, watched_at),
 				updated_at = CURRENT_TIMESTAMP
 			WHERE id = ?
 		`, episode.TVDBEpisodeID, episode.Title, episode.Overview, episode.ImageURL,
 			episode.AirDate, episode.Runtime, episode.Rating,
 			episode.FilePath, episode.FileHash, episode.FileSize,
-			episode.IsOwned, episode.WatchedAt, existingID)
+			episode.IsWatched, episode.WatchedAt, existingID)
 		if err != nil {
 			return 0, fmt.Errorf("failed to update episode: %w", err)
 		}
@@ -274,13 +274,13 @@ func (db *DB) UpsertEpisode(episode *Episode) (int64, error) {
 			season_id, tvdb_episode_id, episode_number, title, overview,
 			image_url, air_date, runtime, rating,
 			file_path, file_hash, file_size,
-			is_owned, watched_at,
+			is_watched, watched_at,
 			created_at, updated_at
 		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
 	`, episode.SeasonID, episode.TVDBEpisodeID, episode.EpisodeNumber, episode.Title, episode.Overview,
 		episode.ImageURL, episode.AirDate, episode.Runtime, episode.Rating,
 		episode.FilePath, episode.FileHash, episode.FileSize,
-		episode.IsOwned, episode.WatchedAt)
+		episode.IsWatched, episode.WatchedAt)
 
 	if err != nil {
 		return 0, fmt.Errorf("failed to insert episode: %w", err)
@@ -295,13 +295,13 @@ func (db *DB) GetSeasonBySeriesAndNumber(seriesID int64, seasonNumber int) (*Sea
 	err := db.QueryRow(`
 		SELECT id, series_id, tvdb_season_id, season_number, name, overview,
 			poster_url, first_aired, episode_count, folder_path,
-			voice_actor_id, is_owned, discovered_at
+			voice_actor_id, is_watched, discovered_at
 		FROM seasons WHERE series_id = ? AND season_number = ?
 	`, seriesID, seasonNumber).Scan(
 		&season.ID, &season.SeriesID, &season.TVDBSeasonID, &season.SeasonNumber,
 		&season.Name, &season.Overview, &season.PosterURL, &season.FirstAired,
 		&season.EpisodeCount, &season.FolderPath, &season.VoiceActorID,
-		&season.IsOwned, &season.DiscoveredAt,
+		&season.IsWatched, &season.DiscoveredAt,
 	)
 	if err == sql.ErrNoRows {
 		return nil, nil

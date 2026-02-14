@@ -35,14 +35,14 @@ func CheckForTVDBUpdates(db *database.DB, tvdbClient *tvdb.Client, autoSync bool
 	var result TVDBCheckResult
 
 	type seriesRow struct {
-		id, tvdbID, totalSeasons, airedSeasons, maxOwned int
+		id, tvdbID, totalSeasons, airedSeasons, maxWatched int
 		title                                            string
 		updatedAt                                        time.Time
 	}
 
 	rows, err := db.Query(`
 		SELECT s.id, s.tvdb_id, s.title, s.total_seasons, s.aired_seasons,
-			COALESCE((SELECT MAX(sn.season_number) FROM seasons sn WHERE sn.series_id = s.id AND sn.is_owned = 1 AND sn.season_number > 0), 0),
+			COALESCE((SELECT MAX(sn.season_number) FROM seasons sn WHERE sn.series_id = s.id AND sn.is_watched = 1 AND sn.season_number > 0), 0),
 			s.updated_at
 		FROM series s
 		WHERE s.tvdb_id IS NOT NULL
@@ -55,7 +55,7 @@ func CheckForTVDBUpdates(db *database.DB, tvdbClient *tvdb.Client, autoSync bool
 	var seriesList []seriesRow
 	for rows.Next() {
 		var s seriesRow
-		if err := rows.Scan(&s.id, &s.tvdbID, &s.title, &s.totalSeasons, &s.airedSeasons, &s.maxOwned, &s.updatedAt); err != nil {
+		if err := rows.Scan(&s.id, &s.tvdbID, &s.title, &s.totalSeasons, &s.airedSeasons, &s.maxWatched, &s.updatedAt); err != nil {
 			slog.Error("Failed to scan series check row", "error", err)
 			continue
 		}
@@ -82,7 +82,7 @@ func CheckForTVDBUpdates(db *database.DB, tvdbClient *tvdb.Client, autoSync bool
 
 		seasonCountChanged := newTotalSeasons != s.totalSeasons || newAiredSeasons != s.airedSeasons
 		if seasonCountChanged {
-			if newAiredSeasons > s.maxOwned && s.maxOwned > 0 {
+			if newAiredSeasons > s.maxWatched && s.maxWatched > 0 {
 				message := "New seasons available for " + s.title
 
 				if _, err = db.Exec(`
@@ -292,39 +292,6 @@ func SyncSeriesMetadata(db *database.DB, tvdbClient *tvdb.Client, seriesID int64
 		_, err := db.UpsertSeason(seasonData)
 		if err != nil {
 			slog.Error("Failed to upsert season", "season", seasonInfo.Number, "error", err)
-		}
-
-		// Fetch episodes for this season if we have TVDB season ID
-		if seasonInfo.ID > 0 {
-			episodes, err := tvdbClient.GetSeasonEpisodes(seasonInfo.ID)
-			if err != nil {
-				slog.Warn("Failed to fetch episodes", "season_id", seasonInfo.ID, "error", err)
-				continue
-			}
-
-			season, _ := db.GetSeasonBySeriesAndNumber(upsertedID, seasonInfo.Number)
-			if season == nil {
-				continue
-			}
-
-			for _, ep := range episodes {
-				episodeData := &database.Episode{
-					SeasonID:      season.ID,
-					TVDBEpisodeID: &ep.ID,
-					EpisodeNumber: ep.Number,
-					Title:         strPtrOrNil(ep.Name),
-					Overview:      strPtrOrNil(ep.Overview),
-					ImageURL:      strPtrOrNil(ep.Image),
-					AirDate:       strPtrOrNil(ep.AirDate),
-					Runtime:       intPtrOrNil(ep.Runtime),
-					Rating:        floatPtrOrNil(ep.Rating),
-				}
-
-				_, err := db.UpsertEpisode(episodeData)
-				if err != nil {
-					slog.Error("Failed to upsert episode", "episode", ep.Number, "error", err)
-				}
-			}
 		}
 	}
 

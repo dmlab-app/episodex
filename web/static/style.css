@@ -1982,7 +1982,7 @@ h4 { font-size: 1rem; }
     box-shadow: var(--shadow-sm);
 }
 
-.season-card.owned:hover {
+.season-card.watched:hover {
     border-color: var(--accent);
 }
 

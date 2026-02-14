@@ -470,11 +470,11 @@ func (s *Scanner) processSeriesInfo(info SeriesInfo) error {
 
 	// Upsert the season — avoids race condition with concurrent TVDB sync
 	result, err := s.db.Exec(`
-		INSERT INTO seasons (series_id, season_number, folder_path, is_owned, discovered_at, created_at, updated_at)
+		INSERT INTO seasons (series_id, season_number, folder_path, is_watched, discovered_at, created_at, updated_at)
 		VALUES (?, ?, ?, 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
 		ON CONFLICT(series_id, season_number) DO UPDATE SET
 			folder_path = excluded.folder_path,
-			is_owned = 1,
+			is_watched = 1,
 			updated_at = CURRENT_TIMESTAMP
 	`, seriesID, info.Season, info.Path)
 	if err != nil {
@@ -518,7 +518,7 @@ func (s *Scanner) scanMediaFiles(seriesID int64, seasonNumber int, folderPath st
 			SeriesID:     seriesID,
 			SeasonNumber: seasonNumber,
 			FolderPath:   &folderPath,
-			IsOwned:      true,
+			IsWatched:      true,
 		}
 		seasonID, err = s.db.UpsertSeason(newSeason)
 		if err != nil {
@@ -609,7 +609,7 @@ func (s *Scanner) scanMediaFiles(seriesID int64, seasonNumber int, folderPath st
 				FilePath:      &path,
 				FileHash:      &fileHash.Hash,
 				FileSize:      &fileHash.Size,
-				IsOwned:       true,
+				IsWatched:       true,
 			}
 
 			_, err := s.db.UpsertEpisode(episode)

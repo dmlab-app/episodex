@@ -299,7 +299,7 @@ function renderSeasons(series, seasons) {
     const grid = document.getElementById('seasons-grid');
 
     grid.innerHTML = seasons.map(season => {
-        const owned = season.owned === true;
+        const owned = season.watched === true;
         const seasonImage = season.image || series.poster_url || PLACEHOLDER_SVG;
 
         if (!owned) {
@@ -327,7 +327,7 @@ function renderSeasons(series, seasons) {
                 ? `<span class="voice-badge">${esc(season.voice_actor_name)}</span>`
                 : '';
             return `
-                <div class="season-card owned" data-season="${season.season_number}" onclick="navigate('/series/${series.id}/season/${season.season_number}')">
+                <div class="season-card watched" data-season="${season.season_number}" onclick="navigate('/series/${series.id}/season/${season.season_number}')">
                     <div class="season-poster">
                         <img src="${esc(seasonImage)}" alt="Season ${season.season_number}" loading="lazy">
                         <div class="season-overlay">
@@ -371,7 +371,7 @@ async function showSeasonDetailPage(seriesId, seasonNum) {
     // Reset page state
     document.getElementById('season-detail-title').textContent = `Season ${seasonNum}`;
     document.getElementById('season-detail-subtitle').textContent = '';
-    document.getElementById('season-not-owned').style.display = 'none';
+    document.getElementById('season-not-watched').style.display = 'none';
     document.getElementById('voice-selector-panel').style.display = 'flex';
     document.getElementById('audio-tracks-container').style.display = 'none';
     document.getElementById('season-files-box').style.display = 'block';
@@ -426,8 +426,8 @@ async function loadSeasonDetail(seriesId, seasonNum) {
         }
 
         // Check if season is owned
-        if (!seasonInfo.owned) {
-            document.getElementById('season-not-owned').style.display = 'block';
+        if (!seasonInfo.watched) {
+            document.getElementById('season-not-watched').style.display = 'block';
             document.getElementById('voice-selector-panel').style.display = 'none';
             document.getElementById('season-files-box').style.display = 'none';
             return;

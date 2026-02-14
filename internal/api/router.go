@@ -181,7 +181,7 @@ func (s *Server) handleHealth(w http.ResponseWriter, _ *http.Request) {
 func (s *Server) handleListSeries(w http.ResponseWriter, _ *http.Request) {
 	query := `
 		SELECT s.id, s.tvdb_id, s.title, s.original_title, s.poster_url, s.status, s.total_seasons, s.created_at,
-			(SELECT COUNT(*) FROM seasons sn WHERE sn.series_id = s.id AND sn.is_owned = 1) as watched_seasons
+			(SELECT COUNT(*) FROM seasons sn WHERE sn.series_id = s.id AND sn.is_watched = 1) as watched_seasons
 		FROM series s
 		ORDER BY s.created_at DESC
 	`
@@ -431,7 +431,7 @@ func (s *Server) handleGetSeries(w http.ResponseWriter, r *http.Request) {
 
 	// Get seasons from seasons table with voice actor JOIN
 	seasonsQuery := `
-		SELECT sn.season_number, sn.folder_path, sn.is_owned, sn.voice_actor_id, va.name, sn.discovered_at
+		SELECT sn.season_number, sn.folder_path, sn.is_watched, sn.voice_actor_id, va.name, sn.discovered_at
 		FROM seasons sn
 		LEFT JOIN voice_actors va ON sn.voice_actor_id = va.id
 		WHERE sn.series_id = ?
@@ -449,18 +449,18 @@ func (s *Server) handleGetSeries(w http.ResponseWriter, r *http.Request) {
 	for rows.Next() {
 		var seasonNum int
 		var folderPath, voiceActorName *string
-		var isOwned bool
+		var isWatched bool
 		var voiceActorID *int
 		var discoveredAt *time.Time
 
-		if err := rows.Scan(&seasonNum, &folderPath, &isOwned, &voiceActorID, &voiceActorName, &discoveredAt); err != nil {
+		if err := rows.Scan(&seasonNum, &folderPath, &isWatched, &voiceActorID, &voiceActorName, &discoveredAt); err != nil {
 			slog.Error("Failed to scan season row", "error", err)
 			continue
 		}
 
 		season := map[string]interface{}{
 			"season_number": seasonNum,
-			"owned":         isOwned,
+			"watched":         isWatched,
 		}
 
 		if folderPath != nil {
@@ -558,7 +558,7 @@ func (s *Server) handleGetSeries(w http.ResponseWriter, r *http.Request) {
 		"id":              seriesInfo.ID,
 		"title":           seriesInfo.Title,
 		"total_seasons":   seriesInfo.TotalSeasons,
-		"watched_seasons": countOwnedSeasons(seasons),
+		"watched_seasons": countWatchedSeasons(seasons),
 		"seasons":         seasons,
 		"characters":      characters,
 		"created_at":      seriesInfo.CreatedAt,
@@ -731,7 +731,7 @@ func (s *Server) handleMatchSeries(w http.ResponseWriter, r *http.Request) {
 		_, err = tx.Exec(`
 			UPDATE seasons
 			SET folder_path = COALESCE((SELECT src.folder_path FROM seasons src WHERE src.series_id = ? AND src.season_number = seasons.season_number), folder_path),
-				is_owned = MAX(is_owned, COALESCE((SELECT src.is_owned FROM seasons src WHERE src.series_id = ? AND src.season_number = seasons.season_number), 0)),
+				is_watched = MAX(is_watched, COALESCE((SELECT src.is_watched FROM seasons src WHERE src.series_id = ? AND src.season_number = seasons.season_number), 0)),
 				voice_actor_id = COALESCE(voice_actor_id, (SELECT src.voice_actor_id FROM seasons src WHERE src.series_id = ? AND src.season_number = seasons.season_number)),
 				discovered_at = COALESCE(discovered_at, (SELECT src.discovered_at FROM seasons src WHERE src.series_id = ? AND src.season_number = seasons.season_number)),
 				tvdb_season_id = COALESCE(tvdb_season_id, (SELECT src.tvdb_season_id FROM seasons src WHERE src.series_id = ? AND src.season_number = seasons.season_number)),
@@ -776,7 +776,7 @@ func (s *Server) handleMatchSeries(w http.ResponseWriter, r *http.Request) {
 
 		// For colliding episodes (same season_number + episode_number), merge local
 		// data from source into destination before deleting source copies. This
-		// preserves file_path, file_hash, file_size, is_owned, watched_at from the
+		// preserves file_path, file_hash, file_size, is_watched, watched_at from the
 		// scanned source when the destination only has TVDB metadata.
 		_, err = tx.Exec(`
 			UPDATE episodes
@@ -798,8 +798,8 @@ func (s *Server) handleMatchSeries(w http.ResponseWriter, r *http.Request) {
 					WHERE src.season_number = (SELECT season_number FROM seasons WHERE id = episodes.season_id)
 					AND src_ep.episode_number = episodes.episode_number
 				)),
-				is_owned = MAX(is_owned, COALESCE((
-					SELECT src_ep.is_owned FROM episodes src_ep
+				is_watched = MAX(is_watched, COALESCE((
+					SELECT src_ep.is_watched FROM episodes src_ep
 					INNER JOIN seasons src ON src.id = src_ep.season_id AND src.series_id = ?
 					WHERE src.season_number = (SELECT season_number FROM seasons WHERE id = episodes.season_id)
 					AND src_ep.episode_number = episodes.episode_number
@@ -1039,11 +1039,11 @@ func isValidHash(h string) bool {
 	return true
 }
 
-// countOwnedSeasons counts seasons where owned == true
-func countOwnedSeasons(seasons []map[string]interface{}) int {
+// countWatchedSeasons counts seasons where owned == true
+func countWatchedSeasons(seasons []map[string]interface{}) int {
 	count := 0
 	for _, s := range seasons {
-		if owned, ok := s["owned"].(bool); ok && owned {
+		if owned, ok := s["watched"].(bool); ok && owned {
 			count++
 		}
 	}
@@ -1083,13 +1083,13 @@ func (s *Server) handleGetUpdates(w http.ResponseWriter, _ *http.Request) {
 	query := `
 		SELECT s.id, s.tvdb_id, s.title, s.original_title, s.poster_url, s.status,
 			s.aired_seasons,
-			(SELECT MAX(sn.season_number) FROM seasons sn WHERE sn.series_id = s.id AND sn.is_owned = 1 AND sn.season_number > 0) as max_owned
+			(SELECT MAX(sn.season_number) FROM seasons sn WHERE sn.series_id = s.id AND sn.is_watched = 1 AND sn.season_number > 0) as max_watched
 		FROM series s
 		WHERE s.aired_seasons > COALESCE(
-			(SELECT MAX(sn.season_number) FROM seasons sn WHERE sn.series_id = s.id AND sn.is_owned = 1 AND sn.season_number > 0),
+			(SELECT MAX(sn.season_number) FROM seasons sn WHERE sn.series_id = s.id AND sn.is_watched = 1 AND sn.season_number > 0),
 			0
 		)
-		AND (SELECT COUNT(*) FROM seasons sn WHERE sn.series_id = s.id AND sn.is_owned = 1 AND sn.season_number > 0) > 0
+		AND (SELECT COUNT(*) FROM seasons sn WHERE sn.series_id = s.id AND sn.is_watched = 1 AND sn.season_number > 0) > 0
 		ORDER BY s.updated_at DESC
 	`
 
@@ -1109,12 +1109,12 @@ func (s *Server) handleGetUpdates(w http.ResponseWriter, _ *http.Request) {
 		posterURL     *string
 		status        *string
 		airedSeasons  int
-		maxOwned      *int
+		maxWatched      *int
 	}
 	var collected []updateRow
 	for rows.Next() {
 		var r updateRow
-		if err := rows.Scan(&r.id, &r.tvdbID, &r.title, &r.originalTitle, &r.posterURL, &r.status, &r.airedSeasons, &r.maxOwned); err != nil {
+		if err := rows.Scan(&r.id, &r.tvdbID, &r.title, &r.originalTitle, &r.posterURL, &r.status, &r.airedSeasons, &r.maxWatched); err != nil {
 			slog.Error("Failed to scan updates row", "error", err)
 			continue
 		}
@@ -1128,14 +1128,14 @@ func (s *Server) handleGetUpdates(w http.ResponseWriter, _ *http.Request) {
 
 	updates := make([]map[string]interface{}, 0, len(collected))
 	for _, r := range collected {
-		maxOwnedNum := 0
-		if r.maxOwned != nil {
-			maxOwnedNum = *r.maxOwned
+		maxWatchedNum := 0
+		if r.maxWatched != nil {
+			maxWatchedNum = *r.maxWatched
 		}
 
 		// Query actual non-owned season rows from the DB that are beyond max owned.
 		// Only returns seasons that exist in TVDB (synced to DB), avoiding phantom numbers.
-		newSeasons, err := s.queryNewSeasonNumbers(r.id, maxOwnedNum, r.airedSeasons)
+		newSeasons, err := s.queryNewSeasonNumbers(r.id, maxWatchedNum, r.airedSeasons)
 		if err != nil {
 			slog.Warn("Failed to query new season numbers", "series_id", r.id, "error", err)
 			newSeasons = []int{}
@@ -1145,7 +1145,7 @@ func (s *Server) handleGetUpdates(w http.ResponseWriter, _ *http.Request) {
 			"id":            r.id,
 			"title":         r.title,
 			"aired_seasons": r.airedSeasons,
-			"max_owned":     maxOwnedNum,
+			"max_watched":     maxWatchedNum,
 			"new_seasons":   newSeasons,
 		}
 
@@ -1170,15 +1170,15 @@ func (s *Server) handleGetUpdates(w http.ResponseWriter, _ *http.Request) {
 	s.respondJSON(w, http.StatusOK, updates)
 }
 
-// queryNewSeasonNumbers returns non-owned season numbers that are > maxOwned
+// queryNewSeasonNumbers returns non-owned season numbers that are > maxWatched
 // and <= airedSeasons, based on actual season rows in the DB (synced from TVDB).
 // This avoids generating phantom season numbers for non-contiguous TVDB data.
-func (s *Server) queryNewSeasonNumbers(seriesID, maxOwned, airedSeasons int) ([]int, error) {
+func (s *Server) queryNewSeasonNumbers(seriesID, maxWatched, airedSeasons int) ([]int, error) {
 	rows, err := s.db.Query(`
 		SELECT season_number FROM seasons
-		WHERE series_id = ? AND season_number > ? AND season_number <= ? AND is_owned = 0
+		WHERE series_id = ? AND season_number > ? AND season_number <= ? AND is_watched = 0
 		ORDER BY season_number
-	`, seriesID, maxOwned, airedSeasons)
+	`, seriesID, maxWatched, airedSeasons)
 	if err != nil {
 		return nil, err
 	}
@@ -1249,7 +1249,7 @@ func (s *Server) handleListSeasons(w http.ResponseWriter, r *http.Request) {
 
 	// Get owned seasons from seasons table with voice actor JOIN (includes cached poster_url)
 	query := `
-		SELECT sn.season_number, sn.folder_path, sn.is_owned, sn.voice_actor_id, va.name, sn.discovered_at, sn.poster_url
+		SELECT sn.season_number, sn.folder_path, sn.is_watched, sn.voice_actor_id, va.name, sn.discovered_at, sn.poster_url
 		FROM seasons sn
 		LEFT JOIN voice_actors va ON sn.voice_actor_id = va.id
 		WHERE sn.series_id = ?
@@ -1268,18 +1268,18 @@ func (s *Server) handleListSeasons(w http.ResponseWriter, r *http.Request) {
 	for rows.Next() {
 		var seasonNum int
 		var folderPath, voiceActorName, seasonPosterURL *string
-		var isOwned bool
+		var isWatched bool
 		var voiceActorID *int
 		var discoveredAt *time.Time
 
-		if err := rows.Scan(&seasonNum, &folderPath, &isOwned, &voiceActorID, &voiceActorName, &discoveredAt, &seasonPosterURL); err != nil {
+		if err := rows.Scan(&seasonNum, &folderPath, &isWatched, &voiceActorID, &voiceActorName, &discoveredAt, &seasonPosterURL); err != nil {
 			slog.Error("Failed to scan season detail row", "error", err)
 			continue
 		}
 
 		season := map[string]interface{}{
 			"season_number": seasonNum,
-			"owned":         isOwned,
+			"watched":         isWatched,
 		}
 
 		if folderPath != nil {
@@ -1328,7 +1328,7 @@ func (s *Server) handleListSeasons(w http.ResponseWriter, r *http.Request) {
 			// Missing season - locked
 			lockedSeason := map[string]interface{}{
 				"season_number": i,
-				"owned":         false,
+				"watched":         false,
 			}
 
 			if seriesPosterURL != nil {
@@ -1483,16 +1483,16 @@ func (s *Server) handleGetSeason(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var folderPath *string
-	var isOwned bool
+	var isWatched bool
 	var voiceActorID *int
 	var voiceActorName *string
 	var discoveredAt *time.Time
 	err = s.db.QueryRow(`
-		SELECT sn.folder_path, sn.is_owned, sn.voice_actor_id, va.name, sn.discovered_at
+		SELECT sn.folder_path, sn.is_watched, sn.voice_actor_id, va.name, sn.discovered_at
 		FROM seasons sn
 		LEFT JOIN voice_actors va ON sn.voice_actor_id = va.id
 		WHERE sn.series_id = ? AND sn.season_number = ?
-	`, sid, snum).Scan(&folderPath, &isOwned, &voiceActorID, &voiceActorName, &discoveredAt)
+	`, sid, snum).Scan(&folderPath, &isWatched, &voiceActorID, &voiceActorName, &discoveredAt)
 
 	if err == sql.ErrNoRows {
 		s.respondError(w, http.StatusNotFound, "season not found")
@@ -1507,7 +1507,7 @@ func (s *Server) handleGetSeason(w http.ResponseWriter, r *http.Request) {
 	response := map[string]interface{}{
 		"season_number": snum,
 		"folder_path":   folderPath,
-		"owned":         isOwned,
+		"watched":         isWatched,
 	}
 
 	if voiceActorID != nil {

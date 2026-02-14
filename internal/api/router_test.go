@@ -52,12 +52,12 @@ func seedSeries(t *testing.T, db *database.DB, title string, totalSeasons int) i
 }
 
 // seedSeason inserts a season into the seasons table.
-func seedSeason(t *testing.T, db *database.DB, seriesID int64, seasonNum int, folderPath string, isOwned bool, voiceActorID *int) {
+func seedSeason(t *testing.T, db *database.DB, seriesID int64, seasonNum int, folderPath string, isWatched bool, voiceActorID *int) {
 	t.Helper()
 	_, err := db.Exec(`
-		INSERT INTO seasons (series_id, season_number, folder_path, is_owned, voice_actor_id, discovered_at, created_at, updated_at)
+		INSERT INTO seasons (series_id, season_number, folder_path, is_watched, voice_actor_id, discovered_at, created_at, updated_at)
 		VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
-	`, seriesID, seasonNum, folderPath, isOwned, voiceActorID)
+	`, seriesID, seasonNum, folderPath, isWatched, voiceActorID)
 	if err != nil {
 		t.Fatalf("failed to seed season: %v", err)
 	}
@@ -119,7 +119,7 @@ func TestHandleListSeries_ReturnsCorrectSeasonCounts(t *testing.T) {
 				t.Errorf("Breaking Bad: expected 3 watched seasons, got %d", watchedSeasons)
 			}
 		case "Better Call Saul":
-			// Only 1 is owned (is_owned=1)
+			// Only 1 is owned (is_watched=1)
 			if watchedSeasons != 1 {
 				t.Errorf("Better Call Saul: expected 1 watched season, got %d", watchedSeasons)
 			}
@@ -174,8 +174,8 @@ func TestHandleGetSeries_ReturnsSeasonsWithVoiceActors(t *testing.T) {
 	if s1["voice_actor_name"] != "LostFilm" {
 		t.Errorf("season 1: expected voice_actor_name 'LostFilm', got %v", s1["voice_actor_name"])
 	}
-	if s1["owned"] != true {
-		t.Errorf("season 1: expected owned=true, got %v", s1["owned"])
+	if s1["watched"] != true {
+		t.Errorf("season 1: expected owned=true, got %v", s1["watched"])
 	}
 
 	// Check season 2 has no voice actor
@@ -229,8 +229,8 @@ func TestHandleListSeasons_OwnedVsLocked(t *testing.T) {
 
 	// Season 1: owned with voice actor
 	s1 := seasons[0]
-	if s1["owned"] != true {
-		t.Errorf("season 1: expected owned=true, got %v", s1["owned"])
+	if s1["watched"] != true {
+		t.Errorf("season 1: expected owned=true, got %v", s1["watched"])
 	}
 	if s1["voice_actor_name"] != "Amedia" {
 		t.Errorf("season 1: expected voice_actor_name 'Amedia', got %v", s1["voice_actor_name"])
@@ -238,20 +238,20 @@ func TestHandleListSeasons_OwnedVsLocked(t *testing.T) {
 
 	// Season 2: locked (not owned)
 	s2 := seasons[1]
-	if s2["owned"] != false {
-		t.Errorf("season 2: expected owned=false, got %v", s2["owned"])
+	if s2["watched"] != false {
+		t.Errorf("season 2: expected owned=false, got %v", s2["watched"])
 	}
 
 	// Season 3: owned without voice actor
 	s3 := seasons[2]
-	if s3["owned"] != true {
-		t.Errorf("season 3: expected owned=true, got %v", s3["owned"])
+	if s3["watched"] != true {
+		t.Errorf("season 3: expected owned=true, got %v", s3["watched"])
 	}
 
 	// Season 4: locked
 	s4 := seasons[3]
-	if s4["owned"] != false {
-		t.Errorf("season 4: expected owned=false, got %v", s4["owned"])
+	if s4["watched"] != false {
+		t.Errorf("season 4: expected owned=false, got %v", s4["watched"])
 	}
 }
 
@@ -786,7 +786,7 @@ func TestHandleGetUpdates_UnairedFutureSeasons_Excluded(t *testing.T) {
 	}
 
 	if len(updates) != 0 {
-		t.Errorf("expected 0 updates when aired_seasons <= max_owned, got %d", len(updates))
+		t.Errorf("expected 0 updates when aired_seasons <= max_watched, got %d", len(updates))
 	}
 }
 

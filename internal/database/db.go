@@ -106,7 +106,7 @@ func (db *DB) initTables() error {
 		episode_count INTEGER,
 		folder_path TEXT,
 		voice_actor_id INTEGER,
-		is_owned BOOLEAN DEFAULT 0,
+		is_watched BOOLEAN DEFAULT 0,
 		discovered_at TIMESTAMP,
 		created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
 		updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
@@ -130,7 +130,7 @@ func (db *DB) initTables() error {
 		file_path TEXT,
 		file_hash TEXT,
 		file_size INTEGER,
-		is_owned BOOLEAN DEFAULT 0,
+		is_watched BOOLEAN DEFAULT 0,
 		watched_at TIMESTAMP,
 		created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
 		updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
@@ -487,7 +487,7 @@ func (db *DB) migrateToSchemaV2() error {
 		var migrateQuery string
 		if hasVoiceActorID > 0 {
 			migrateQuery = `
-				INSERT INTO seasons (series_id, season_number, folder_path, voice_actor_id, is_owned, discovered_at)
+				INSERT INTO seasons (series_id, season_number, folder_path, voice_actor_id, is_watched, discovered_at)
 				SELECT ws.series_id, ws.season_number, ws.folder_path, ws.voice_actor_id, 1, ws.discovered_at
 				FROM watched_seasons ws
 				WHERE NOT EXISTS (
@@ -497,7 +497,7 @@ func (db *DB) migrateToSchemaV2() error {
 			`
 		} else {
 			migrateQuery = `
-				INSERT INTO seasons (series_id, season_number, folder_path, is_owned, discovered_at)
+				INSERT INTO seasons (series_id, season_number, folder_path, is_watched, discovered_at)
 				SELECT ws.series_id, ws.season_number, ws.folder_path, 1, ws.discovered_at
 				FROM watched_seasons ws
 				WHERE NOT EXISTS (
@@ -521,7 +521,7 @@ func (db *DB) migrateToSchemaV2() error {
 	// Ensure all (series_id, season_number) pairs referenced by media_files exist in seasons.
 	// Without this, FK enforcement would reject orphaned media_files rows from before migration.
 	_, err = db.Exec(`
-		INSERT OR IGNORE INTO seasons (series_id, season_number, is_owned)
+		INSERT OR IGNORE INTO seasons (series_id, season_number, is_watched)
 		SELECT DISTINCT mf.series_id, mf.season_number, 1
 		FROM media_files mf
 		WHERE NOT EXISTS (
@@ -603,7 +603,14 @@ func (db *DB) migrateMediaFilesFK() error {
 	`); err != nil {
 		return fmt.Errorf("failed to create media_files_new: %w", err)
 	}
-	if _, err := tx.Exec(`INSERT INTO media_files_new SELECT * FROM media_files`); err != nil {
+	if _, err := tx.Exec(`
+		INSERT INTO media_files_new
+		SELECT mf.* FROM media_files mf
+		WHERE EXISTS (
+			SELECT 1 FROM seasons s
+			WHERE s.series_id = mf.series_id AND s.season_number = mf.season_number
+		)
+	`); err != nil {
 		return fmt.Errorf("failed to copy data to media_files_new: %w", err)
 	}
 	if _, err := tx.Exec(`DROP TABLE media_files`); err != nil {
