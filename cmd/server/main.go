@@ -146,7 +146,7 @@ func main() {
 				newAiredSeasons := tvdb.CountAiredSeasons(details.Seasons)
 
 				// Compare with database - update if total or aired count changed
-				if newTotalSeasons > s.totalSeasons || newAiredSeasons > s.airedSeasons {
+				if newTotalSeasons != s.totalSeasons || newAiredSeasons != s.airedSeasons {
 					_, err = db.Exec(`
 						UPDATE series
 						SET total_seasons = ?, aired_seasons = ?, updated_at = CURRENT_TIMESTAMP
@@ -165,8 +165,11 @@ func main() {
 
 						if _, err = db.Exec(`
 							INSERT INTO system_alerts (type, message, created_at, dismissed)
-							VALUES (?, ?, CURRENT_TIMESTAMP, 0)
-						`, "new_seasons", message); err != nil {
+							SELECT ?, ?, CURRENT_TIMESTAMP, 0
+							WHERE NOT EXISTS (
+								SELECT 1 FROM system_alerts WHERE type = ? AND message = ? AND dismissed = 0
+							)
+						`, "new_seasons", message, "new_seasons", message); err != nil {
 							slog.Error("Failed to create alert", "series_id", s.id, "error", err)
 						}
 					}

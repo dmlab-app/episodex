@@ -429,8 +429,13 @@ func (c *Client) GetSeriesDetails(tvdbID int) (*SeriesDetails, error) {
 			seasonType := season.Type.Type
 			if seasonType == "official" || seasonType == "aired" || seasonType == "" {
 				// If year is set and not empty, it means the season has aired
-				// If no year info, we assume it's aired (backwards compatibility)
+				// If no year info but type is "official", we assume it's aired (backwards compatibility)
 				if season.Year != "" || seasonType == "official" {
+					aired := isSeasonAired(season.Year)
+					// Official seasons with no year info are assumed aired
+					if season.Year == "" && seasonType == "official" {
+						aired = true
+					}
 					details.Seasons = append(details.Seasons, SeasonInfo{
 						ID:     season.ID,
 						Number: season.Number,
@@ -438,7 +443,7 @@ func (c *Client) GetSeriesDetails(tvdbID int) (*SeriesDetails, error) {
 						Type:   season.Type.Name,
 						Year:   season.Year,
 						Image:  season.Image,
-						Aired:  isSeasonAired(season.Year),
+						Aired:  aired,
 					})
 				}
 			}
@@ -634,6 +639,11 @@ func (c *Client) GetSeriesExtendedFull(tvdbID int) (*SeriesExtended, error) {
 			seasonType := season.Type.Type
 			if seasonType == "official" || seasonType == "aired" || seasonType == "" {
 				if season.Year != "" || seasonType == "official" {
+					aired := isSeasonAired(season.Year)
+					// Official seasons with no year info are assumed aired
+					if season.Year == "" && seasonType == "official" {
+						aired = true
+					}
 					extended.Seasons = append(extended.Seasons, SeasonInfo{
 						ID:     season.ID,
 						Number: season.Number,
@@ -641,7 +651,7 @@ func (c *Client) GetSeriesExtendedFull(tvdbID int) (*SeriesExtended, error) {
 						Type:   season.Type.Name,
 						Year:   season.Year,
 						Image:  season.Image,
-						Aired:  isSeasonAired(season.Year),
+						Aired:  aired,
 					})
 				}
 			}
@@ -704,15 +714,6 @@ func (c *Client) GetSeasonEpisodes(tvdbSeasonID int) ([]Episode, error) {
 	}
 
 	return episodes, nil
-}
-
-// GetTotalSeasons returns the total number of regular seasons (excluding specials)
-func (c *Client) GetTotalSeasons(tvdbID int) (int, error) {
-	details, err := c.GetSeriesDetails(tvdbID)
-	if err != nil {
-		return 0, err
-	}
-	return len(details.Seasons), nil
 }
 
 // SeriesTranslation represents a translation for a series

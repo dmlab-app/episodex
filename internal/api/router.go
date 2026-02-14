@@ -731,7 +731,7 @@ func (s *Server) handleMatchSeries(w http.ResponseWriter, r *http.Request) {
 		_, err = tx.Exec(`
 			UPDATE seasons
 			SET folder_path = COALESCE((SELECT src.folder_path FROM seasons src WHERE src.series_id = ? AND src.season_number = seasons.season_number), folder_path),
-				is_owned = MAX(is_owned, (SELECT src.is_owned FROM seasons src WHERE src.series_id = ? AND src.season_number = seasons.season_number)),
+				is_owned = MAX(is_owned, COALESCE((SELECT src.is_owned FROM seasons src WHERE src.series_id = ? AND src.season_number = seasons.season_number), 0)),
 				voice_actor_id = COALESCE(voice_actor_id, (SELECT src.voice_actor_id FROM seasons src WHERE src.series_id = ? AND src.season_number = seasons.season_number)),
 				discovered_at = COALESCE(discovered_at, (SELECT src.discovered_at FROM seasons src WHERE src.series_id = ? AND src.season_number = seasons.season_number)),
 				tvdb_season_id = COALESCE(tvdb_season_id, (SELECT src.tvdb_season_id FROM seasons src WHERE src.series_id = ? AND src.season_number = seasons.season_number)),
@@ -1227,7 +1227,7 @@ func (s *Server) handleCheckUpdates(w http.ResponseWriter, _ *http.Request) {
 			newAiredSeasons := tvdb.CountAiredSeasons(details.Seasons)
 
 			// Compare with database - update if total or aired count changed
-			if newTotalSeasons > sc.TotalSeasons || newAiredSeasons > sc.AiredSeasons {
+			if newTotalSeasons != sc.TotalSeasons || newAiredSeasons != sc.AiredSeasons {
 				_, err = s.db.Exec(`
 					UPDATE series
 					SET total_seasons = ?, aired_seasons = ?, updated_at = CURRENT_TIMESTAMP
@@ -1247,8 +1247,11 @@ func (s *Server) handleCheckUpdates(w http.ResponseWriter, _ *http.Request) {
 
 					_, err = s.db.Exec(`
 						INSERT INTO system_alerts (type, message, created_at, dismissed)
-						VALUES (?, ?, CURRENT_TIMESTAMP, 0)
-					`, "new_seasons", message)
+						SELECT ?, ?, CURRENT_TIMESTAMP, 0
+						WHERE NOT EXISTS (
+							SELECT 1 FROM system_alerts WHERE type = ? AND message = ? AND dismissed = 0
+						)
+					`, "new_seasons", message, "new_seasons", message)
 
 					if err != nil {
 						slog.Error("Failed to create alert", "series_id", sc.ID, "error", err)
@@ -1597,7 +1600,11 @@ func (s *Server) handleUpdateSeason(w http.ResponseWriter, r *http.Request) {
 		SELECT COUNT(*) > 0 FROM seasons
 		WHERE series_id = ? AND season_number = ?
 	`, sid, snum).Scan(&exists)
-	if err != nil || !exists {
+	if err != nil {
+		s.respondError(w, http.StatusInternalServerError, "failed to check season existence")
+		return
+	}
+	if !exists {
 		s.respondError(w, http.StatusNotFound, "season not found")
 		return
 	}

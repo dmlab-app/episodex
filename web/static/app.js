@@ -23,6 +23,11 @@ function posterSrc(url) {
     return PLACEHOLDER_SVG;
 }
 
+// Escape URL for use in CSS url('...') context to prevent CSS injection
+function cssUrl(url) {
+    return posterSrc(url).replace(/'/g, "\\'").replace(/\)/g, '%29');
+}
+
 // HTML escape utility to prevent XSS
 function esc(str) {
     if (str == null) return '';
@@ -224,9 +229,9 @@ async function loadSeriesDetail(seriesId) {
         // Hero backdrop
         const backdropEl = document.getElementById('series-hero-backdrop');
         if (series.backdrop_url) {
-            backdropEl.style.backgroundImage = `url('${posterSrc(series.backdrop_url)}')`;
+            backdropEl.style.backgroundImage = `url('${cssUrl(series.backdrop_url)}')`;
         } else if (series.poster_url) {
-            backdropEl.style.backgroundImage = `url('${posterSrc(series.poster_url)}')`;
+            backdropEl.style.backgroundImage = `url('${cssUrl(series.poster_url)}')`;
         } else {
             backdropEl.style.backgroundImage = 'none';
         }

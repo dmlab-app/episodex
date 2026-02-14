@@ -20,6 +20,7 @@ internal/
   database/media_files.go       - Media file tracking
   api/router.go                 - HTTP handlers, routing
   api/handlers_series.go        - Extended series handlers (sync, search)
+  api/sync.go                   - Shared TVDB metadata sync logic
   tvdb/client.go                - TVDB API client
   scanner/scanner.go            - Folder scanner with torrent name parsing
   audio/audio.go                - AudioCutter (mkvmerge/ffmpeg)

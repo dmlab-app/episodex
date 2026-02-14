@@ -383,9 +383,9 @@ func (s *Scanner) processSeriesInfo(info SeriesInfo) error {
 				if err == sql.ErrNoRows {
 					// Create new series with TVDB metadata
 					result, err := s.db.Exec(`
-						INSERT INTO series (tvdb_id, title, original_title, poster_url, status, total_seasons, created_at, updated_at)
-						VALUES (?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
-					`, tvdbID, details.Name, details.OriginalName, details.Image, details.Status, len(details.Seasons))
+						INSERT INTO series (tvdb_id, title, original_title, poster_url, status, total_seasons, aired_seasons, created_at, updated_at)
+						VALUES (?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+					`, tvdbID, details.Name, details.OriginalName, details.Image, details.Status, len(details.Seasons), tvdb.CountAiredSeasons(details.Seasons))
 
 					if err != nil {
 						return err

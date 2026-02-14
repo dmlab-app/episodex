@@ -289,29 +289,6 @@ func (db *DB) UpsertEpisode(episode *Episode) (int64, error) {
 	return result.LastInsertId()
 }
 
-// GetSeasonByID retrieves a season by its ID
-func (db *DB) GetSeasonByID(seasonID int64) (*Season, error) {
-	var season Season
-	err := db.QueryRow(`
-		SELECT id, series_id, tvdb_season_id, season_number, name, overview,
-			poster_url, first_aired, episode_count, folder_path,
-			voice_actor_id, is_owned, discovered_at
-		FROM seasons WHERE id = ?
-	`, seasonID).Scan(
-		&season.ID, &season.SeriesID, &season.TVDBSeasonID, &season.SeasonNumber,
-		&season.Name, &season.Overview, &season.PosterURL, &season.FirstAired,
-		&season.EpisodeCount, &season.FolderPath, &season.VoiceActorID,
-		&season.IsOwned, &season.DiscoveredAt,
-	)
-	if err == sql.ErrNoRows {
-		return nil, nil
-	}
-	if err != nil {
-		return nil, fmt.Errorf("failed to get season: %w", err)
-	}
-	return &season, nil
-}
-
 // GetSeasonBySeriesAndNumber retrieves a season by series ID and season number
 func (db *DB) GetSeasonBySeriesAndNumber(seriesID int64, seasonNumber int) (*Season, error) {
 	var season Season
