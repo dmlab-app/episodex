@@ -31,14 +31,14 @@ Add `is_owned` column to seasons. Scanner manages it exclusively based on file p
 - [x] Run project tests — must pass before task 2
 
 ### Task 2: Scanner manages `is_owned`
-- [ ] In `internal/scanner/scanner.go` `processSeriesInfo()`, update the raw SQL `INSERT ... ON CONFLICT DO UPDATE` (line ~472) to set `is_owned = 1` when files are found
-- [ ] In `Scan()` method, after processing all found series, query all seasons with `is_owned = 1` and check if their `folder_path` still exists and contains video files
-- [ ] For seasons where folder is gone or empty:
+- [x] In `internal/scanner/scanner.go` `processSeriesInfo()`, update the raw SQL `INSERT ... ON CONFLICT DO UPDATE` (line ~472) to set `is_owned = 1` when files are found
+- [x] In `Scan()` method, after processing all found series, query all seasons with `is_owned = 1` and check if their `folder_path` still exists and contains video files
+- [x] For seasons where folder is gone or empty:
   - Set `is_owned = 0` and `folder_path = NULL`
   - Delete `media_files` rows for that `(series_id, season_number)`
   - Clear episode file fields: `UPDATE episodes SET file_path = NULL, file_hash = NULL, file_size = NULL WHERE season_id = ?` (preserve voice_actor_id, TVDB metadata, is_watched)
-- [ ] Write tests for the clearing logic (folder exists -> keep; folder gone -> clear; folder empty -> clear)
-- [ ] Run project tests — must pass before task 3
+- [x] Write tests for the clearing logic (folder exists -> keep; folder gone -> clear; folder empty -> clear)
+- [x] Run project tests — must pass before task 3
 
 ### Task 3: Frontend uses `is_owned` for clickability
 - [ ] In `web/static/app.js` `renderSeasons()`, use `season.owned` to determine if season card is clickable

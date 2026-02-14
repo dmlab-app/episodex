@@ -146,7 +146,86 @@ func (s *Scanner) Scan() error {
 		}
 	}
 
+	// Clean up seasons whose folders have been removed or emptied
+	if err := s.cleanupRemovedSeasons(); err != nil {
+		slog.Error("Failed to cleanup removed seasons", "error", err)
+	}
+
 	return nil
+}
+
+// cleanupRemovedSeasons checks all seasons with is_owned=1 and clears those
+// whose folder_path no longer exists or no longer contains video files.
+func (s *Scanner) cleanupRemovedSeasons() error {
+	rows, err := s.db.Query(`
+		SELECT id, series_id, season_number, folder_path
+		FROM seasons
+		WHERE is_owned = 1 AND folder_path IS NOT NULL AND folder_path != ''
+	`)
+	if err != nil {
+		return fmt.Errorf("failed to query owned seasons: %w", err)
+	}
+
+	type ownedSeason struct {
+		id           int64
+		seriesID     int64
+		seasonNumber int
+		folderPath   string
+	}
+
+	var toCheck []ownedSeason
+	for rows.Next() {
+		var sn ownedSeason
+		if err := rows.Scan(&sn.id, &sn.seriesID, &sn.seasonNumber, &sn.folderPath); err != nil {
+			rows.Close() //nolint:errcheck
+			return fmt.Errorf("failed to scan owned season row: %w", err)
+		}
+		toCheck = append(toCheck, sn)
+	}
+	rows.Close() //nolint:errcheck
+
+	for _, sn := range toCheck {
+		// Check if the folder still exists and has video files
+		if folderHasVideoFiles(sn.folderPath) {
+			continue
+		}
+
+		slog.Info("Season folder missing or empty, clearing is_owned",
+			"series_id", sn.seriesID, "season", sn.seasonNumber, "path", sn.folderPath)
+
+		// Clear is_owned and folder_path
+		if _, err := s.db.Exec(`
+			UPDATE seasons SET is_owned = 0, folder_path = NULL, updated_at = CURRENT_TIMESTAMP
+			WHERE id = ?
+		`, sn.id); err != nil {
+			slog.Error("Failed to clear is_owned", "season_id", sn.id, "error", err)
+			continue
+		}
+
+		// Delete media_files for this season
+		if err := s.db.DeleteMediaFilesBySeason(sn.seriesID, sn.seasonNumber); err != nil {
+			slog.Error("Failed to delete media files", "season_id", sn.id, "error", err)
+		}
+
+		// Clear episode file fields (preserve voice_actor_id, TVDB metadata, is_watched)
+		if _, err := s.db.Exec(`
+			UPDATE episodes SET file_path = NULL, file_hash = NULL, file_size = NULL, updated_at = CURRENT_TIMESTAMP
+			WHERE season_id = ?
+		`, sn.id); err != nil {
+			slog.Error("Failed to clear episode file fields", "season_id", sn.id, "error", err)
+		}
+	}
+
+	return nil
+}
+
+// folderHasVideoFiles checks if a folder exists and contains video files.
+func folderHasVideoFiles(path string) bool {
+	info, err := os.Stat(path)
+	if err != nil || !info.IsDir() {
+		return false
+	}
+	return hasVideoFiles(path)
 }
 
 // parseSeriesFolder parses folder name using torrent name parsing library
@@ -470,11 +549,12 @@ func (s *Scanner) processSeriesInfo(info SeriesInfo) error {
 
 	// Upsert the season — avoids race condition with concurrent TVDB sync
 	result, err := s.db.Exec(`
-		INSERT INTO seasons (series_id, season_number, folder_path, is_watched, discovered_at, created_at, updated_at)
-		VALUES (?, ?, ?, 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+		INSERT INTO seasons (series_id, season_number, folder_path, is_watched, is_owned, discovered_at, created_at, updated_at)
+		VALUES (?, ?, ?, 1, 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
 		ON CONFLICT(series_id, season_number) DO UPDATE SET
 			folder_path = excluded.folder_path,
 			is_watched = 1,
+			is_owned = 1,
 			updated_at = CURRENT_TIMESTAMP
 	`, seriesID, info.Season, info.Path)
 	if err != nil {
