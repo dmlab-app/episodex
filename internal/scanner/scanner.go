@@ -628,7 +628,9 @@ func (s *Scanner) scanMediaFiles(seriesID int64, seasonNumber int, folderPath st
 // RescanSeason forces a rescan of all media files in a season.
 // Acquires scanMu to avoid interleaving with a full Scan.
 func (s *Scanner) RescanSeason(seriesID int64, seasonNumber int) error {
-	s.scanMu.Lock()
+	if !s.scanMu.TryLock() {
+		return fmt.Errorf("scan already in progress, try again later")
+	}
 	defer s.scanMu.Unlock()
 
 	// Get the season folder path

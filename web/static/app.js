@@ -721,12 +721,12 @@ function handleProgressEvent(data, stats) {
             const statusText = data.status === 'success' ? 'Success' :
                               data.status === 'skipped' ? 'Skipped' : 'Error';
 
-            filesList.innerHTML += `
+            filesList.insertAdjacentHTML('beforeend', `
                 <div class="file-item">
                     <span class="file-name">${esc(data.file)}</span>
                     <span class="file-status ${statusClass}">${statusText}</span>
                 </div>
-            `;
+            `);
 
             const percentDone = Math.round((data.current / data.total) * 100);
             progressBar.style.width = percentDone + '%';

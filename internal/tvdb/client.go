@@ -743,8 +743,9 @@ func (c *Client) GetSeriesDetailsWithRussian(tvdbID int) (*SeriesDetails, error)
 		if rusTrans.Overview != "" {
 			details.Overview = rusTrans.Overview
 		}
-	} else {
-		// No Russian translation, keep English as Name, OriginalName stays as is
+	} else if details.OriginalName == "" {
+		// No Russian translation — only set OriginalName if TVDB didn't provide one
+		// (preserves non-English originals like Japanese for anime)
 		details.OriginalName = englishName
 	}
 
