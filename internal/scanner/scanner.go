@@ -625,9 +625,12 @@ func (s *Scanner) scanMediaFiles(seriesID int64, seasonNumber int, folderPath st
 	return nil
 }
 
-// RescanSeason forces a rescan of all media files in a season
-// This is useful for manual cache invalidation
+// RescanSeason forces a rescan of all media files in a season.
+// Acquires scanMu to avoid interleaving with a full Scan.
 func (s *Scanner) RescanSeason(seriesID int64, seasonNumber int) error {
+	s.scanMu.Lock()
+	defer s.scanMu.Unlock()
+
 	// Get the season folder path
 	var folderPath string
 	err := s.db.QueryRow(`

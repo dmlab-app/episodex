@@ -462,16 +462,9 @@ func (db *DB) migrateLegacyWatchedSeasons() error {
 
 // migrateToSchemaV2 migrates data from watched_seasons to new seasons table
 func (db *DB) migrateToSchemaV2() error {
-	// Check if migration has already been run by checking if seasons table has any data
-	var seasonCount int
-	err := db.QueryRow(`SELECT COUNT(*) FROM seasons`).Scan(&seasonCount)
-	if err != nil {
-		return fmt.Errorf("failed to check seasons table: %w", err)
-	}
-
 	// Check if there's data in watched_seasons to migrate
 	var watchedCount int
-	err = db.QueryRow(`SELECT COUNT(*) FROM watched_seasons`).Scan(&watchedCount)
+	err := db.QueryRow(`SELECT COUNT(*) FROM watched_seasons`).Scan(&watchedCount)
 	if err != nil {
 		return fmt.Errorf("failed to check watched_seasons table: %w", err)
 	}

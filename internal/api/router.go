@@ -769,6 +769,96 @@ func (s *Server) handleMatchSeries(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
+		// Reassign episodes from overlapping source seasons to destination seasons.
+		// episodes.season_id references seasons.id with ON DELETE CASCADE, so deleting
+		// source seasons without this step would drop all their episodes.
+
+		// For colliding episodes (same season_number + episode_number), merge local
+		// data from source into destination before deleting source copies. This
+		// preserves file_path, file_hash, file_size, is_owned, watched_at from the
+		// scanned source when the destination only has TVDB metadata.
+		_, err = tx.Exec(`
+			UPDATE episodes
+			SET file_path = COALESCE(file_path, (
+					SELECT src_ep.file_path FROM episodes src_ep
+					INNER JOIN seasons src ON src.id = src_ep.season_id AND src.series_id = ?
+					WHERE src.season_number = (SELECT season_number FROM seasons WHERE id = episodes.season_id)
+					AND src_ep.episode_number = episodes.episode_number
+				)),
+				file_hash = COALESCE(file_hash, (
+					SELECT src_ep.file_hash FROM episodes src_ep
+					INNER JOIN seasons src ON src.id = src_ep.season_id AND src.series_id = ?
+					WHERE src.season_number = (SELECT season_number FROM seasons WHERE id = episodes.season_id)
+					AND src_ep.episode_number = episodes.episode_number
+				)),
+				file_size = COALESCE(file_size, (
+					SELECT src_ep.file_size FROM episodes src_ep
+					INNER JOIN seasons src ON src.id = src_ep.season_id AND src.series_id = ?
+					WHERE src.season_number = (SELECT season_number FROM seasons WHERE id = episodes.season_id)
+					AND src_ep.episode_number = episodes.episode_number
+				)),
+				is_owned = MAX(is_owned, COALESCE((
+					SELECT src_ep.is_owned FROM episodes src_ep
+					INNER JOIN seasons src ON src.id = src_ep.season_id AND src.series_id = ?
+					WHERE src.season_number = (SELECT season_number FROM seasons WHERE id = episodes.season_id)
+					AND src_ep.episode_number = episodes.episode_number
+				), 0)),
+				watched_at = COALESCE(watched_at, (
+					SELECT src_ep.watched_at FROM episodes src_ep
+					INNER JOIN seasons src ON src.id = src_ep.season_id AND src.series_id = ?
+					WHERE src.season_number = (SELECT season_number FROM seasons WHERE id = episodes.season_id)
+					AND src_ep.episode_number = episodes.episode_number
+				))
+			WHERE season_id IN (SELECT id FROM seasons WHERE series_id = ?)
+		`, id, id, id, id, id, existingSeriesID)
+		if err != nil {
+			slog.Error("Failed to merge episode local data", "error", err)
+			s.respondError(w, http.StatusInternalServerError, "failed to merge episodes")
+			return
+		}
+
+		// Now delete source episodes that collide with destination episodes.
+		_, err = tx.Exec(`
+			DELETE FROM episodes
+			WHERE id IN (
+				SELECT src_ep.id FROM episodes src_ep
+				INNER JOIN seasons src ON src.id = src_ep.season_id AND src.series_id = ?
+				INNER JOIN seasons dst ON dst.series_id = ? AND dst.season_number = src.season_number
+				INNER JOIN episodes dst_ep ON dst_ep.season_id = dst.id AND dst_ep.episode_number = src_ep.episode_number
+			)
+		`, id, existingSeriesID)
+		if err != nil {
+			slog.Error("Failed to delete conflicting episodes", "error", err)
+			s.respondError(w, http.StatusInternalServerError, "failed to merge episodes")
+			return
+		}
+
+		// Now reassign remaining (non-conflicting) source episodes to destination seasons.
+		_, err = tx.Exec(`
+			UPDATE episodes
+			SET season_id = (
+				SELECT dst.id FROM seasons dst
+				WHERE dst.series_id = ? AND dst.season_number = (
+					SELECT src.season_number FROM seasons src WHERE src.id = episodes.season_id
+				)
+			)
+			WHERE season_id IN (
+				SELECT src.id FROM seasons src
+				WHERE src.series_id = ?
+			)
+			AND EXISTS (
+				SELECT 1 FROM seasons dst
+				WHERE dst.series_id = ? AND dst.season_number = (
+					SELECT src2.season_number FROM seasons src2 WHERE src2.id = episodes.season_id
+				)
+			)
+		`, existingSeriesID, id, existingSeriesID)
+		if err != nil {
+			slog.Error("Failed to reassign episodes", "error", err)
+			s.respondError(w, http.StatusInternalServerError, "failed to merge episodes")
+			return
+		}
+
 		// Delete remaining duplicate seasons (if any overlap)
 		_, err = tx.Exec("DELETE FROM seasons WHERE series_id = ?", id)
 		if err != nil {
