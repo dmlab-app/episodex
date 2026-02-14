@@ -665,8 +665,12 @@ async function processSeasonAudio() {
 
             for (const line of lines) {
                 if (line.startsWith('data: ')) {
-                    const data = JSON.parse(line.slice(6));
-                    handleProgressEvent(data, stats);
+                    try {
+                        const data = JSON.parse(line.slice(6));
+                        handleProgressEvent(data, stats);
+                    } catch (e) {
+                        console.error('Failed to parse SSE event:', line, e);
+                    }
                 }
             }
         }
@@ -774,6 +778,10 @@ async function loadUpdates() {
             const watched = u.watched_seasons || 0;
             // Calculate how many new (unowned) seasons are available
             const newCount = u.new_seasons || (total - watched);
+            const missing = u.missing_seasons || [];
+            const missingLabel = missing.length > 0
+                ? missing.map(n => `S${String(n).padStart(2, '0')}`).join(', ')
+                : `${newCount} new`;
             return `
             <div class="update-card" onclick="navigate('/series/${u.id}')">
                 <div class="update-poster">
@@ -781,7 +789,7 @@ async function loadUpdates() {
                 </div>
                 <div class="update-info">
                     <h4 class="update-title">${esc(u.title)}</h4>
-                    <p class="update-detail"><span class="update-season">${newCount} new season${newCount !== 1 ? 's' : ''}</span> \u2014 ${total} total</p>
+                    <p class="update-detail"><span class="update-season">${esc(missingLabel)}</span> \u2014 ${total} total</p>
                 </div>
             </div>
             `;

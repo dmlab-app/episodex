@@ -991,7 +991,8 @@ func (s *Server) handleGetUpdates(w http.ResponseWriter, _ *http.Request) {
 	query := `
 		SELECT s.id, s.tvdb_id, s.title, s.original_title, s.poster_url, s.status,
 			s.total_seasons,
-			(SELECT COUNT(*) FROM seasons sn WHERE sn.series_id = s.id AND sn.is_owned = 1) as watched_seasons
+			(SELECT COUNT(*) FROM seasons sn WHERE sn.series_id = s.id AND sn.is_owned = 1) as watched_seasons,
+			(SELECT GROUP_CONCAT(sn.season_number) FROM seasons sn WHERE sn.series_id = s.id AND sn.is_owned = 1) as owned_numbers
 		FROM series s
 		WHERE s.total_seasons > (SELECT COUNT(*) FROM seasons sn WHERE sn.series_id = s.id AND sn.is_owned = 1)
 		ORDER BY s.updated_at DESC
@@ -1009,12 +1010,28 @@ func (s *Server) handleGetUpdates(w http.ResponseWriter, _ *http.Request) {
 		var id int
 		var tvdbID *int
 		var title string
-		var originalTitle, posterURL, status *string
+		var originalTitle, posterURL, status, ownedNumbers *string
 		var totalSeasons, watchedSeasons int
 
-		if err := rows.Scan(&id, &tvdbID, &title, &originalTitle, &posterURL, &status, &totalSeasons, &watchedSeasons); err != nil {
+		if err := rows.Scan(&id, &tvdbID, &title, &originalTitle, &posterURL, &status, &totalSeasons, &watchedSeasons, &ownedNumbers); err != nil {
 			slog.Error("Failed to scan updates row", "error", err)
 			continue
+		}
+
+		// Compute missing season numbers
+		ownedSet := map[int]bool{}
+		if ownedNumbers != nil {
+			for _, s := range strings.Split(*ownedNumbers, ",") {
+				if n, err := strconv.Atoi(strings.TrimSpace(s)); err == nil {
+					ownedSet[n] = true
+				}
+			}
+		}
+		var missingSeasons []int
+		for i := 1; i <= totalSeasons; i++ {
+			if !ownedSet[i] {
+				missingSeasons = append(missingSeasons, i)
+			}
 		}
 
 		update := map[string]interface{}{
@@ -1023,6 +1040,7 @@ func (s *Server) handleGetUpdates(w http.ResponseWriter, _ *http.Request) {
 			"total_seasons":   totalSeasons,
 			"watched_seasons": watchedSeasons,
 			"new_seasons":     totalSeasons - watchedSeasons,
+			"missing_seasons": missingSeasons,
 		}
 
 		if tvdbID != nil {

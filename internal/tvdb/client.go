@@ -748,10 +748,5 @@ func (c *Client) GetSeriesDetailsWithRussian(tvdbID int) (*SeriesDetails, error)
 		details.OriginalName = englishName
 	}
 
-	// If OriginalName is same as Name, keep the English name
-	if details.OriginalName == details.Name {
-		details.OriginalName = englishName
-	}
-
 	return details, nil
 }

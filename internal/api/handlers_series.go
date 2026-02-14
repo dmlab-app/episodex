@@ -185,15 +185,8 @@ func (s *Server) handleSyncSeriesFromTVDB(w http.ResponseWriter, r *http.Request
 			seasonData.PosterURL = &seasonInfo.Image
 		}
 
-		// Check if season is already owned locally
-		existing, _ := s.db.GetSeasonBySeriesAndNumber(seriesID, seasonInfo.Number)
-		if existing != nil {
-			seasonData.FolderPath = existing.FolderPath
-			seasonData.VoiceActorID = existing.VoiceActorID
-			seasonData.IsOwned = existing.IsOwned
-			seasonData.DiscoveredAt = existing.DiscoveredAt
-		}
-
+		// UpsertSeason uses COALESCE to preserve local-only fields
+		// (folder_path, voice_actor_id, is_owned, discovered_at) when nil
 		_, err := s.db.UpsertSeason(seasonData)
 		if err != nil {
 			slog.Error("Failed to upsert season", "season", seasonInfo.Number, "error", err)
