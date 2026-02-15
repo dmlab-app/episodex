@@ -98,7 +98,6 @@ func (s *Server) setupRoutes() {
 				r.Get("/", s.handleListSeasons)                              // GET /api/series/:id/seasons
 				r.Get("/{num}", s.handleGetSeason)                           // GET /api/series/:id/seasons/:num
 				r.Put("/{num}", s.handleUpdateSeason)                        // PUT /api/series/:id/seasons/:num
-				r.Post("/{num}/rescan", s.handleRescanSeason)                // POST /api/series/:id/seasons/:num/rescan
 				r.Get("/{num}/audio", s.handleGetAudioTracks)                // GET /api/series/:id/seasons/:num/audio
 				r.Post("/{num}/audio/preview", s.handleGenerateAudioPreview) // POST /api/series/:id/seasons/:num/audio/preview
 			})
@@ -1470,71 +1469,6 @@ func (s *Server) handleListVoices(w http.ResponseWriter, _ *http.Request) {
 	}
 
 	s.respondJSON(w, http.StatusOK, voices)
-}
-
-// handleRescanSeason forces a rescan of a specific season to detect file changes
-func (s *Server) handleRescanSeason(w http.ResponseWriter, r *http.Request) {
-	if s.scanner == nil {
-		s.respondError(w, http.StatusServiceUnavailable, "scanner not configured")
-		return
-	}
-
-	seriesID := chi.URLParam(r, "id")
-	seasonNum := chi.URLParam(r, "num")
-
-	// Convert parameters to appropriate types
-	sid, err := strconv.ParseInt(seriesID, 10, 64)
-	if err != nil {
-		s.respondError(w, http.StatusBadRequest, "invalid series ID")
-		return
-	}
-
-	snum, err := strconv.Atoi(seasonNum)
-	if err != nil {
-		s.respondError(w, http.StatusBadRequest, "invalid season number")
-		return
-	}
-
-	// Check if season exists and has a folder path
-	var folderPath *string
-	err = s.db.QueryRow(`
-		SELECT folder_path FROM seasons
-		WHERE series_id = ? AND season_number = ?
-	`, sid, snum).Scan(&folderPath)
-
-	if err == sql.ErrNoRows {
-		s.respondError(w, http.StatusNotFound, "season not found")
-		return
-	}
-	if err != nil {
-		slog.Error("Failed to fetch season for rescan", "series_id", sid, "season", snum, "error", err)
-		s.respondError(w, http.StatusInternalServerError, "failed to fetch season")
-		return
-	}
-	if folderPath == nil {
-		s.respondError(w, http.StatusBadRequest, "season has no folder path")
-		return
-	}
-
-	slog.Info("Manual rescan triggered", "series_id", sid, "season", snum)
-
-	go func() {
-		defer func() {
-			if r := recover(); r != nil {
-				slog.Error("Panic in rescan", "series_id", sid, "season", snum, "error", r)
-			}
-		}()
-		if err := s.scanner.RescanSeason(sid, snum); err != nil {
-			slog.Error("Rescan failed", "series_id", sid, "season", snum, "error", err)
-		} else {
-			slog.Info("Rescan completed", "series_id", sid, "season", snum)
-		}
-	}()
-
-	s.respondJSON(w, http.StatusOK, map[string]interface{}{
-		"success": true,
-		"message": "Rescan started",
-	})
 }
 
 // handleGenerateAudioPreview generates a 30-second preview of an audio track

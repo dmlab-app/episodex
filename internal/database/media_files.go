@@ -173,26 +173,6 @@ func (db *DB) InvalidateCachedData(filePath string) error {
 	return nil
 }
 
-// InvalidateCachedDataForSeason invalidates all cached data for a season
-func (db *DB) InvalidateCachedDataForSeason(seriesID int64, seasonNumber int) error {
-	// Get all media files for this season
-	files, err := db.GetMediaFilesBySeason(seriesID, seasonNumber)
-	if err != nil {
-		return err
-	}
-
-	// Invalidate each file
-	for i := range files {
-		if err := db.InvalidateCachedData(files[i].FilePath); err != nil {
-			slog.Error("Failed to invalidate file", "path", files[i].FilePath, "error", err)
-		}
-	}
-
-	slog.Info("Invalidated cached data for season",
-		"series_id", seriesID, "season", seasonNumber, "files", len(files))
-	return nil
-}
-
 // CheckFileChanged checks if a file's hash has changed and invalidates cache if needed
 func (db *DB) CheckFileChanged(filePath, currentHash string) (bool, error) {
 	existing, err := db.GetMediaFileByPath(filePath)

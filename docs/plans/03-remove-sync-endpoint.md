@@ -19,8 +19,8 @@ Two endpoints exist in the router but are never called by the frontend or any ot
 - [x] Run project tests and linter
 
 ### Task 2: Remove rescan endpoint
-- [ ] Remove route `r.Post("/{num}/rescan", s.handleRescanSeason)` from `internal/api/router.go`
-- [ ] Remove `handleRescanSeason` handler from `internal/api/router.go`
-- [ ] Remove `RescanSeason` method from `internal/scanner/scanner.go`
-- [ ] Remove `InvalidateCachedDataForSeason` from `internal/database/media_files.go` (only caller was `RescanSeason`)
-- [ ] Run project tests and linter
+- [x] Remove route `r.Post("/{num}/rescan", s.handleRescanSeason)` from `internal/api/router.go`
+- [x] Remove `handleRescanSeason` handler from `internal/api/router.go`
+- [x] Remove `RescanSeason` method from `internal/scanner/scanner.go`
+- [x] Remove `InvalidateCachedDataForSeason` from `internal/database/media_files.go` (only caller was `RescanSeason`)
+- [x] Run project tests and linter

@@ -1042,3 +1042,18 @@ func TestSyncEndpoint_Removed(t *testing.T) {
 		t.Errorf("expected 404 or 405 for removed sync endpoint, got %d", w.Code)
 	}
 }
+
+func TestRescanEndpoint_Removed(t *testing.T) {
+	srv, db := setupTestServer(t)
+	seriesID := seedSeries(t, db, "Breaking Bad", 5)
+	seedSeason(t, db, seriesID, 1, "/media/bb/s01", true, nil)
+
+	req := httptest.NewRequest(http.MethodPost, fmt.Sprintf("/api/series/%d/seasons/1/rescan", seriesID), http.NoBody)
+	w := httptest.NewRecorder()
+	srv.router.ServeHTTP(w, req)
+
+	// The route no longer exists, so chi returns 405 Method Not Allowed
+	if w.Code != http.StatusMethodNotAllowed && w.Code != http.StatusNotFound {
+		t.Errorf("expected 404 or 405 for removed rescan endpoint, got %d", w.Code)
+	}
+}

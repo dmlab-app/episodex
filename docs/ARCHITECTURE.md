@@ -294,7 +294,6 @@ LostFilm, Кубик в Кубе, Amedia, NewStudio, ColdFilm, Jaskier, AlexFilm
 | `GET` | `/api/series/{id}/seasons` | Все сезоны: owned и locked (пустые) |
 | `GET` | `/api/series/{id}/seasons/{num}` | Детали сезона |
 | `PUT` | `/api/series/{id}/seasons/{num}` | Обновить voice_actor_id |
-| `POST` | `/api/series/{id}/seasons/{num}/rescan` | Пересканировать файлы сезона |
 
 ### Аудио
 
@@ -376,7 +375,7 @@ LostFilm, Кубик в Кубе, Amedia, NewStudio, ColdFilm, Jaskier, AlexFilm
 - `episodes` хранит: file_path, file_hash, file_size + номер серии
 - Оба записываются одновременно в `scanMediaFiles()`
 - `media_files` используется для: `CheckFileChanged`, `InvalidateCachedData`, `DeleteMediaFilesBySeason`, `GetStaleMediaFiles`
-- `episodes` используется для: merge при match (перенос file_path), cleanup при rescan
+- `episodes` используется для: merge при match (перенос file_path)
 - **Вердикт: информация дублируется. Можно было бы оставить одну из двух таблиц.**
 
 ### 7.4. Таблица `artworks` — избыточное хранение
@@ -425,7 +424,7 @@ LostFilm, Кубик в Кубе, Amedia, NewStudio, ColdFilm, Jaskier, AlexFilm
 - **`GetStaleMediaFiles()`** — нигде не вызывается
 - **`CleanupOrphanedMediaFiles()`** — заглушка (возвращает 0, nil), нигде не вызывается
 - **`DeleteMediaFile()`** — нигде не вызывается (используется `DeleteMediaFilesBySeason`)
-- **`GetMediaFilesBySeason()`** — вызывается только из `InvalidateCachedDataForSeason`
+- **`GetMediaFilesBySeason()`** — вызывается из тестов
 
 #### `database/series.go`:
 - **`UpsertSeries()`** — нигде не вызывается напрямую (sync использует `SyncSeriesAndChildren`)
