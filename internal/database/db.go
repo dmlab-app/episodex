@@ -2,11 +2,12 @@
 package database
 
 import (
-	"database/sql"
 	"fmt"
 	"log/slog"
 	"os"
 	"path/filepath"
+
+	"database/sql"
 
 	_ "modernc.org/sqlite" // SQLite driver registration
 )
@@ -42,20 +43,10 @@ func New(dbPath string) (*DB, error) {
 		return nil, fmt.Errorf("failed to enable foreign keys: %w", err)
 	}
 
-	// Pre-migrations: add new columns to existing tables BEFORE creating indexes
-	// This is needed because the schema has indexes on new columns
-	db.preMigrations()
-
 	// Initialize tables (creates tables and indexes)
 	if err := db.initTables(); err != nil {
 		sqlDB.Close() //nolint:errcheck // best-effort cleanup on init failure
 		return nil, fmt.Errorf("failed to initialize tables: %w", err)
-	}
-
-	// Run migrations (data migrations)
-	if err := db.runMigrations(); err != nil {
-		sqlDB.Close() //nolint:errcheck // best-effort cleanup on init failure
-		return nil, fmt.Errorf("failed to run migrations: %w", err)
 	}
 
 	slog.Info("Database initialized", "path", dbPath)
@@ -65,28 +56,22 @@ func New(dbPath string) (*DB, error) {
 // initTables creates all required tables
 func (db *DB) initTables() error {
 	schema := `
-	-- Сериалы (полные метаданные из TVDB)
+	-- Сериалы (метаданные из TVDB)
 	CREATE TABLE IF NOT EXISTS series (
 		id INTEGER PRIMARY KEY AUTOINCREMENT,
 		tvdb_id INTEGER UNIQUE,
 		title TEXT NOT NULL,
 		original_title TEXT,
-		slug TEXT,
 		overview TEXT,
 		poster_url TEXT,
 		backdrop_url TEXT,
 		status TEXT,
-		first_aired DATE,
-		last_aired DATE,
 		year INTEGER,
 		runtime INTEGER,
 		rating REAL,
 		content_rating TEXT,
-		original_country TEXT,
-		original_language TEXT,
 		genres TEXT,
 		networks TEXT,
-		studios TEXT,
 		total_seasons INTEGER DEFAULT 0,
 		aired_seasons INTEGER DEFAULT 0,
 		created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
@@ -100,10 +85,7 @@ func (db *DB) initTables() error {
 		tvdb_season_id INTEGER,
 		season_number INTEGER NOT NULL,
 		name TEXT,
-		overview TEXT,
 		poster_url TEXT,
-		first_aired DATE,
-		episode_count INTEGER,
 		folder_path TEXT,
 		voice_actor_id INTEGER,
 		is_watched BOOLEAN DEFAULT 0,
@@ -114,29 +96,6 @@ func (db *DB) initTables() error {
 		UNIQUE(series_id, season_number),
 		FOREIGN KEY (series_id) REFERENCES series(id) ON DELETE CASCADE,
 		FOREIGN KEY (voice_actor_id) REFERENCES voice_actors(id) ON DELETE SET NULL
-	);
-
-	-- Эпизоды
-	CREATE TABLE IF NOT EXISTS episodes (
-		id INTEGER PRIMARY KEY AUTOINCREMENT,
-		season_id INTEGER NOT NULL,
-		tvdb_episode_id INTEGER,
-		episode_number INTEGER NOT NULL,
-		title TEXT,
-		overview TEXT,
-		image_url TEXT,
-		air_date DATE,
-		runtime INTEGER,
-		rating REAL,
-		file_path TEXT,
-		file_hash TEXT,
-		file_size INTEGER,
-		is_watched BOOLEAN DEFAULT 0,
-		watched_at TIMESTAMP,
-		created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-		updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-		UNIQUE(season_id, episode_number),
-		FOREIGN KEY (season_id) REFERENCES seasons(id) ON DELETE CASCADE
 	);
 
 	-- Актёры/персонажи сериала
@@ -151,38 +110,6 @@ func (db *DB) initTables() error {
 		sort_order INTEGER,
 		created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
 		FOREIGN KEY (series_id) REFERENCES series(id) ON DELETE CASCADE
-	);
-
-	-- Artwork (постеры, фоны, баннеры)
-	CREATE TABLE IF NOT EXISTS artworks (
-		id INTEGER PRIMARY KEY AUTOINCREMENT,
-		series_id INTEGER,
-		season_id INTEGER,
-		tvdb_artwork_id INTEGER,
-		type TEXT,
-		url TEXT NOT NULL,
-		thumbnail_url TEXT,
-		language TEXT,
-		score REAL,
-		width INTEGER,
-		height INTEGER,
-		is_primary BOOLEAN DEFAULT 0,
-		created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-		FOREIGN KEY (series_id) REFERENCES series(id) ON DELETE CASCADE,
-		FOREIGN KEY (season_id) REFERENCES seasons(id) ON DELETE CASCADE
-	);
-
-	-- Watched seasons (DEPRECATED - kept for migration)
-	CREATE TABLE IF NOT EXISTS watched_seasons (
-		series_id INTEGER NOT NULL,
-		season_number INTEGER NOT NULL,
-		voice_actor_id INTEGER,
-		folder_path TEXT,
-		source TEXT DEFAULT 'scan',
-		discovered_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-		PRIMARY KEY (series_id, season_number),
-		FOREIGN KEY (series_id) REFERENCES series(id) ON DELETE CASCADE,
-		FOREIGN KEY (voice_actor_id) REFERENCES voice_actors(id) ON DELETE SET NULL
 	);
 
 	-- Справочник озвучек
@@ -201,16 +128,6 @@ func (db *DB) initTables() error {
 		track_name TEXT,
 		processed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
 		FOREIGN KEY (series_id) REFERENCES series(id) ON DELETE SET NULL
-	);
-
-	-- История сканирований
-	CREATE TABLE IF NOT EXISTS scan_history (
-		id INTEGER PRIMARY KEY AUTOINCREMENT,
-		started_at TIMESTAMP,
-		finished_at TIMESTAMP,
-		folders_scanned INTEGER DEFAULT 0,
-		new_series INTEGER DEFAULT 0,
-		new_seasons INTEGER DEFAULT 0
 	);
 
 	-- Медиафайлы с хешами для отслеживания изменений
@@ -252,15 +169,8 @@ func (db *DB) initTables() error {
 	CREATE INDEX IF NOT EXISTS idx_series_year ON series(year);
 	CREATE INDEX IF NOT EXISTS idx_seasons_series ON seasons(series_id);
 	CREATE INDEX IF NOT EXISTS idx_seasons_tvdb_id ON seasons(tvdb_season_id);
-	CREATE INDEX IF NOT EXISTS idx_episodes_season ON episodes(season_id);
-	CREATE INDEX IF NOT EXISTS idx_episodes_tvdb_id ON episodes(tvdb_episode_id);
-	CREATE INDEX IF NOT EXISTS idx_episodes_file_path ON episodes(file_path);
 	CREATE INDEX IF NOT EXISTS idx_characters_series ON series_characters(series_id);
-	CREATE INDEX IF NOT EXISTS idx_artworks_series ON artworks(series_id);
-	CREATE INDEX IF NOT EXISTS idx_artworks_season ON artworks(season_id);
-	CREATE INDEX IF NOT EXISTS idx_watched_seasons_series ON watched_seasons(series_id);
 	CREATE INDEX IF NOT EXISTS idx_system_alerts_dismissed ON system_alerts(dismissed);
-	CREATE INDEX IF NOT EXISTS idx_scan_history_started ON scan_history(started_at DESC);
 	CREATE INDEX IF NOT EXISTS idx_media_files_series ON media_files(series_id, season_number);
 	CREATE INDEX IF NOT EXISTS idx_media_files_hash ON media_files(file_hash);
 	`
@@ -326,438 +236,4 @@ func (db *DB) Close() error {
 // Ping checks if database is accessible
 func (db *DB) Ping() error {
 	return db.DB.Ping()
-}
-
-// preMigrations adds new columns to existing tables BEFORE initTables runs.
-// This is necessary because initTables creates indexes on these columns.
-// Errors are logged but not returned because pre-migrations are best-effort:
-// columns may already exist, or the table may not exist yet (first run).
-func (db *DB) preMigrations() {
-	// Check if series table exists
-	var tableExists int
-	err := db.QueryRow(`
-		SELECT COUNT(*) FROM sqlite_master
-		WHERE type='table' AND name='series'
-	`).Scan(&tableExists)
-	if err != nil || tableExists == 0 {
-		// Table doesn't exist yet, nothing to migrate
-		return
-	}
-
-	// Add new columns to series table if they don't exist
-	newColumns := []struct {
-		name       string
-		definition string
-	}{
-		{"slug", "ALTER TABLE series ADD COLUMN slug TEXT"},
-		{"overview", "ALTER TABLE series ADD COLUMN overview TEXT"},
-		{"backdrop_url", "ALTER TABLE series ADD COLUMN backdrop_url TEXT"},
-		{"first_aired", "ALTER TABLE series ADD COLUMN first_aired DATE"},
-		{"last_aired", "ALTER TABLE series ADD COLUMN last_aired DATE"},
-		{"year", "ALTER TABLE series ADD COLUMN year INTEGER"},
-		{"runtime", "ALTER TABLE series ADD COLUMN runtime INTEGER"},
-		{"rating", "ALTER TABLE series ADD COLUMN rating REAL"},
-		{"content_rating", "ALTER TABLE series ADD COLUMN content_rating TEXT"},
-		{"original_country", "ALTER TABLE series ADD COLUMN original_country TEXT"},
-		{"original_language", "ALTER TABLE series ADD COLUMN original_language TEXT"},
-		{"genres", "ALTER TABLE series ADD COLUMN genres TEXT"},
-		{"networks", "ALTER TABLE series ADD COLUMN networks TEXT"},
-		{"studios", "ALTER TABLE series ADD COLUMN studios TEXT"},
-		{"aired_seasons", "ALTER TABLE series ADD COLUMN aired_seasons INTEGER DEFAULT 0"},
-	}
-
-	for _, col := range newColumns {
-		var exists int
-		err := db.QueryRow(`
-			SELECT COUNT(*)
-			FROM pragma_table_info('series')
-			WHERE name = ?
-		`, col.name).Scan(&exists)
-		if err != nil {
-			continue // Table might not exist yet
-		}
-
-		if exists == 0 {
-			slog.Info("Pre-migration: Adding column to series table", "column", col.name)
-			_, err := db.Exec(col.definition)
-			if err != nil {
-				slog.Warn("Failed to add column (may already exist)", "column", col.name, "error", err)
-			}
-		}
-	}
-
-	// Add new columns to seasons table if they don't exist
-	var seasonsExists int
-	err = db.QueryRow(`
-		SELECT COUNT(*) FROM sqlite_master
-		WHERE type='table' AND name='seasons'
-	`).Scan(&seasonsExists)
-	if err != nil || seasonsExists == 0 {
-		return
-	}
-
-	seasonColumns := []struct {
-		name       string
-		definition string
-	}{
-		{"is_owned", "ALTER TABLE seasons ADD COLUMN is_owned BOOLEAN DEFAULT 0"},
-		{"is_watched", "ALTER TABLE seasons ADD COLUMN is_watched BOOLEAN DEFAULT 0"},
-	}
-
-	for _, col := range seasonColumns {
-		var exists int
-		err := db.QueryRow(`
-			SELECT COUNT(*)
-			FROM pragma_table_info('seasons')
-			WHERE name = ?
-		`, col.name).Scan(&exists)
-		if err != nil {
-			continue
-		}
-
-		if exists == 0 {
-			slog.Info("Pre-migration: Adding column to seasons table", "column", col.name)
-			_, err := db.Exec(col.definition)
-			if err != nil {
-				slog.Warn("Failed to add column (may already exist)", "column", col.name, "error", err)
-			}
-		}
-	}
-
-	// Add new columns to episodes table if they don't exist
-	var episodesExists int
-	err = db.QueryRow(`
-		SELECT COUNT(*) FROM sqlite_master
-		WHERE type='table' AND name='episodes'
-	`).Scan(&episodesExists)
-	if err != nil || episodesExists == 0 {
-		return
-	}
-
-	// episodes.is_owned was renamed to is_watched — add new column and migrate data
-	var hasEpIsWatched int
-	err = db.QueryRow(`
-		SELECT COUNT(*) FROM pragma_table_info('episodes') WHERE name = 'is_watched'
-	`).Scan(&hasEpIsWatched)
-	if err == nil && hasEpIsWatched == 0 {
-		slog.Info("Pre-migration: Adding is_watched column to episodes table")
-		if _, err := db.Exec(`ALTER TABLE episodes ADD COLUMN is_watched BOOLEAN DEFAULT 0`); err != nil {
-			slog.Warn("Failed to add is_watched column to episodes", "error", err)
-		} else {
-			// Copy data from old is_owned column if it exists
-			var hasIsOwned int
-			_ = db.QueryRow(`
-				SELECT COUNT(*) FROM pragma_table_info('episodes') WHERE name = 'is_owned'
-			`).Scan(&hasIsOwned)
-			if hasIsOwned > 0 {
-				slog.Info("Pre-migration: Migrating episodes.is_owned to is_watched")
-				if _, err := db.Exec(`UPDATE episodes SET is_watched = is_owned`); err != nil {
-					slog.Warn("Failed to migrate episodes is_owned to is_watched", "error", err)
-				}
-			}
-		}
-	}
-
-}
-
-// runMigrations applies database schema migrations
-func (db *DB) runMigrations() error {
-	// Legacy migrations for watched_seasons (still needed for backward compatibility)
-	if err := db.migrateLegacyWatchedSeasons(); err != nil {
-		return err
-	}
-
-	// New migrations for schema v2
-	if err := db.migrateToSchemaV2(); err != nil {
-		return err
-	}
-
-	return nil
-}
-
-// migrateLegacyWatchedSeasons handles old migrations for watched_seasons table
-func (db *DB) migrateLegacyWatchedSeasons() error {
-	var columnExists int
-
-	// Check if folder_path column exists in watched_seasons
-	err := db.QueryRow(`
-		SELECT COUNT(*)
-		FROM pragma_table_info('watched_seasons')
-		WHERE name='folder_path'
-	`).Scan(&columnExists)
-	if err != nil {
-		return fmt.Errorf("failed to check schema: %w", err)
-	}
-	if columnExists == 0 {
-		slog.Info("Running migration: adding folder_path column to watched_seasons")
-		_, err := db.Exec(`ALTER TABLE watched_seasons ADD COLUMN folder_path TEXT`)
-		if err != nil {
-			return fmt.Errorf("failed to add folder_path column: %w", err)
-		}
-		slog.Info("Migration completed: folder_path column added")
-	}
-
-	// Check if source column exists in watched_seasons
-	err = db.QueryRow(`
-		SELECT COUNT(*)
-		FROM pragma_table_info('watched_seasons')
-		WHERE name='source'
-	`).Scan(&columnExists)
-	if err != nil {
-		return fmt.Errorf("failed to check schema: %w", err)
-	}
-	if columnExists == 0 {
-		slog.Info("Running migration: adding source column to watched_seasons")
-		_, err := db.Exec(`ALTER TABLE watched_seasons ADD COLUMN source TEXT DEFAULT 'scan'`)
-		if err != nil {
-			return fmt.Errorf("failed to add source column: %w", err)
-		}
-		slog.Info("Migration completed: source column added")
-	}
-
-	// Check if discovered_at column exists in watched_seasons
-	err = db.QueryRow(`
-		SELECT COUNT(*)
-		FROM pragma_table_info('watched_seasons')
-		WHERE name='discovered_at'
-	`).Scan(&columnExists)
-	if err != nil {
-		return fmt.Errorf("failed to check schema: %w", err)
-	}
-	if columnExists == 0 {
-		slog.Info("Running migration: adding discovered_at column to watched_seasons")
-		_, err := db.Exec(`ALTER TABLE watched_seasons ADD COLUMN discovered_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP`)
-		if err != nil {
-			return fmt.Errorf("failed to add discovered_at column: %w", err)
-		}
-		slog.Info("Migration completed: discovered_at column added")
-	}
-
-	return nil
-}
-
-// migrateToSchemaV2 migrates data from watched_seasons to new seasons table
-func (db *DB) migrateToSchemaV2() error {
-	// Check if there's data in watched_seasons to migrate
-	var watchedCount int
-	err := db.QueryRow(`SELECT COUNT(*) FROM watched_seasons`).Scan(&watchedCount)
-	if err != nil {
-		return fmt.Errorf("failed to check watched_seasons table: %w", err)
-	}
-
-	// Migrate data from watched_seasons to seasons (handles both initial and incremental cases)
-	if watchedCount > 0 {
-		// Check if voice_actor_id column exists in watched_seasons
-		var hasVoiceActorID int
-		err = db.QueryRow(`
-			SELECT COUNT(*) FROM pragma_table_info('watched_seasons')
-			WHERE name = 'voice_actor_id'
-		`).Scan(&hasVoiceActorID)
-		if err != nil {
-			hasVoiceActorID = 0
-		}
-
-		// Migrate rows from watched_seasons that don't already exist in seasons
-		var migrateQuery string
-		if hasVoiceActorID > 0 {
-			migrateQuery = `
-				INSERT INTO seasons (series_id, season_number, folder_path, voice_actor_id, is_watched, discovered_at)
-				SELECT ws.series_id, ws.season_number, ws.folder_path, ws.voice_actor_id, 1, ws.discovered_at
-				FROM watched_seasons ws
-				WHERE NOT EXISTS (
-					SELECT 1 FROM seasons sn
-					WHERE sn.series_id = ws.series_id AND sn.season_number = ws.season_number
-				)
-			`
-		} else {
-			migrateQuery = `
-				INSERT INTO seasons (series_id, season_number, folder_path, is_watched, discovered_at)
-				SELECT ws.series_id, ws.season_number, ws.folder_path, 1, ws.discovered_at
-				FROM watched_seasons ws
-				WHERE NOT EXISTS (
-					SELECT 1 FROM seasons sn
-					WHERE sn.series_id = ws.series_id AND sn.season_number = ws.season_number
-				)
-			`
-		}
-
-		result, err := db.Exec(migrateQuery)
-		if err != nil {
-			return fmt.Errorf("failed to migrate watched_seasons data: %w", err)
-		}
-
-		migrated, _ := result.RowsAffected() // SQLite always supports RowsAffected
-		if migrated > 0 {
-			slog.Info("Migration completed: migrated watched_seasons to seasons", "migrated", migrated)
-		}
-
-		// Backfill is_watched for season rows that already existed (e.g. created by TVDB sync)
-		// but have a matching watched_seasons entry. The INSERT above only creates new rows;
-		// this UPDATE ensures existing rows also get is_watched=1 and any missing fields.
-		var updateQuery string
-		if hasVoiceActorID > 0 {
-			updateQuery = `
-				UPDATE seasons SET
-					is_watched = 1,
-					folder_path = COALESCE(folder_path, (
-						SELECT ws.folder_path FROM watched_seasons ws
-						WHERE ws.series_id = seasons.series_id AND ws.season_number = seasons.season_number
-					)),
-					voice_actor_id = COALESCE(voice_actor_id, (
-						SELECT ws.voice_actor_id FROM watched_seasons ws
-						WHERE ws.series_id = seasons.series_id AND ws.season_number = seasons.season_number
-					)),
-					discovered_at = COALESCE(discovered_at, (
-						SELECT ws.discovered_at FROM watched_seasons ws
-						WHERE ws.series_id = seasons.series_id AND ws.season_number = seasons.season_number
-					))
-				WHERE is_watched = 0 AND EXISTS (
-					SELECT 1 FROM watched_seasons ws
-					WHERE ws.series_id = seasons.series_id AND ws.season_number = seasons.season_number
-				)
-			`
-		} else {
-			updateQuery = `
-				UPDATE seasons SET
-					is_watched = 1,
-					folder_path = COALESCE(folder_path, (
-						SELECT ws.folder_path FROM watched_seasons ws
-						WHERE ws.series_id = seasons.series_id AND ws.season_number = seasons.season_number
-					)),
-					discovered_at = COALESCE(discovered_at, (
-						SELECT ws.discovered_at FROM watched_seasons ws
-						WHERE ws.series_id = seasons.series_id AND ws.season_number = seasons.season_number
-					))
-				WHERE is_watched = 0 AND EXISTS (
-					SELECT 1 FROM watched_seasons ws
-					WHERE ws.series_id = seasons.series_id AND ws.season_number = seasons.season_number
-				)
-			`
-		}
-
-		updateResult, err := db.Exec(updateQuery)
-		if err != nil {
-			slog.Warn("Failed to backfill is_watched on existing season rows", "error", err)
-		} else {
-			backfilled, _ := updateResult.RowsAffected()
-			if backfilled > 0 {
-				slog.Info("Migration completed: backfilled is_watched on existing seasons", "backfilled", backfilled)
-			}
-		}
-	}
-
-	// Ensure all (series_id, season_number) pairs referenced by media_files exist in seasons.
-	// Without this, FK enforcement would reject orphaned media_files rows from before migration.
-	_, err = db.Exec(`
-		INSERT OR IGNORE INTO seasons (series_id, season_number, is_watched)
-		SELECT DISTINCT mf.series_id, mf.season_number, 1
-		FROM media_files mf
-		WHERE NOT EXISTS (
-			SELECT 1 FROM seasons sn
-			WHERE sn.series_id = mf.series_id AND sn.season_number = mf.season_number
-		)
-	`)
-	if err != nil {
-		slog.Warn("Failed to backfill seasons from media_files", "error", err)
-	}
-
-	// Rebuild media_files table if its FK still references watched_seasons.
-	// SQLite cannot ALTER FK constraints, so we recreate the table.
-	if err := db.migrateMediaFilesFK(); err != nil {
-		return fmt.Errorf("failed to migrate media_files FK: %w", err)
-	}
-
-	// Note: New columns are added in preMigrations() which runs before initTables()
-	// This is necessary because initTables creates indexes on these columns
-
-	return nil
-}
-
-// migrateMediaFilesFK rebuilds the media_files table if its FK still references
-// watched_seasons instead of seasons. On existing DBs, CREATE TABLE IF NOT EXISTS
-// preserves the old FK, so we must recreate the table to update it.
-func (db *DB) migrateMediaFilesFK() error {
-	// Check if media_files table exists
-	var tableExists int
-	if err := db.QueryRow(`
-		SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='media_files'
-	`).Scan(&tableExists); err != nil {
-		return fmt.Errorf("failed to check media_files table existence: %w", err)
-	}
-	if tableExists == 0 {
-		return nil // Table doesn't exist yet, will be created by initTables
-	}
-
-	// Check if the FK references watched_seasons (the old target)
-	var fkRefersOld int
-	if err := db.QueryRow(`
-		SELECT COUNT(*) FROM pragma_foreign_key_list('media_files')
-		WHERE "table" = 'watched_seasons'
-	`).Scan(&fkRefersOld); err != nil {
-		return fmt.Errorf("failed to check media_files FK target: %w", err)
-	}
-	if fkRefersOld == 0 {
-		return nil // FK already references seasons, no migration needed
-	}
-
-	slog.Info("Rebuilding media_files table to update FK from watched_seasons to seasons")
-
-	// Rebuild with correct FK using the rename-and-copy pattern inside a transaction.
-	// Without a transaction, a crash between DROP and RENAME would lose data.
-	tx, err := db.Begin()
-	if err != nil {
-		return fmt.Errorf("failed to begin media_files FK migration transaction: %w", err)
-	}
-	defer tx.Rollback() //nolint:errcheck
-
-	// Drop leftover temp table first in case a previous migration attempt failed mid-way.
-	if _, err := tx.Exec(`DROP TABLE IF EXISTS media_files_new`); err != nil {
-		return fmt.Errorf("failed to drop leftover media_files_new: %w", err)
-	}
-	if _, err := tx.Exec(`
-		CREATE TABLE media_files_new (
-			id INTEGER PRIMARY KEY AUTOINCREMENT,
-			series_id INTEGER NOT NULL,
-			season_number INTEGER NOT NULL,
-			file_path TEXT NOT NULL UNIQUE,
-			file_name TEXT NOT NULL,
-			file_size INTEGER NOT NULL,
-			file_hash TEXT NOT NULL,
-			mod_time INTEGER,
-			first_seen TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-			last_checked TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-			FOREIGN KEY (series_id, season_number) REFERENCES seasons(series_id, season_number) ON DELETE CASCADE
-		)
-	`); err != nil {
-		return fmt.Errorf("failed to create media_files_new: %w", err)
-	}
-	if _, err := tx.Exec(`
-		INSERT INTO media_files_new
-		SELECT mf.* FROM media_files mf
-		WHERE EXISTS (
-			SELECT 1 FROM seasons s
-			WHERE s.series_id = mf.series_id AND s.season_number = mf.season_number
-		)
-	`); err != nil {
-		return fmt.Errorf("failed to copy data to media_files_new: %w", err)
-	}
-	if _, err := tx.Exec(`DROP TABLE media_files`); err != nil {
-		return fmt.Errorf("failed to drop old media_files: %w", err)
-	}
-	if _, err := tx.Exec(`ALTER TABLE media_files_new RENAME TO media_files`); err != nil {
-		return fmt.Errorf("failed to rename media_files_new: %w", err)
-	}
-	if _, err := tx.Exec(`CREATE INDEX IF NOT EXISTS idx_media_files_series ON media_files(series_id, season_number)`); err != nil {
-		return fmt.Errorf("failed to create media_files series index: %w", err)
-	}
-	if _, err := tx.Exec(`CREATE INDEX IF NOT EXISTS idx_media_files_hash ON media_files(file_hash)`); err != nil {
-		return fmt.Errorf("failed to create media_files hash index: %w", err)
-	}
-
-	if err := tx.Commit(); err != nil {
-		return fmt.Errorf("failed to commit media_files FK migration: %w", err)
-	}
-
-	slog.Info("Successfully rebuilt media_files table with updated FK")
-	return nil
 }

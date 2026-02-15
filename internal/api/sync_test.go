@@ -23,7 +23,7 @@ func newTestTVDBServer(t *testing.T, handler http.Handler) *tvdb.Client {
 }
 
 // tvdbMux creates a handler that serves mock TVDB API responses.
-func tvdbMux(extendedResp, translationResp, seasonEpisodesResp interface{}) http.Handler {
+func tvdbMux(extendedResp, translationResp interface{}) http.Handler {
 	mux := http.NewServeMux()
 
 	// Login endpoint
@@ -47,18 +47,6 @@ func tvdbMux(extendedResp, translationResp, seasonEpisodesResp interface{}) http
 		default:
 			// /v4/series/{id}/extended
 			_ = json.NewEncoder(w).Encode(extendedResp)
-		}
-	})
-
-	// Season episodes endpoint
-	mux.HandleFunc("/v4/seasons/", func(w http.ResponseWriter, _ *http.Request) {
-		if seasonEpisodesResp != nil {
-			_ = json.NewEncoder(w).Encode(seasonEpisodesResp)
-		} else {
-			_ = json.NewEncoder(w).Encode(map[string]interface{}{
-				"status": "success",
-				"data":   map[string]interface{}{"episodes": []interface{}{}},
-			})
 		}
 	})
 
@@ -134,17 +122,7 @@ func TestSyncSeriesMetadata_Success(t *testing.T) {
 		},
 	}
 
-	seasonEpisodesResp := map[string]interface{}{
-		"status": "success",
-		"data": map[string]interface{}{
-			"episodes": []map[string]interface{}{
-				{"id": 1001, "number": 1, "name": "Pilot", "overview": "First episode", "aired": "2008-01-20", "runtime": 58},
-				{"id": 1002, "number": 2, "name": "Cat's in the Bag...", "overview": "Second episode", "aired": "2008-01-27", "runtime": 48},
-			},
-		},
-	}
-
-	tvdbClient := newTestTVDBServer(t, tvdbMux(extendedResp, translationResp, seasonEpisodesResp))
+	tvdbClient := newTestTVDBServer(t, tvdbMux(extendedResp, translationResp))
 	if err := tvdbClient.Login(); err != nil {
 		t.Fatalf("failed to login to mock TVDB: %v", err)
 	}
@@ -188,20 +166,6 @@ func TestSyncSeriesMetadata_Success(t *testing.T) {
 		t.Errorf("expected 5 seasons, got %d", seasonCount)
 	}
 
-	// SyncSeriesMetadata syncs series, seasons, characters, and artworks — not episodes.
-	// Verify no episodes were created (episode sync was removed).
-	var episodeCount int
-	err = db.QueryRow(`
-		SELECT COUNT(*) FROM episodes e
-		INNER JOIN seasons s ON e.season_id = s.id
-		WHERE s.series_id = ?
-	`, seriesID).Scan(&episodeCount)
-	if err != nil {
-		t.Fatalf("failed to count episodes: %v", err)
-	}
-	if episodeCount != 0 {
-		t.Errorf("expected 0 episodes (sync does not create episodes), got %d", episodeCount)
-	}
 }
 
 func TestSyncSeriesMetadata_TVDBIDChanged(t *testing.T) {
@@ -261,7 +225,7 @@ func TestSyncSeriesMetadata_TVDBIDChanged(t *testing.T) {
 		},
 	}
 
-	tvdbClient := newTestTVDBServer(t, tvdbMux(extendedResp, nil, nil))
+	tvdbClient := newTestTVDBServer(t, tvdbMux(extendedResp, nil))
 	if err := tvdbClient.Login(); err != nil {
 		t.Fatalf("failed to login to mock TVDB: %v", err)
 	}
@@ -337,7 +301,7 @@ func TestSyncSeriesAndChildren_TVDBIDMismatch(t *testing.T) {
 		{SeriesID: seriesID, CharacterName: &charName},
 	}
 
-	err = db.SyncSeriesAndChildren(seriesID, 100, staleSeries, staleSeasons, staleCharacters, nil)
+	err = db.SyncSeriesAndChildren(seriesID, 100, staleSeries, staleSeasons, staleCharacters)
 	if err == nil {
 		t.Fatal("expected SyncSeriesAndChildren to fail when tvdb_id mismatches, but it succeeded")
 	}

@@ -126,10 +126,6 @@ func CheckForTVDBUpdates(db *database.DB, tvdbClient *tvdb.Client, autoSync bool
 			}
 			if err := SyncSeriesMetadata(db, tvdbClient, int64(s.id), s.tvdbID); err != nil {
 				slog.Error("Failed to auto-sync series", "series_id", s.id, "error", err)
-				// Don't fall back to updating season counts without creating season rows:
-				// that would leave aired_seasons ahead of actual rows, causing GET /api/updates
-				// to return the series with an empty new_seasons list. The next scheduled
-				// check will retry the full sync.
 				result.Errors++
 			} else {
 				result.Synced++
@@ -153,8 +149,7 @@ func CheckForTVDBUpdates(db *database.DB, tvdbClient *tvdb.Client, autoSync bool
 }
 
 // SyncSeriesMetadata fetches full metadata from TVDB and updates the database.
-// It syncs series info, seasons, episodes, characters, and artworks.
-// This function is used by both the manual sync handler and the scheduled auto-sync.
+// It syncs series info, seasons, and characters.
 func SyncSeriesMetadata(db *database.DB, tvdbClient *tvdb.Client, seriesID int64, tvdbID int) error {
 	// Fetch extended data from TVDB
 	extended, err := tvdbClient.GetSeriesExtendedFull(tvdbID)
@@ -187,10 +182,6 @@ func SyncSeriesMetadata(db *database.DB, tvdbClient *tvdb.Client, seriesID int64
 	for i, n := range extended.Networks {
 		networkNames[i] = n.Name
 	}
-	studioNames := make([]string, len(extended.Studios))
-	for i, st := range extended.Studios {
-		studioNames[i] = st.Name
-	}
 
 	genresJSON, err := json.Marshal(genreNames)
 	if err != nil {
@@ -202,15 +193,9 @@ func SyncSeriesMetadata(db *database.DB, tvdbClient *tvdb.Client, seriesID int64
 		slog.Error("Failed to marshal networks", "error", err)
 		networksJSON = []byte("[]")
 	}
-	studiosJSON, err := json.Marshal(studioNames)
-	if err != nil {
-		slog.Error("Failed to marshal studios", "error", err)
-		studiosJSON = []byte("[]")
-	}
 
 	genres := string(genresJSON)
 	networks := string(networksJSON)
-	studios := string(studiosJSON)
 
 	// Get content rating (prefer USA rating)
 	var contentRating string
@@ -234,9 +219,6 @@ func SyncSeriesMetadata(db *database.DB, tvdbClient *tvdb.Client, seriesID int64
 	if originalTitle != "" {
 		seriesData.OriginalTitle = &originalTitle
 	}
-	if extended.Slug != "" {
-		seriesData.Slug = &extended.Slug
-	}
 	if overview != "" {
 		seriesData.Overview = &overview
 	}
@@ -249,29 +231,14 @@ func SyncSeriesMetadata(db *database.DB, tvdbClient *tvdb.Client, seriesID int64
 	if extended.Status != "" {
 		seriesData.Status = &extended.Status
 	}
-	if extended.FirstAired != "" {
-		seriesData.FirstAired = &extended.FirstAired
-	}
-	if extended.LastAired != "" {
-		seriesData.LastAired = &extended.LastAired
-	}
 	if contentRating != "" {
 		seriesData.ContentRating = &contentRating
-	}
-	if extended.OriginalCountry != "" {
-		seriesData.OriginalCountry = &extended.OriginalCountry
-	}
-	if extended.OriginalLanguage != "" {
-		seriesData.OriginalLanguage = &extended.OriginalLanguage
 	}
 	if genres != "" && genres != "[]" {
 		seriesData.Genres = &genres
 	}
 	if networks != "" && networks != "[]" {
 		seriesData.Networks = &networks
-	}
-	if studios != "" && studios != "[]" {
-		seriesData.Studios = &studios
 	}
 	if extended.Year > 0 {
 		seriesData.Year = &extended.Year
@@ -312,27 +279,9 @@ func SyncSeriesMetadata(db *database.DB, tvdbClient *tvdb.Client, seriesID int64
 		})
 	}
 
-	artworks := make([]database.Artwork, 0, len(extended.Artworks))
-	for _, art := range extended.Artworks {
-		id := seriesID
-		artworks = append(artworks, database.Artwork{
-			SeriesID:      &id,
-			TVDBArtworkID: &art.ID,
-			Type:          &art.TypeName,
-			URL:           art.URL,
-			ThumbnailURL:  &art.Thumbnail,
-			Language:      &art.Language,
-			Score:         &art.Score,
-			Width:         &art.Width,
-			Height:        &art.Height,
-		})
-	}
-
-	// Update series row and write all child records (seasons, characters,
-	// artworks) in a single transaction with a tvdb_id guard. This ensures
-	// atomicity: if the series was rematched during the long TVDB fetch,
-	// neither parent nor children are written with stale data.
-	if err := db.SyncSeriesAndChildren(seriesID, tvdbID, seriesData, seasons, characters, artworks); err != nil {
+	// Update series row and write all child records (seasons, characters)
+	// in a single transaction with a tvdb_id guard.
+	if err := db.SyncSeriesAndChildren(seriesID, tvdbID, seriesData, seasons, characters); err != nil {
 		return fmt.Errorf("failed to sync series: %w", err)
 	}
 

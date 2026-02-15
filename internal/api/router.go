@@ -360,36 +360,29 @@ func (s *Server) handleGetSeries(w http.ResponseWriter, r *http.Request) {
 
 	// Get series info with full metadata
 	var seriesInfo struct {
-		CreatedAt        time.Time
-		LastAired        *string
-		Runtime          *int
-		OriginalTitle    *string
-		Slug             *string
-		Overview         *string
-		PosterURL        *string
-		BackdropURL      *string
-		Status           *string
-		FirstAired       *string
-		TVDBId           *int
-		Studios          *string
-		Rating           *float64
-		Year             *int
-		ContentRating    *string
-		OriginalCountry  *string
-		OriginalLanguage *string
-		Genres           *string
-		Networks         *string
-		Title            string
-		TotalSeasons     int
-		ID               int
+		CreatedAt     time.Time
+		Runtime       *int
+		OriginalTitle *string
+		Overview      *string
+		PosterURL     *string
+		BackdropURL   *string
+		Status        *string
+		TVDBId        *int
+		Rating        *float64
+		Year          *int
+		ContentRating *string
+		Genres        *string
+		Networks      *string
+		Title         string
+		TotalSeasons  int
+		ID            int
 	}
 
 	query := `
-		SELECT id, tvdb_id, title, original_title, slug, overview,
-			poster_url, backdrop_url, status, first_aired, last_aired,
+		SELECT id, tvdb_id, title, original_title, overview,
+			poster_url, backdrop_url, status,
 			year, runtime, rating, content_rating,
-			original_country, original_language,
-			genres, networks, studios, total_seasons, created_at
+			genres, networks, total_seasons, created_at
 		FROM series
 		WHERE id = ?
 	`
@@ -399,22 +392,16 @@ func (s *Server) handleGetSeries(w http.ResponseWriter, r *http.Request) {
 		&seriesInfo.TVDBId,
 		&seriesInfo.Title,
 		&seriesInfo.OriginalTitle,
-		&seriesInfo.Slug,
 		&seriesInfo.Overview,
 		&seriesInfo.PosterURL,
 		&seriesInfo.BackdropURL,
 		&seriesInfo.Status,
-		&seriesInfo.FirstAired,
-		&seriesInfo.LastAired,
 		&seriesInfo.Year,
 		&seriesInfo.Runtime,
 		&seriesInfo.Rating,
 		&seriesInfo.ContentRating,
-		&seriesInfo.OriginalCountry,
-		&seriesInfo.OriginalLanguage,
 		&seriesInfo.Genres,
 		&seriesInfo.Networks,
-		&seriesInfo.Studios,
 		&seriesInfo.TotalSeasons,
 		&seriesInfo.CreatedAt,
 	)
@@ -524,36 +511,6 @@ func (s *Server) handleGetSeries(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// Artwork fallback: if poster_url or backdrop_url is missing, try artworks table
-	posterURL := seriesInfo.PosterURL
-	backdropURL := seriesInfo.BackdropURL
-	if posterURL == nil || *posterURL == "" {
-		var url *string
-		//nolint:errcheck // artwork fallback is best-effort
-		s.db.QueryRow(`
-			SELECT url FROM artworks
-			WHERE series_id = ? AND type = 'poster'
-			ORDER BY score DESC, is_primary DESC
-			LIMIT 1
-		`, id).Scan(&url)
-		if url != nil {
-			posterURL = url
-		}
-	}
-	if backdropURL == nil || *backdropURL == "" {
-		var url *string
-		//nolint:errcheck // artwork fallback is best-effort
-		s.db.QueryRow(`
-			SELECT url FROM artworks
-			WHERE series_id = ? AND type = 'background'
-			ORDER BY score DESC, is_primary DESC
-			LIMIT 1
-		`, id).Scan(&url)
-		if url != nil {
-			backdropURL = url
-		}
-	}
-
 	// Build response
 	response := map[string]interface{}{
 		"id":              seriesInfo.ID,
@@ -571,28 +528,19 @@ func (s *Server) handleGetSeries(w http.ResponseWriter, r *http.Request) {
 	if seriesInfo.OriginalTitle != nil {
 		response["original_title"] = *seriesInfo.OriginalTitle
 	}
-	if seriesInfo.Slug != nil {
-		response["slug"] = *seriesInfo.Slug
-	}
 	if seriesInfo.Overview != nil {
 		response["overview"] = *seriesInfo.Overview
 	}
-	if posterURL != nil {
-		response["poster_url"] = *posterURL
+	if seriesInfo.PosterURL != nil {
+		response["poster_url"] = *seriesInfo.PosterURL
 	}
-	if backdropURL != nil {
-		response["backdrop_url"] = *backdropURL
+	if seriesInfo.BackdropURL != nil {
+		response["backdrop_url"] = *seriesInfo.BackdropURL
 	}
 	if seriesInfo.Status != nil {
 		response["status"] = *seriesInfo.Status
 	} else {
 		response["status"] = "unknown"
-	}
-	if seriesInfo.FirstAired != nil {
-		response["first_aired"] = *seriesInfo.FirstAired
-	}
-	if seriesInfo.LastAired != nil {
-		response["last_aired"] = *seriesInfo.LastAired
 	}
 	if seriesInfo.Year != nil {
 		response["year"] = *seriesInfo.Year
@@ -606,12 +554,6 @@ func (s *Server) handleGetSeries(w http.ResponseWriter, r *http.Request) {
 	if seriesInfo.ContentRating != nil {
 		response["content_rating"] = *seriesInfo.ContentRating
 	}
-	if seriesInfo.OriginalCountry != nil {
-		response["original_country"] = *seriesInfo.OriginalCountry
-	}
-	if seriesInfo.OriginalLanguage != nil {
-		response["original_language"] = *seriesInfo.OriginalLanguage
-	}
 
 	// Parse JSON fields
 	if seriesInfo.Genres != nil {
@@ -624,12 +566,6 @@ func (s *Server) handleGetSeries(w http.ResponseWriter, r *http.Request) {
 		var networks []interface{}
 		if err := json.Unmarshal([]byte(*seriesInfo.Networks), &networks); err == nil {
 			response["networks"] = networks
-		}
-	}
-	if seriesInfo.Studios != nil {
-		var studios []interface{}
-		if err := json.Unmarshal([]byte(*seriesInfo.Studios), &studios); err == nil {
-			response["studios"] = studios
 		}
 	}
 
@@ -738,12 +674,11 @@ func (s *Server) handleMatchSeries(w http.ResponseWriter, r *http.Request) {
 				discovered_at = COALESCE(discovered_at, (SELECT src.discovered_at FROM seasons src WHERE src.series_id = ? AND src.season_number = seasons.season_number)),
 				tvdb_season_id = COALESCE(tvdb_season_id, (SELECT src.tvdb_season_id FROM seasons src WHERE src.series_id = ? AND src.season_number = seasons.season_number)),
 				name = COALESCE(name, (SELECT src.name FROM seasons src WHERE src.series_id = ? AND src.season_number = seasons.season_number)),
-				poster_url = COALESCE(poster_url, (SELECT src.poster_url FROM seasons src WHERE src.series_id = ? AND src.season_number = seasons.season_number)),
-				episode_count = COALESCE(episode_count, (SELECT src.episode_count FROM seasons src WHERE src.series_id = ? AND src.season_number = seasons.season_number))
+				poster_url = COALESCE(poster_url, (SELECT src.poster_url FROM seasons src WHERE src.series_id = ? AND src.season_number = seasons.season_number))
 			WHERE series_id = ? AND season_number IN (
 				SELECT season_number FROM seasons WHERE series_id = ?
 			)
-		`, id, id, id, id, id, id, id, id, id, existingSeriesID, id)
+		`, id, id, id, id, id, id, id, id, existingSeriesID, id)
 		if err != nil {
 			slog.Error("Failed to update overlapping seasons", "error", err)
 			s.respondError(w, http.StatusInternalServerError, "failed to merge seasons")
@@ -769,96 +704,6 @@ func (s *Server) handleMatchSeries(w http.ResponseWriter, r *http.Request) {
 		if err != nil {
 			slog.Error("Failed to move media files", "error", err)
 			s.respondError(w, http.StatusInternalServerError, "failed to merge media files")
-			return
-		}
-
-		// Reassign episodes from overlapping source seasons to destination seasons.
-		// episodes.season_id references seasons.id with ON DELETE CASCADE, so deleting
-		// source seasons without this step would drop all their episodes.
-
-		// For colliding episodes (same season_number + episode_number), merge local
-		// data from source into destination before deleting source copies. This
-		// preserves file_path, file_hash, file_size, is_watched, watched_at from the
-		// scanned source when the destination only has TVDB metadata.
-		_, err = tx.Exec(`
-			UPDATE episodes
-			SET file_path = COALESCE(file_path, (
-					SELECT src_ep.file_path FROM episodes src_ep
-					INNER JOIN seasons src ON src.id = src_ep.season_id AND src.series_id = ?
-					WHERE src.season_number = (SELECT season_number FROM seasons WHERE id = episodes.season_id)
-					AND src_ep.episode_number = episodes.episode_number
-				)),
-				file_hash = COALESCE(file_hash, (
-					SELECT src_ep.file_hash FROM episodes src_ep
-					INNER JOIN seasons src ON src.id = src_ep.season_id AND src.series_id = ?
-					WHERE src.season_number = (SELECT season_number FROM seasons WHERE id = episodes.season_id)
-					AND src_ep.episode_number = episodes.episode_number
-				)),
-				file_size = COALESCE(file_size, (
-					SELECT src_ep.file_size FROM episodes src_ep
-					INNER JOIN seasons src ON src.id = src_ep.season_id AND src.series_id = ?
-					WHERE src.season_number = (SELECT season_number FROM seasons WHERE id = episodes.season_id)
-					AND src_ep.episode_number = episodes.episode_number
-				)),
-				is_watched = MAX(is_watched, COALESCE((
-					SELECT src_ep.is_watched FROM episodes src_ep
-					INNER JOIN seasons src ON src.id = src_ep.season_id AND src.series_id = ?
-					WHERE src.season_number = (SELECT season_number FROM seasons WHERE id = episodes.season_id)
-					AND src_ep.episode_number = episodes.episode_number
-				), 0)),
-				watched_at = COALESCE(watched_at, (
-					SELECT src_ep.watched_at FROM episodes src_ep
-					INNER JOIN seasons src ON src.id = src_ep.season_id AND src.series_id = ?
-					WHERE src.season_number = (SELECT season_number FROM seasons WHERE id = episodes.season_id)
-					AND src_ep.episode_number = episodes.episode_number
-				))
-			WHERE season_id IN (SELECT id FROM seasons WHERE series_id = ?)
-		`, id, id, id, id, id, existingSeriesID)
-		if err != nil {
-			slog.Error("Failed to merge episode local data", "error", err)
-			s.respondError(w, http.StatusInternalServerError, "failed to merge episodes")
-			return
-		}
-
-		// Now delete source episodes that collide with destination episodes.
-		_, err = tx.Exec(`
-			DELETE FROM episodes
-			WHERE id IN (
-				SELECT src_ep.id FROM episodes src_ep
-				INNER JOIN seasons src ON src.id = src_ep.season_id AND src.series_id = ?
-				INNER JOIN seasons dst ON dst.series_id = ? AND dst.season_number = src.season_number
-				INNER JOIN episodes dst_ep ON dst_ep.season_id = dst.id AND dst_ep.episode_number = src_ep.episode_number
-			)
-		`, id, existingSeriesID)
-		if err != nil {
-			slog.Error("Failed to delete conflicting episodes", "error", err)
-			s.respondError(w, http.StatusInternalServerError, "failed to merge episodes")
-			return
-		}
-
-		// Now reassign remaining (non-conflicting) source episodes to destination seasons.
-		_, err = tx.Exec(`
-			UPDATE episodes
-			SET season_id = (
-				SELECT dst.id FROM seasons dst
-				WHERE dst.series_id = ? AND dst.season_number = (
-					SELECT src.season_number FROM seasons src WHERE src.id = episodes.season_id
-				)
-			)
-			WHERE season_id IN (
-				SELECT src.id FROM seasons src
-				WHERE src.series_id = ?
-			)
-			AND EXISTS (
-				SELECT 1 FROM seasons dst
-				WHERE dst.series_id = ? AND dst.season_number = (
-					SELECT src2.season_number FROM seasons src2 WHERE src2.id = episodes.season_id
-				)
-			)
-		`, existingSeriesID, id, existingSeriesID)
-		if err != nil {
-			slog.Error("Failed to reassign episodes", "error", err)
-			s.respondError(w, http.StatusInternalServerError, "failed to merge episodes")
 			return
 		}
 

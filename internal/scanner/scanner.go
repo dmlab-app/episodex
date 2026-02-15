@@ -66,11 +66,6 @@ var (
 	reExtractSeasonSuffix = regexp.MustCompile(`(?i)\s*[Ss]\d{1,2}.*$`)
 	reExtractJunkSuffix   = regexp.MustCompile(`(?i)\s*(WEB[-\s]?DL|WEB[-\s]?Rip|BluRay|BDRip|1080p|2160p|720p|480p|HDR|DV|x264|x265|HEVC|H\.?264|H\.?265|LostFilm|LF|Rus|Eng|DD\d+\.\d+|Atmos|DDP).*$`)
 
-	// parseEpisodeNumber patterns
-	reEpisodeSE = regexp.MustCompile(`(?i)[Ss]\d{1,2}[Ee](\d{1,3})`)
-	reEpisodeX  = regexp.MustCompile(`(?i)\d{1,2}[xX](\d{1,3})`)
-	reEpisodeEP = regexp.MustCompile(`(?i)ep?(\d{1,3})`)
-
 	videoExts = map[string]bool{
 		".mkv": true, ".mp4": true, ".avi": true, ".m4v": true,
 	}
@@ -217,14 +212,6 @@ func (s *Scanner) cleanupRemovedSeasons() error {
 		// Delete processed_files for this season (prevent stale "already processed" skips)
 		if err := s.db.DeleteProcessedFilesBySeason(sn.seriesID, sn.seasonNumber); err != nil {
 			slog.Error("Failed to delete processed files", "season_id", sn.id, "error", err)
-		}
-
-		// Clear episode file fields (preserve voice_actor_id, TVDB metadata, is_watched)
-		if _, err := s.db.Exec(`
-			UPDATE episodes SET file_path = NULL, file_hash = NULL, file_size = NULL, updated_at = CURRENT_TIMESTAMP
-			WHERE season_id = ?
-		`, sn.id); err != nil {
-			slog.Error("Failed to clear episode file fields", "season_id", sn.id, "error", err)
 		}
 	}
 
@@ -414,21 +401,6 @@ func hasVideoFiles(path string) bool {
 	return false
 }
 
-// parseEpisodeNumber extracts episode number from filename
-func parseEpisodeNumber(filename string) int {
-	for _, pattern := range []*regexp.Regexp{reEpisodeSE, reEpisodeX, reEpisodeEP} {
-		matches := pattern.FindStringSubmatch(filename)
-		if len(matches) >= 2 {
-			num, err := strconv.Atoi(matches[1])
-			if err == nil && num > 0 {
-				return num
-			}
-		}
-	}
-
-	return 0
-}
-
 // processSeriesInfo adds or updates series in database using TVDB for identification
 func (s *Scanner) processSeriesInfo(info SeriesInfo) error {
 	var seriesID int64
@@ -586,42 +558,7 @@ func (s *Scanner) scanMediaFiles(seriesID int64, seasonNumber int, folderPath st
 	var filesChanged int
 	var filesNew int
 
-	// Get season from new schema
-	season, err := s.db.GetSeasonBySeriesAndNumber(seriesID, seasonNumber)
-	if err != nil {
-		slog.Error("Failed to get season", "series_id", seriesID, "season", seasonNumber, "error", err)
-		return err
-	}
-
-	var seasonID int64
-	if season != nil {
-		seasonID = season.ID
-	} else {
-		// Create season if it doesn't exist — use direct SQL to set is_owned,
-		// since UpsertSeason intentionally excludes is_owned (scanner manages it).
-		_, execErr := s.db.Exec(`
-			INSERT INTO seasons (series_id, season_number, folder_path, is_watched, is_owned, created_at, updated_at)
-			VALUES (?, ?, ?, 1, 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
-			ON CONFLICT(series_id, season_number) DO UPDATE SET
-				folder_path = excluded.folder_path,
-				is_watched = 1,
-				is_owned = 1,
-				updated_at = CURRENT_TIMESTAMP
-		`, seriesID, seasonNumber, folderPath)
-		if execErr != nil {
-			slog.Error("Failed to create season", "error", execErr)
-			return execErr
-		}
-		// Query for the actual ID — LastInsertId() is unreliable after ON CONFLICT DO UPDATE in SQLite
-		err = s.db.QueryRow(`SELECT id FROM seasons WHERE series_id = ? AND season_number = ?`,
-			seriesID, seasonNumber).Scan(&seasonID)
-		if err != nil {
-			slog.Error("Failed to get season ID", "error", err)
-			return err
-		}
-	}
-
-	err = filepath.Walk(folderPath, func(path string, info os.FileInfo, err error) error {
+	err := filepath.Walk(folderPath, func(path string, info os.FileInfo, err error) error {
 		if err != nil {
 			return err
 		}
@@ -638,13 +575,6 @@ func (s *Scanner) scanMediaFiles(seriesID int64, seasonNumber int, folderPath st
 		}
 
 		filesScanned++
-
-		// Parse episode number from filename
-		episodeNum := parseEpisodeNumber(filepath.Base(path))
-		if episodeNum == 0 {
-			slog.Warn("Could not parse episode number from filename", "path", path)
-			// Still process the file, just don't link to episode
-		}
 
 		// Compute file hash
 		fileHash, err := hash.ComputeFileHash(path)
@@ -679,7 +609,7 @@ func (s *Scanner) scanMediaFiles(seriesID int64, seasonNumber int, folderPath st
 			filesNew++
 		}
 
-		// Upsert media file record (old schema - for backward compatibility)
+		// Upsert media file record
 		mediaFile := &database.MediaFile{
 			SeriesID:     seriesID,
 			SeasonNumber: seasonNumber,
@@ -693,25 +623,6 @@ func (s *Scanner) scanMediaFiles(seriesID int64, seasonNumber int, folderPath st
 		if err := s.db.UpsertMediaFile(mediaFile); err != nil {
 			slog.Error("Failed to upsert media file", "path", path, "error", err)
 			return nil
-		}
-
-		// If we successfully parsed episode number, create/update episode record
-		if episodeNum > 0 && seasonID > 0 {
-			episode := &database.Episode{
-				SeasonID:      seasonID,
-				EpisodeNumber: episodeNum,
-				FilePath:      &path,
-				FileHash:      &fileHash.Hash,
-				FileSize:      &fileHash.Size,
-				IsWatched:     true,
-			}
-
-			_, err := s.db.UpsertEpisode(episode)
-			if err != nil {
-				slog.Error("Failed to upsert episode", "episode", episodeNum, "error", err)
-			} else {
-				slog.Debug("Linked file to episode", "file", filepath.Base(path), "episode", episodeNum)
-			}
 		}
 
 		return nil
@@ -787,13 +698,6 @@ func (s *Scanner) RescanSeason(seriesID int64, seasonNumber int) error {
 		}
 		if err := s.db.DeleteProcessedFilesBySeason(seriesID, seasonNumber); err != nil {
 			slog.Error("Failed to delete processed files on rescan", "error", err)
-		}
-		// Clear episode file fields (preserve metadata and voice_actor_id)
-		if _, err := s.db.Exec(`
-			UPDATE episodes SET file_path = NULL, file_hash = NULL, file_size = NULL, updated_at = CURRENT_TIMESTAMP
-			WHERE season_id = (SELECT id FROM seasons WHERE series_id = ? AND season_number = ?)
-		`, seriesID, seasonNumber); err != nil {
-			slog.Error("Failed to clear episode file fields on rescan", "error", err)
 		}
 	}
 

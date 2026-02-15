@@ -298,19 +298,17 @@ func seedSeriesWithMetadata(t *testing.T, db *database.DB) int64 {
 	t.Helper()
 	result, err := db.Exec(`
 		INSERT INTO series (
-			tvdb_id, title, original_title, slug, overview,
-			poster_url, backdrop_url, status, first_aired, last_aired,
+			tvdb_id, title, original_title, overview,
+			poster_url, backdrop_url, status,
 			year, runtime, rating, content_rating,
-			original_country, original_language,
-			genres, networks, studios,
+			genres, networks,
 			total_seasons, created_at, updated_at
 		) VALUES (
-			81189, 'Во все тяжкие', 'Breaking Bad', 'breaking-bad', 'A chemistry teacher diagnosed with cancer teams up with a former student to manufacture meth.',
+			81189, 'Во все тяжкие', 'Breaking Bad', 'A chemistry teacher diagnosed with cancer teams up with a former student to manufacture meth.',
 			'https://artworks.thetvdb.com/poster.jpg', 'https://artworks.thetvdb.com/backdrop.jpg',
-			'Ended', '2008-01-20', '2013-09-29',
+			'Ended',
 			2008, 47, 9.5, 'TV-MA',
-			'usa', 'eng',
-			'["Drama","Thriller"]', '["AMC"]', '["Sony Pictures"]',
+			'["Drama","Thriller"]', '["AMC"]',
 			5, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
 		)
 	`)
@@ -346,18 +344,6 @@ func seedCharacters(t *testing.T, db *database.DB, seriesID int64) {
 	}
 }
 
-// seedArtwork inserts an artwork row for a series.
-func seedArtwork(t *testing.T, db *database.DB, seriesID int64, artType, url string, score float64) {
-	t.Helper()
-	_, err := db.Exec(`
-		INSERT INTO artworks (series_id, type, url, score, is_primary)
-		VALUES (?, ?, ?, ?, 0)
-	`, seriesID, artType, url, score)
-	if err != nil {
-		t.Fatalf("failed to seed artwork: %v", err)
-	}
-}
-
 func TestHandleGetSeries_ReturnsFullMetadata(t *testing.T) {
 	srv, db := setupTestServer(t)
 
@@ -379,29 +365,16 @@ func TestHandleGetSeries_ReturnsFullMetadata(t *testing.T) {
 
 	// Check all metadata fields
 	checks := map[string]interface{}{
-		"title":             "Во все тяжкие",
-		"original_title":    "Breaking Bad",
-		"slug":              "breaking-bad",
-		"status":            "Ended",
-		"content_rating":    "TV-MA",
-		"original_country":  "usa",
-		"original_language": "eng",
+		"title":          "Во все тяжкие",
+		"original_title": "Breaking Bad",
+		"status":         "Ended",
+		"content_rating": "TV-MA",
 	}
 
 	for key, expected := range checks {
 		if result[key] != expected {
 			t.Errorf("%s: expected %v, got %v", key, expected, result[key])
 		}
-	}
-
-	// Date fields: SQLite may return with time suffix
-	firstAired, _ := result["first_aired"].(string)
-	if firstAired == "" || firstAired[:10] != "2008-01-20" {
-		t.Errorf("first_aired: expected starts with 2008-01-20, got %v", result["first_aired"])
-	}
-	lastAired, _ := result["last_aired"].(string)
-	if lastAired == "" || lastAired[:10] != "2013-09-29" {
-		t.Errorf("last_aired: expected starts with 2013-09-29, got %v", result["last_aired"])
 	}
 
 	// Numeric checks (JSON numbers are float64)
@@ -443,11 +416,6 @@ func TestHandleGetSeries_ReturnsFullMetadata(t *testing.T) {
 	networks, ok := result["networks"].([]interface{})
 	if !ok || len(networks) != 1 || networks[0] != "AMC" {
 		t.Errorf("networks: expected [AMC], got %v", result["networks"])
-	}
-
-	studios, ok := result["studios"].([]interface{})
-	if !ok || len(studios) != 1 || studios[0] != "Sony Pictures" {
-		t.Errorf("studios: expected [Sony Pictures], got %v", result["studios"])
 	}
 
 	// Characters should be empty array (none seeded)
@@ -503,48 +471,6 @@ func TestHandleGetSeries_IncludesCharacters(t *testing.T) {
 	c2 := chars[1].(map[string]interface{})
 	if c2["character_name"] != "Jesse Pinkman" {
 		t.Errorf("second character: expected Jesse Pinkman, got %v", c2["character_name"])
-	}
-}
-
-func TestHandleGetSeries_ArtworkFallback(t *testing.T) {
-	srv, db := setupTestServer(t)
-
-	// Create series WITHOUT poster_url and backdrop_url
-	result, err := db.Exec(`
-		INSERT INTO series (title, status, total_seasons, created_at, updated_at)
-		VALUES ('No Poster Show', 'Continuing', 2, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
-	`)
-	if err != nil {
-		t.Fatalf("failed to seed series: %v", err)
-	}
-	seriesID, err := result.LastInsertId()
-	if err != nil {
-		t.Fatalf("failed to get last insert ID: %v", err)
-	}
-
-	// Seed artwork as fallback
-	seedArtwork(t, db, seriesID, "poster", "https://art/fallback-poster.jpg", 8.0)
-	seedArtwork(t, db, seriesID, "background", "https://art/fallback-backdrop.jpg", 7.5)
-
-	req := httptest.NewRequest(http.MethodGet, fmt.Sprintf("/api/series/%d", seriesID), http.NoBody)
-	w := httptest.NewRecorder()
-	srv.router.ServeHTTP(w, req)
-
-	if w.Code != http.StatusOK {
-		t.Fatalf("expected status 200, got %d: %s", w.Code, w.Body.String())
-	}
-
-	var resp map[string]interface{}
-	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
-		t.Fatalf("failed to decode response: %v", err)
-	}
-
-	// Should fall back to artwork table
-	if resp["poster_url"] != "https://art/fallback-poster.jpg" {
-		t.Errorf("poster_url: expected artwork fallback, got %v", resp["poster_url"])
-	}
-	if resp["backdrop_url"] != "https://art/fallback-backdrop.jpg" {
-		t.Errorf("backdrop_url: expected artwork fallback, got %v", resp["backdrop_url"])
 	}
 }
 

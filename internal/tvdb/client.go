@@ -152,14 +152,11 @@ func (c *Client) makeRequest(method, path string, body interface{}) (*http.Respo
 
 // SeriesSearchResult represents a search result from TVDB
 type SeriesSearchResult struct {
-	Name        string `json:"name"`
-	Image       string `json:"image"`
-	Year        string `json:"year"`
-	Status      string `json:"status"`
-	Overview    string `json:"overview"`
-	PrimaryType string `json:"primary_type"`
-	FirstAired  string `json:"first_aired"`
-	TVDBId      int    `json:"tvdb_id"`
+	Name   string `json:"name"`
+	Image  string `json:"image"`
+	Year   string `json:"year"`
+	Status string `json:"status"`
+	TVDBId int    `json:"tvdb_id"`
 }
 
 // SearchSeries searches for series by name
@@ -178,19 +175,11 @@ func (c *Client) SearchSeries(query string) ([]SeriesSearchResult, error) {
 	var result struct {
 		Status string `json:"status"`
 		Data   []struct {
-			FirstAired  string   `json:"first_air_time"`
-			ObjectID    string   `json:"objectID"`
-			Country     string   `json:"country"`
-			ID          string   `json:"id"`
-			ImageURL    string   `json:"image_url"`
-			Name        string   `json:"name"`
-			Overview    string   `json:"overview"`
-			PrimaryType string   `json:"primary_type"`
-			Status      string   `json:"status"`
-			Type        string   `json:"type"`
-			TvdbID      string   `json:"tvdb_id"`
-			Year        string   `json:"year"`
-			Aliases     []string `json:"aliases"`
+			ImageURL string `json:"image_url"`
+			Name     string `json:"name"`
+			Status   string `json:"status"`
+			TvdbID   string `json:"tvdb_id"`
+			Year     string `json:"year"`
 		} `json:"data"`
 	}
 
@@ -205,14 +194,11 @@ func (c *Client) SearchSeries(query string) ([]SeriesSearchResult, error) {
 		fmt.Sscanf(result.Data[i].TvdbID, "%d", &tvdbID) //nolint:errcheck
 
 		results = append(results, SeriesSearchResult{
-			TVDBId:      tvdbID,
-			Name:        result.Data[i].Name,
-			Image:       result.Data[i].ImageURL,
-			Year:        result.Data[i].Year,
-			Status:      result.Data[i].Status,
-			Overview:    result.Data[i].Overview,
-			PrimaryType: result.Data[i].PrimaryType,
-			FirstAired:  result.Data[i].FirstAired,
+			TVDBId: tvdbID,
+			Name:   result.Data[i].Name,
+			Image:  result.Data[i].ImageURL,
+			Year:   result.Data[i].Year,
+			Status: result.Data[i].Status,
 		})
 	}
 
@@ -234,28 +220,21 @@ type SeriesDetails struct {
 
 // SeriesExtended represents full information about a series including all metadata
 type SeriesExtended struct {
-	LastAired        string          `json:"last_aired"`
-	OriginalCountry  string          `json:"original_country"`
-	OriginalLanguage string          `json:"original_language"`
-	Overview         string          `json:"overview"`
-	FirstAired       string          `json:"first_aired"`
-	Status           string          `json:"status"`
-	Slug             string          `json:"slug"`
-	Name             string          `json:"name"`
-	OriginalName     string          `json:"original_name"`
-	Backdrop         string          `json:"backdrop"`
-	Image            string          `json:"image"`
-	Genres           []Genre         `json:"genres"`
-	Seasons          []SeasonInfo    `json:"seasons"`
-	Artworks         []Artwork       `json:"artworks"`
-	Characters       []Character     `json:"characters"`
-	ContentRatings   []ContentRating `json:"content_ratings"`
-	Studios          []Company       `json:"studios"`
-	Networks         []Company       `json:"networks"`
-	Score            float64         `json:"score"`
-	TVDBId           int             `json:"tvdb_id"`
-	Year             int             `json:"year"`
-	Runtime          int             `json:"runtime"`
+	Overview       string          `json:"overview"`
+	Status         string          `json:"status"`
+	Name           string          `json:"name"`
+	OriginalName   string          `json:"original_name"`
+	Backdrop       string          `json:"backdrop"`
+	Image          string          `json:"image"`
+	Genres         []Genre         `json:"genres"`
+	Seasons        []SeasonInfo    `json:"seasons"`
+	Characters     []Character     `json:"characters"`
+	ContentRatings []ContentRating `json:"content_ratings"`
+	Networks       []Company       `json:"networks"`
+	Score          float64         `json:"score"`
+	TVDBId         int             `json:"tvdb_id"`
+	Year           int             `json:"year"`
+	Runtime        int             `json:"runtime"`
 }
 
 // ContentRating represents content rating for a series
@@ -267,15 +246,11 @@ type ContentRating struct {
 // Genre represents a genre
 type Genre struct {
 	Name string `json:"name"`
-	Slug string `json:"slug"`
-	ID   int    `json:"id"`
 }
 
-// Company represents a network or studio
+// Company represents a network
 type Company struct {
 	Name string `json:"name"`
-	Slug string `json:"slug"`
-	ID   int    `json:"id"`
 }
 
 // Character represents a character and actor
@@ -285,19 +260,6 @@ type Character struct {
 	Image      string `json:"image"`
 	ID         int    `json:"id"`
 	Sort       int    `json:"sort"`
-}
-
-// Artwork represents artwork (poster, background, banner, etc.)
-type Artwork struct {
-	TypeName  string  `json:"type_name"`
-	URL       string  `json:"url"`
-	Thumbnail string  `json:"thumbnail"`
-	Language  string  `json:"language"`
-	Score     float64 `json:"score"`
-	ID        int     `json:"id"`
-	Type      int     `json:"type"`
-	Width     int     `json:"width"`
-	Height    int     `json:"height"`
 }
 
 // SeasonInfo represents information about a season
@@ -390,35 +352,6 @@ func AiredSeasonNumbers(seasons []SeasonInfo) []int {
 	return nums
 }
 
-// SeasonExtended represents detailed information about a season with episodes
-type SeasonExtended struct {
-	Name       string    `json:"name"`
-	Overview   string    `json:"overview"`
-	Image      string    `json:"image"`
-	FirstAired string    `json:"first_aired"`
-	Episodes   []Episode `json:"episodes"`
-	ID         int       `json:"id"`
-	Number     int       `json:"number"`
-}
-
-// Episode represents an episode
-type Episode struct {
-	Name     string  `json:"name"`
-	Overview string  `json:"overview"`
-	Image    string  `json:"image"`
-	AirDate  string  `json:"air_date"`
-	Rating   float64 `json:"rating"`
-	ID       int     `json:"id"`
-	Number   int     `json:"number"`
-	Runtime  int     `json:"runtime"`
-}
-
-// ArtworkType represents an artwork type definition
-type ArtworkType struct {
-	Name string `json:"name"`
-	ID   int    `json:"id"`
-}
-
 // GetSeriesDetails fetches detailed information about a series
 func (c *Client) GetSeriesDetails(tvdbID int) (*SeriesDetails, error) {
 	resp, err := c.makeRequest("GET", fmt.Sprintf("/series/%d/extended", tvdbID), nil)
@@ -470,7 +403,7 @@ func (c *Client) GetSeriesDetails(tvdbID int) (*SeriesDetails, error) {
 
 // GetSeriesExtendedFull fetches all metadata for a series including characters, artworks, etc.
 func (c *Client) GetSeriesExtendedFull(tvdbID int) (*SeriesExtended, error) {
-	resp, err := c.makeRequest("GET", fmt.Sprintf("/series/%d/extended?meta=translations", tvdbID), nil)
+	resp, err := c.makeRequest("GET", fmt.Sprintf("/series/%d/extended", tvdbID), nil)
 	if err != nil {
 		return nil, err
 	}
@@ -484,24 +417,18 @@ func (c *Client) GetSeriesExtendedFull(tvdbID int) (*SeriesExtended, error) {
 	var result struct {
 		Status string `json:"status"`
 		Data   struct {
-			OriginalCountry  string `json:"originalCountry"`
-			FirstAired       string `json:"firstAired"`
-			OriginalLanguage string `json:"originalLanguage"`
-			Year             string `json:"year"`
-			OriginalName     string `json:"originalName"`
-			Slug             string `json:"slug"`
-			Status           struct {
+			FirstAired   string `json:"firstAired"`
+			Year         string `json:"year"`
+			OriginalName string `json:"originalName"`
+			Status       struct {
 				Name string `json:"name"`
 			} `json:"status"`
-			Name      string      `json:"name"`
-			Image     string      `json:"image"`
-			Overview  string      `json:"overview"`
-			LastAired string      `json:"lastAired"`
-			Seasons   []rawSeason `json:"seasons"`
-			Genres    []struct {
+			Name     string      `json:"name"`
+			Image    string      `json:"image"`
+			Overview string      `json:"overview"`
+			Seasons  []rawSeason `json:"seasons"`
+			Genres   []struct {
 				Name string `json:"name"`
-				Slug string `json:"slug"`
-				ID   int    `json:"id"`
 			} `json:"genres"`
 			Artworks []struct {
 				TypeName  string  `json:"typeName"`
@@ -530,8 +457,6 @@ func (c *Client) GetSeriesExtendedFull(tvdbID int) (*SeriesExtended, error) {
 					CompanyTypeName string `json:"companyTypeName"`
 				} `json:"companyType"`
 				Name string `json:"name"`
-				Slug string `json:"slug"`
-				ID   int    `json:"id"`
 			} `json:"companies"`
 			Score          float64 `json:"score"`
 			ID             int     `json:"id"`
@@ -550,27 +475,20 @@ func (c *Client) GetSeriesExtendedFull(tvdbID int) (*SeriesExtended, error) {
 	}
 
 	extended := &SeriesExtended{
-		TVDBId:           result.Data.ID,
-		Name:             result.Data.Name,
-		OriginalName:     result.Data.OriginalName,
-		Slug:             result.Data.Slug,
-		Overview:         result.Data.Overview,
-		Image:            result.Data.Image,
-		Status:           result.Data.Status.Name,
-		FirstAired:       result.Data.FirstAired,
-		LastAired:        result.Data.LastAired,
-		Year:             year,
-		Runtime:          result.Data.AverageRuntime,
-		Score:            result.Data.Score,
-		OriginalCountry:  result.Data.OriginalCountry,
-		OriginalLanguage: result.Data.OriginalLanguage,
-		ContentRatings:   make([]ContentRating, 0),
-		Genres:           make([]Genre, 0),
-		Networks:         make([]Company, 0),
-		Studios:          make([]Company, 0),
-		Characters:       make([]Character, 0),
-		Artworks:         make([]Artwork, 0),
-		Seasons:          make([]SeasonInfo, 0),
+		TVDBId:         result.Data.ID,
+		Name:           result.Data.Name,
+		OriginalName:   result.Data.OriginalName,
+		Overview:       result.Data.Overview,
+		Image:          result.Data.Image,
+		Status:         result.Data.Status.Name,
+		Year:           year,
+		Runtime:        result.Data.AverageRuntime,
+		Score:          result.Data.Score,
+		ContentRatings: make([]ContentRating, 0),
+		Genres:         make([]Genre, 0),
+		Networks:       make([]Company, 0),
+		Characters:     make([]Character, 0),
+		Seasons:        make([]SeasonInfo, 0),
 	}
 
 	// Find backdrop from artworks
@@ -591,24 +509,16 @@ func (c *Client) GetSeriesExtendedFull(tvdbID int) (*SeriesExtended, error) {
 	// Parse genres
 	for _, g := range result.Data.Genres {
 		extended.Genres = append(extended.Genres, Genre{
-			ID:   g.ID,
 			Name: g.Name,
-			Slug: g.Slug,
 		})
 	}
 
-	// Parse companies (networks and studios)
+	// Parse companies (networks only)
 	for _, comp := range result.Data.Companies {
-		company := Company{
-			ID:   comp.ID,
-			Name: comp.Name,
-			Slug: comp.Slug,
-		}
-		switch comp.CompanyType.CompanyTypeName {
-		case "Network":
-			extended.Networks = append(extended.Networks, company)
-		case "Studio":
-			extended.Studios = append(extended.Studios, company)
+		if comp.CompanyType.CompanyTypeName == "Network" {
+			extended.Networks = append(extended.Networks, Company{
+				Name: comp.Name,
+			})
 		}
 	}
 
@@ -623,80 +533,10 @@ func (c *Client) GetSeriesExtendedFull(tvdbID int) (*SeriesExtended, error) {
 		})
 	}
 
-	// Parse artworks
-	for _, art := range result.Data.Artworks {
-		extended.Artworks = append(extended.Artworks, Artwork{
-			ID:        art.ID,
-			Type:      art.Type,
-			TypeName:  art.TypeName,
-			URL:       art.Image,
-			Thumbnail: art.Thumbnail,
-			Language:  art.Language,
-			Score:     art.Score,
-			Width:     art.Width,
-			Height:    art.Height,
-		})
-	}
-
 	// Parse seasons (filter aired only)
 	extended.Seasons = filterSeasons(result.Data.Seasons)
 
 	return extended, nil
-}
-
-// GetSeasonEpisodes fetches all episodes for a specific season
-func (c *Client) GetSeasonEpisodes(tvdbSeasonID int) ([]Episode, error) {
-	resp, err := c.makeRequest("GET", fmt.Sprintf("/seasons/%d/extended", tvdbSeasonID), nil)
-	if err != nil {
-		return nil, err
-	}
-	defer resp.Body.Close() //nolint:errcheck
-
-	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(resp.Body)
-		return nil, fmt.Errorf("get season episodes failed with status %d: %s", resp.StatusCode, string(body))
-	}
-
-	var result struct {
-		Status string `json:"status"`
-		Data   struct {
-			Episodes []struct {
-				Name           string  `json:"name"`
-				Overview       string  `json:"overview"`
-				Image          string  `json:"image"`
-				Aired          string  `json:"aired"`
-				Score          float64 `json:"score"`
-				ID             int     `json:"id"`
-				Number         int     `json:"number"`
-				Runtime        int     `json:"runtime"`
-				AverageRuntime int     `json:"averageRuntime"`
-			} `json:"episodes"`
-		} `json:"data"`
-	}
-
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
-		return nil, fmt.Errorf("failed to decode season response: %w", err)
-	}
-
-	episodes := make([]Episode, 0, len(result.Data.Episodes))
-	for _, ep := range result.Data.Episodes {
-		runtime := ep.Runtime
-		if runtime == 0 {
-			runtime = ep.AverageRuntime
-		}
-		episodes = append(episodes, Episode{
-			ID:       ep.ID,
-			Number:   ep.Number,
-			Name:     ep.Name,
-			Overview: ep.Overview,
-			Image:    ep.Image,
-			AirDate:  ep.Aired,
-			Runtime:  runtime,
-			Rating:   ep.Score,
-		})
-	}
-
-	return episodes, nil
 }
 
 // SeriesTranslation represents a translation for a series

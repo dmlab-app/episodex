@@ -126,15 +126,6 @@ func (db *DB) UpsertMediaFile(mf *MediaFile) error {
 	return nil
 }
 
-// DeleteMediaFile deletes a media file record
-func (db *DB) DeleteMediaFile(filePath string) error {
-	_, err := db.Exec(`DELETE FROM media_files WHERE file_path = ?`, filePath)
-	if err != nil {
-		return fmt.Errorf("failed to delete media file: %w", err)
-	}
-	return nil
-}
-
 // DeleteMediaFilesBySeason deletes all media files for a season
 func (db *DB) DeleteMediaFilesBySeason(seriesID int64, seasonNumber int) error {
 	result, err := db.Exec(`
@@ -229,45 +220,4 @@ func (db *DB) CheckFileChanged(filePath, currentHash string) (bool, error) {
 	}
 
 	return changed, nil
-}
-
-// GetStaleMediaFiles returns media files that haven't been checked in the specified duration
-func (db *DB) GetStaleMediaFiles(staleDuration time.Duration) ([]MediaFile, error) {
-	staleTime := time.Now().Add(-staleDuration)
-
-	rows, err := db.Query(`
-		SELECT id, series_id, season_number, file_path, file_name, file_size,
-		       file_hash, mod_time, first_seen, last_checked
-		FROM media_files
-		WHERE last_checked < ?
-		ORDER BY last_checked ASC
-	`, staleTime)
-
-	if err != nil {
-		return nil, fmt.Errorf("failed to query stale media files: %w", err)
-	}
-	defer rows.Close() //nolint:errcheck
-
-	var files []MediaFile
-	for rows.Next() {
-		var mf MediaFile
-		err := rows.Scan(
-			&mf.ID, &mf.SeriesID, &mf.SeasonNumber, &mf.FilePath, &mf.FileName,
-			&mf.FileSize, &mf.FileHash, &mf.ModTime, &mf.FirstSeen, &mf.LastChecked,
-		)
-		if err != nil {
-			return nil, fmt.Errorf("failed to scan media file: %w", err)
-		}
-		files = append(files, mf)
-	}
-
-	return files, nil
-}
-
-// CleanupOrphanedMediaFiles removes media file records for files that no longer exist
-func (db *DB) CleanupOrphanedMediaFiles() (int, error) {
-	// This should be called periodically by a background task
-	// For now, we'll just mark this as a placeholder
-	// Real implementation would check filesystem and delete records for missing files
-	return 0, nil
 }
