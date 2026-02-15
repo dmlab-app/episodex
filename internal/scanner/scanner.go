@@ -770,6 +770,31 @@ func (s *Scanner) RescanSeason(seriesID int64, seasonNumber int) error {
 		`, seriesID, seasonNumber); err != nil {
 			slog.Error("Failed to set is_owned on rescan", "error", err)
 		}
+	} else {
+		// Folder empty or gone — clear is_owned and associated data
+		// (mirrors cleanupRemovedSeasons logic)
+		slog.Info("Rescan found no video files, clearing is_owned",
+			"series_id", seriesID, "season", seasonNumber, "path", folderPath)
+
+		if _, err := s.db.Exec(`
+			UPDATE seasons SET is_owned = 0, folder_path = NULL, updated_at = CURRENT_TIMESTAMP
+			WHERE series_id = ? AND season_number = ?
+		`, seriesID, seasonNumber); err != nil {
+			slog.Error("Failed to clear is_owned on rescan", "error", err)
+		}
+		if err := s.db.DeleteMediaFilesBySeason(seriesID, seasonNumber); err != nil {
+			slog.Error("Failed to delete media files on rescan", "error", err)
+		}
+		if err := s.db.DeleteProcessedFilesBySeason(seriesID, seasonNumber); err != nil {
+			slog.Error("Failed to delete processed files on rescan", "error", err)
+		}
+		// Clear episode file fields (preserve metadata and voice_actor_id)
+		if _, err := s.db.Exec(`
+			UPDATE episodes SET file_path = NULL, file_hash = NULL, file_size = NULL, updated_at = CURRENT_TIMESTAMP
+			WHERE season_id = (SELECT id FROM seasons WHERE series_id = ? AND season_number = ?)
+		`, seriesID, seasonNumber); err != nil {
+			slog.Error("Failed to clear episode file fields on rescan", "error", err)
+		}
 	}
 
 	return nil
