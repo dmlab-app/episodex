@@ -1037,9 +1037,9 @@ func TestSyncEndpoint_Removed(t *testing.T) {
 	w := httptest.NewRecorder()
 	srv.router.ServeHTTP(w, req)
 
-	// The route no longer exists, so chi returns 405 Method Not Allowed
-	if w.Code != http.StatusMethodNotAllowed && w.Code != http.StatusNotFound {
-		t.Errorf("expected 404 or 405 for removed sync endpoint, got %d", w.Code)
+	// The route no longer exists; chi returns 404 for unmatched path segments
+	if w.Code != http.StatusNotFound {
+		t.Errorf("expected 404 for removed sync endpoint, got %d", w.Code)
 	}
 }
 
@@ -1052,8 +1052,8 @@ func TestRescanEndpoint_Removed(t *testing.T) {
 	w := httptest.NewRecorder()
 	srv.router.ServeHTTP(w, req)
 
-	// The route no longer exists, so chi returns 405 Method Not Allowed
-	if w.Code != http.StatusMethodNotAllowed && w.Code != http.StatusNotFound {
-		t.Errorf("expected 404 or 405 for removed rescan endpoint, got %d", w.Code)
+	// The route no longer exists; chi returns 404 for unmatched path segments
+	if w.Code != http.StatusNotFound {
+		t.Errorf("expected 404 for removed rescan endpoint, got %d", w.Code)
 	}
 }

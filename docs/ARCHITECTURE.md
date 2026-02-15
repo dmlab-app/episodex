@@ -373,7 +373,7 @@ LostFilm, Кубик в Кубе, Amedia, NewStudio, ColdFilm, Jaskier, AlexFilm
 - `media_files` хранит: file_path, file_hash, file_size, mod_time
 - `episodes` хранит: file_path, file_hash, file_size + номер серии
 - Оба записываются одновременно в `scanMediaFiles()`
-- `media_files` используется для: `CheckFileChanged`, `InvalidateCachedData`, `DeleteMediaFilesBySeason`, `GetStaleMediaFiles`
+- `media_files` используется для: `CheckFileChanged`, `InvalidateCachedData`, `DeleteMediaFilesBySeason`
 - `episodes` используется для: merge при match (перенос file_path)
 - **Вердикт: информация дублируется. Можно было бы оставить одну из двух таблиц.**
 
