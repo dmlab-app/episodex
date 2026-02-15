@@ -285,7 +285,6 @@ LostFilm, Кубик в Кубе, Amedia, NewStudio, ColdFilm, Jaskier, AlexFilm
 | `GET` | `/api/series/{id}` | Полная карточка сериала: метаданные + сезоны + актёры |
 | `DELETE` | `/api/series/{id}` | Удалить сериал (каскад) |
 | `POST` | `/api/series/{id}/match` | Привязать к TVDB ID. Если такой tvdb_id уже есть — мержит сезоны |
-| `POST` | `/api/series/{id}/sync` | Полная синхронизация с TVDB (метаданные, сезоны, актёры, арты) |
 
 ### Сезоны
 
