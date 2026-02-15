@@ -107,6 +107,18 @@ func CheckForTVDBUpdates(db *database.DB, tvdbClient *tvdb.Client, autoSync bool
 		// created immediately, not after a 7-day delay) or for stale series.
 		needsSync := autoSync && (seasonCountChanged || time.Since(s.updatedAt) > 7*24*time.Hour)
 		if needsSync {
+			// Verify series still exists (may have been deleted during this check run)
+			var exists int
+			if err := db.QueryRow(`SELECT COUNT(*) FROM series WHERE id = ?`, s.id).Scan(&exists); err != nil {
+				slog.Error("Failed to check series existence", "series_id", s.id, "error", err)
+				result.Errors++
+				continue
+			}
+			if exists == 0 {
+				slog.Info("Series was deleted during TVDB check, skipping sync", "series_id", s.id, "title", s.title)
+				continue
+			}
+
 			if seasonCountChanged {
 				slog.Info("Syncing series metadata after season count change", "series", s.title)
 			} else {
@@ -271,15 +283,11 @@ func SyncSeriesMetadata(db *database.DB, tvdbClient *tvdb.Client, seriesID int64
 		seriesData.Rating = &extended.Score
 	}
 
-	upsertedID, err := db.UpsertSeries(seriesData)
-	if err != nil {
-		return fmt.Errorf("failed to update series: %w", err)
-	}
-
-	// Sync seasons with TVDB data
+	// Build child records
+	seasons := make([]database.Season, 0, len(extended.Seasons))
 	for _, seasonInfo := range extended.Seasons {
-		seasonData := &database.Season{
-			SeriesID:     upsertedID,
+		seasonData := database.Season{
+			SeriesID:     seriesID,
 			TVDBSeasonID: &seasonInfo.ID,
 			SeasonNumber: seasonInfo.Number,
 		}
@@ -289,55 +297,45 @@ func SyncSeriesMetadata(db *database.DB, tvdbClient *tvdb.Client, seriesID int64
 		if seasonInfo.Image != "" {
 			seasonData.PosterURL = &seasonInfo.Image
 		}
-
-		_, err := db.UpsertSeason(seasonData)
-		if err != nil {
-			slog.Error("Failed to upsert season", "season", seasonInfo.Number, "error", err)
-		}
+		seasons = append(seasons, seasonData)
 	}
 
-	// Sync characters
-	if len(extended.Characters) > 0 {
-		characters := make([]database.Character, 0, len(extended.Characters))
-		for _, char := range extended.Characters {
-			characters = append(characters, database.Character{
-				SeriesID:        upsertedID,
-				TVDBCharacterID: &char.ID,
-				CharacterName:   &char.Name,
-				ActorName:       &char.PersonName,
-				ImageURL:        &char.Image,
-				SortOrder:       &char.Sort,
-			})
-		}
-
-		if err := db.UpsertCharacters(upsertedID, characters); err != nil {
-			slog.Error("Failed to sync characters", "error", err)
-		}
+	characters := make([]database.Character, 0, len(extended.Characters))
+	for _, char := range extended.Characters {
+		characters = append(characters, database.Character{
+			SeriesID:        seriesID,
+			TVDBCharacterID: &char.ID,
+			CharacterName:   &char.Name,
+			ActorName:       &char.PersonName,
+			ImageURL:        &char.Image,
+			SortOrder:       &char.Sort,
+		})
 	}
 
-	// Sync artworks
-	if len(extended.Artworks) > 0 {
-		artworks := make([]database.Artwork, 0, len(extended.Artworks))
-		for _, art := range extended.Artworks {
-			id := upsertedID
-			artworks = append(artworks, database.Artwork{
-				SeriesID:      &id,
-				TVDBArtworkID: &art.ID,
-				Type:          &art.TypeName,
-				URL:           art.URL,
-				ThumbnailURL:  &art.Thumbnail,
-				Language:      &art.Language,
-				Score:         &art.Score,
-				Width:         &art.Width,
-				Height:        &art.Height,
-			})
-		}
-
-		if err := db.UpsertArtworks(artworks); err != nil {
-			slog.Error("Failed to sync artworks", "error", err)
-		}
+	artworks := make([]database.Artwork, 0, len(extended.Artworks))
+	for _, art := range extended.Artworks {
+		id := seriesID
+		artworks = append(artworks, database.Artwork{
+			SeriesID:      &id,
+			TVDBArtworkID: &art.ID,
+			Type:          &art.TypeName,
+			URL:           art.URL,
+			ThumbnailURL:  &art.Thumbnail,
+			Language:      &art.Language,
+			Score:         &art.Score,
+			Width:         &art.Width,
+			Height:        &art.Height,
+		})
 	}
 
-	slog.Info("Synced series from TVDB", "series_id", upsertedID, "tvdb_id", tvdbID, "title", title)
+	// Update series row and write all child records (seasons, characters,
+	// artworks) in a single transaction with a tvdb_id guard. This ensures
+	// atomicity: if the series was rematched during the long TVDB fetch,
+	// neither parent nor children are written with stale data.
+	if err := db.SyncSeriesAndChildren(seriesID, tvdbID, seriesData, seasons, characters, artworks); err != nil {
+		return fmt.Errorf("failed to sync series: %w", err)
+	}
+
+	slog.Info("Synced series from TVDB", "series_id", seriesID, "tvdb_id", tvdbID, "title", title)
 	return nil
 }

@@ -401,6 +401,7 @@ func (db *DB) preMigrations() {
 		definition string
 	}{
 		{"is_owned", "ALTER TABLE seasons ADD COLUMN is_owned BOOLEAN DEFAULT 0"},
+		{"is_watched", "ALTER TABLE seasons ADD COLUMN is_watched BOOLEAN DEFAULT 0"},
 	}
 
 	for _, col := range seasonColumns {
@@ -422,6 +423,41 @@ func (db *DB) preMigrations() {
 			}
 		}
 	}
+
+	// Add new columns to episodes table if they don't exist
+	var episodesExists int
+	err = db.QueryRow(`
+		SELECT COUNT(*) FROM sqlite_master
+		WHERE type='table' AND name='episodes'
+	`).Scan(&episodesExists)
+	if err != nil || episodesExists == 0 {
+		return
+	}
+
+	// episodes.is_owned was renamed to is_watched — add new column and migrate data
+	var hasEpIsWatched int
+	err = db.QueryRow(`
+		SELECT COUNT(*) FROM pragma_table_info('episodes') WHERE name = 'is_watched'
+	`).Scan(&hasEpIsWatched)
+	if err == nil && hasEpIsWatched == 0 {
+		slog.Info("Pre-migration: Adding is_watched column to episodes table")
+		if _, err := db.Exec(`ALTER TABLE episodes ADD COLUMN is_watched BOOLEAN DEFAULT 0`); err != nil {
+			slog.Warn("Failed to add is_watched column to episodes", "error", err)
+		} else {
+			// Copy data from old is_owned column if it exists
+			var hasIsOwned int
+			_ = db.QueryRow(`
+				SELECT COUNT(*) FROM pragma_table_info('episodes') WHERE name = 'is_owned'
+			`).Scan(&hasIsOwned)
+			if hasIsOwned > 0 {
+				slog.Info("Pre-migration: Migrating episodes.is_owned to is_watched")
+				if _, err := db.Exec(`UPDATE episodes SET is_watched = is_owned`); err != nil {
+					slog.Warn("Failed to migrate episodes is_owned to is_watched", "error", err)
+				}
+			}
+		}
+	}
+
 }
 
 // runMigrations applies database schema migrations
@@ -553,6 +589,60 @@ func (db *DB) migrateToSchemaV2() error {
 		migrated, _ := result.RowsAffected() // SQLite always supports RowsAffected
 		if migrated > 0 {
 			slog.Info("Migration completed: migrated watched_seasons to seasons", "migrated", migrated)
+		}
+
+		// Backfill is_watched for season rows that already existed (e.g. created by TVDB sync)
+		// but have a matching watched_seasons entry. The INSERT above only creates new rows;
+		// this UPDATE ensures existing rows also get is_watched=1 and any missing fields.
+		var updateQuery string
+		if hasVoiceActorID > 0 {
+			updateQuery = `
+				UPDATE seasons SET
+					is_watched = 1,
+					folder_path = COALESCE(folder_path, (
+						SELECT ws.folder_path FROM watched_seasons ws
+						WHERE ws.series_id = seasons.series_id AND ws.season_number = seasons.season_number
+					)),
+					voice_actor_id = COALESCE(voice_actor_id, (
+						SELECT ws.voice_actor_id FROM watched_seasons ws
+						WHERE ws.series_id = seasons.series_id AND ws.season_number = seasons.season_number
+					)),
+					discovered_at = COALESCE(discovered_at, (
+						SELECT ws.discovered_at FROM watched_seasons ws
+						WHERE ws.series_id = seasons.series_id AND ws.season_number = seasons.season_number
+					))
+				WHERE is_watched = 0 AND EXISTS (
+					SELECT 1 FROM watched_seasons ws
+					WHERE ws.series_id = seasons.series_id AND ws.season_number = seasons.season_number
+				)
+			`
+		} else {
+			updateQuery = `
+				UPDATE seasons SET
+					is_watched = 1,
+					folder_path = COALESCE(folder_path, (
+						SELECT ws.folder_path FROM watched_seasons ws
+						WHERE ws.series_id = seasons.series_id AND ws.season_number = seasons.season_number
+					)),
+					discovered_at = COALESCE(discovered_at, (
+						SELECT ws.discovered_at FROM watched_seasons ws
+						WHERE ws.series_id = seasons.series_id AND ws.season_number = seasons.season_number
+					))
+				WHERE is_watched = 0 AND EXISTS (
+					SELECT 1 FROM watched_seasons ws
+					WHERE ws.series_id = seasons.series_id AND ws.season_number = seasons.season_number
+				)
+			`
+		}
+
+		updateResult, err := db.Exec(updateQuery)
+		if err != nil {
+			slog.Warn("Failed to backfill is_watched on existing season rows", "error", err)
+		} else {
+			backfilled, _ := updateResult.RowsAffected()
+			if backfilled > 0 {
+				slog.Info("Migration completed: backfilled is_watched on existing seasons", "backfilled", backfilled)
+			}
 		}
 	}
 

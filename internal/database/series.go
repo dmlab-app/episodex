@@ -313,6 +313,204 @@ func (db *DB) GetSeasonBySeriesAndNumber(seriesID int64, seasonNumber int) (*Sea
 	return &season, nil
 }
 
+// SyncSeriesAndChildren updates the series row and writes all child records
+// (seasons, characters, artworks) within a single transaction. The tvdb_id
+// guard prevents stale metadata from being written if the series was rematched
+// to a different TVDB ID during a long sync operation. This ensures parent and
+// child updates are atomic — a concurrent rematch cannot leave the parent row
+// updated with old-TVDB data while children are correctly rejected.
+func (db *DB) SyncSeriesAndChildren(seriesID int64, expectedTVDBID int, series *Series, seasons []Season, characters []Character, artworks []Artwork) error {
+	tx, err := db.Begin()
+	if err != nil {
+		return fmt.Errorf("failed to begin transaction: %w", err)
+	}
+	defer tx.Rollback() //nolint:errcheck
+
+	// Update parent series row with tvdb_id guard (concurrent rematch protection)
+	result, err := tx.Exec(`
+		UPDATE series SET
+			title = COALESCE(NULLIF(?, ''), title),
+			original_title = COALESCE(?, original_title),
+			slug = COALESCE(?, slug),
+			overview = COALESCE(?, overview),
+			poster_url = COALESCE(?, poster_url),
+			backdrop_url = COALESCE(?, backdrop_url),
+			status = COALESCE(?, status),
+			first_aired = COALESCE(?, first_aired),
+			last_aired = COALESCE(?, last_aired),
+			year = COALESCE(?, year),
+			runtime = COALESCE(?, runtime),
+			rating = COALESCE(?, rating),
+			content_rating = COALESCE(?, content_rating),
+			original_country = COALESCE(?, original_country),
+			original_language = COALESCE(?, original_language),
+			genres = COALESCE(?, genres),
+			networks = COALESCE(?, networks),
+			studios = COALESCE(?, studios),
+			total_seasons = ?,
+			aired_seasons = ?,
+			updated_at = CURRENT_TIMESTAMP
+		WHERE id = ? AND tvdb_id = ?
+	`, series.Title, series.OriginalTitle, series.Slug, series.Overview,
+		series.PosterURL, series.BackdropURL, series.Status,
+		series.FirstAired, series.LastAired, series.Year, series.Runtime,
+		series.Rating, series.ContentRating, series.OriginalCountry,
+		series.OriginalLanguage, series.Genres, series.Networks, series.Studios,
+		series.TotalSeasons, series.AiredSeasons, seriesID, expectedTVDBID)
+	if err != nil {
+		return fmt.Errorf("failed to update series: %w", err)
+	}
+
+	rowsAffected, err := result.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("failed to check rows affected: %w", err)
+	}
+	if rowsAffected == 0 {
+		return fmt.Errorf("series %d no longer exists or tvdb_id changed", seriesID)
+	}
+
+	// Upsert seasons
+	for _, season := range seasons {
+		if err := upsertSeasonTx(tx, &season); err != nil {
+			return fmt.Errorf("failed to upsert season %d: %w", season.SeasonNumber, err)
+		}
+	}
+
+	// Replace characters
+	if len(characters) > 0 {
+		if err := upsertCharactersTx(tx, seriesID, characters); err != nil {
+			return err
+		}
+	}
+
+	// Replace artworks
+	if len(artworks) > 0 {
+		if err := upsertArtworksTx(tx, artworks); err != nil {
+			return err
+		}
+	}
+
+	return tx.Commit()
+}
+
+// upsertSeasonTx creates or updates a season within an existing transaction.
+func upsertSeasonTx(tx *sql.Tx, season *Season) error {
+	var existingID int64
+	err := tx.QueryRow(`
+		SELECT id FROM seasons
+		WHERE series_id = ? AND season_number = ?
+	`, season.SeriesID, season.SeasonNumber).Scan(&existingID)
+
+	if err != nil && err != sql.ErrNoRows {
+		return fmt.Errorf("failed to check existing season: %w", err)
+	}
+
+	if err == nil {
+		_, err = tx.Exec(`
+			UPDATE seasons SET
+				tvdb_season_id = COALESCE(?, tvdb_season_id),
+				name = COALESCE(?, name),
+				overview = COALESCE(?, overview),
+				poster_url = COALESCE(?, poster_url),
+				first_aired = COALESCE(?, first_aired),
+				episode_count = COALESCE(?, episode_count),
+				folder_path = COALESCE(?, folder_path),
+				voice_actor_id = COALESCE(?, voice_actor_id),
+				is_watched = MAX(is_watched, ?),
+				discovered_at = COALESCE(?, discovered_at),
+				updated_at = CURRENT_TIMESTAMP
+			WHERE id = ?
+		`, season.TVDBSeasonID, season.Name, season.Overview, season.PosterURL,
+			season.FirstAired, season.EpisodeCount, season.FolderPath,
+			season.VoiceActorID, season.IsWatched, season.DiscoveredAt, existingID)
+		if err != nil {
+			return fmt.Errorf("failed to update season: %w", err)
+		}
+		return nil
+	}
+
+	_, err = tx.Exec(`
+		INSERT INTO seasons (
+			series_id, tvdb_season_id, season_number, name, overview,
+			poster_url, first_aired, episode_count, folder_path,
+			voice_actor_id, is_watched, discovered_at,
+			created_at, updated_at
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+	`, season.SeriesID, season.TVDBSeasonID, season.SeasonNumber, season.Name, season.Overview,
+		season.PosterURL, season.FirstAired, season.EpisodeCount, season.FolderPath,
+		season.VoiceActorID, season.IsWatched, season.DiscoveredAt)
+	if err != nil {
+		return fmt.Errorf("failed to insert season: %w", err)
+	}
+	return nil
+}
+
+// upsertCharactersTx replaces characters for a series within an existing transaction.
+func upsertCharactersTx(tx *sql.Tx, seriesID int64, characters []Character) error {
+	_, err := tx.Exec(`DELETE FROM series_characters WHERE series_id = ?`, seriesID)
+	if err != nil {
+		return fmt.Errorf("failed to delete old characters: %w", err)
+	}
+
+	stmt, err := tx.Prepare(`
+		INSERT INTO series_characters (
+			series_id, tvdb_character_id, tvdb_person_id,
+			character_name, actor_name, image_url, sort_order
+		) VALUES (?, ?, ?, ?, ?, ?, ?)
+	`)
+	if err != nil {
+		return fmt.Errorf("failed to prepare character insert: %w", err)
+	}
+	defer stmt.Close() //nolint:errcheck // closing prepared statement
+
+	for _, char := range characters {
+		_, err := stmt.Exec(
+			seriesID, char.TVDBCharacterID, char.TVDBPersonID,
+			char.CharacterName, char.ActorName, char.ImageURL, char.SortOrder,
+		)
+		if err != nil {
+			return fmt.Errorf("failed to insert character %v: %w", char.CharacterName, err)
+		}
+	}
+	return nil
+}
+
+// upsertArtworksTx replaces artworks within an existing transaction.
+func upsertArtworksTx(tx *sql.Tx, artworks []Artwork) error {
+	seriesID := artworks[0].SeriesID
+	if _, err := tx.Exec(`DELETE FROM artworks WHERE series_id = ?`, seriesID); err != nil {
+		return fmt.Errorf("failed to delete existing artworks: %w", err)
+	}
+
+	stmt, err := tx.Prepare(`
+		INSERT INTO artworks (
+			series_id, season_id, tvdb_artwork_id, type,
+			url, thumbnail_url, language, score,
+			width, height, is_primary
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+	`)
+	if err != nil {
+		return fmt.Errorf("failed to prepare artwork insert: %w", err)
+	}
+	defer stmt.Close() //nolint:errcheck // closing prepared statement
+
+	for _, art := range artworks {
+		_, err := stmt.Exec(
+			art.SeriesID, art.SeasonID, art.TVDBArtworkID, art.Type,
+			art.URL, art.ThumbnailURL, art.Language, art.Score,
+			art.Width, art.Height, art.IsPrimary,
+		)
+		if err != nil {
+			tvdbID := "<nil>"
+			if art.TVDBArtworkID != nil {
+				tvdbID = fmt.Sprintf("%d", *art.TVDBArtworkID)
+			}
+			return fmt.Errorf("failed to insert artwork (tvdb_id=%s): %w", tvdbID, err)
+		}
+	}
+	return nil
+}
+
 // UpsertCharacters inserts or updates characters for a series
 func (db *DB) UpsertCharacters(seriesID int64, characters []Character) error {
 	tx, err := db.Begin()

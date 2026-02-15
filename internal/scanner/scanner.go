@@ -214,6 +214,11 @@ func (s *Scanner) cleanupRemovedSeasons() error {
 			slog.Error("Failed to delete media files", "season_id", sn.id, "error", err)
 		}
 
+		// Delete processed_files for this season (prevent stale "already processed" skips)
+		if err := s.db.DeleteProcessedFilesBySeason(sn.seriesID, sn.seasonNumber); err != nil {
+			slog.Error("Failed to delete processed files", "season_id", sn.id, "error", err)
+		}
+
 		// Clear episode file fields (preserve voice_actor_id, TVDB metadata, is_watched)
 		if _, err := s.db.Exec(`
 			UPDATE episodes SET file_path = NULL, file_hash = NULL, file_size = NULL, updated_at = CURRENT_TIMESTAMP

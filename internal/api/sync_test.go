@@ -204,6 +204,178 @@ func TestSyncSeriesMetadata_Success(t *testing.T) {
 	}
 }
 
+func TestSyncSeriesMetadata_TVDBIDChanged(t *testing.T) {
+	// Verify that SyncSeriesMetadata aborts when the series was rematched
+	// to a different TVDB ID (simulates concurrent rematch during sync).
+	tmpDir := t.TempDir()
+	dbPath := filepath.Join(tmpDir, "test.db")
+	db, err := database.New(dbPath)
+	if err != nil {
+		t.Fatalf("failed to create test database: %v", err)
+	}
+	t.Cleanup(func() {
+		db.Close()
+		os.Remove(dbPath)
+	})
+
+	// Seed a series with TVDB ID 100
+	oldTVDBID := 100
+	result, err := db.Exec(`
+		INSERT INTO series (tvdb_id, title, status, total_seasons, created_at, updated_at)
+		VALUES (?, 'Old Show', 'Continuing', 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+	`, oldTVDBID)
+	if err != nil {
+		t.Fatalf("failed to seed series: %v", err)
+	}
+	seriesID, err := result.LastInsertId()
+	if err != nil {
+		t.Fatalf("failed to get last insert ID: %v", err)
+	}
+
+	// Simulate a rematch: change tvdb_id to 200 (as handleMatchSeries would)
+	newTVDBID := 200
+	_, err = db.Exec(`UPDATE series SET tvdb_id = ? WHERE id = ?`, newTVDBID, seriesID)
+	if err != nil {
+		t.Fatalf("failed to update tvdb_id: %v", err)
+	}
+
+	// Create mock TVDB server with data for OLD tvdb_id
+	extendedResp := map[string]interface{}{
+		"status": "success",
+		"data": map[string]interface{}{
+			"id":           oldTVDBID,
+			"name":         "Old Show Data",
+			"originalName": "Old Show",
+			"slug":         "old-show",
+			"overview":     "This is stale data from old TVDB match",
+			"image":        "https://tvdb.com/old.jpg",
+			"status":       map[string]interface{}{"name": "Ended"},
+			"seasons": []map[string]interface{}{
+				{"id": 501, "number": 1, "type": map[string]interface{}{"name": "Official", "type": "official"}, "name": "Stale Season 1"},
+			},
+			"genres":         []interface{}{},
+			"artworks":       []interface{}{},
+			"characters":     []interface{}{},
+			"contentRatings": []interface{}{},
+			"companies":      []interface{}{},
+		},
+	}
+
+	tvdbClient := newTestTVDBServer(t, tvdbMux(extendedResp, nil, nil))
+	if err := tvdbClient.Login(); err != nil {
+		t.Fatalf("failed to login to mock TVDB: %v", err)
+	}
+
+	// Call SyncSeriesMetadata with the OLD tvdb_id — should fail because
+	// SyncSeriesAndChildren's WHERE clause requires tvdb_id to match.
+	err = SyncSeriesMetadata(db, tvdbClient, seriesID, oldTVDBID)
+	if err == nil {
+		t.Fatal("expected SyncSeriesMetadata to fail when tvdb_id changed, but it succeeded")
+	}
+
+	// Verify no stale seasons were created
+	var seasonCount int
+	err = db.QueryRow(`SELECT COUNT(*) FROM seasons WHERE series_id = ?`, seriesID).Scan(&seasonCount)
+	if err != nil {
+		t.Fatalf("failed to count seasons: %v", err)
+	}
+	if seasonCount != 0 {
+		t.Errorf("expected 0 seasons (sync should have aborted), got %d", seasonCount)
+	}
+
+	// Verify the series title was NOT overwritten with stale data
+	var title string
+	err = db.QueryRow(`SELECT title FROM series WHERE id = ?`, seriesID).Scan(&title)
+	if err != nil {
+		t.Fatalf("failed to query series: %v", err)
+	}
+	if title != "Old Show" {
+		t.Errorf("expected title unchanged as 'Old Show', got %q", title)
+	}
+}
+
+func TestSyncSeriesAndChildren_TVDBIDMismatch(t *testing.T) {
+	// Verify that SyncSeriesAndChildren rejects both parent and child writes
+	// when tvdb_id doesn't match, ensuring atomicity of the entire sync.
+	tmpDir := t.TempDir()
+	dbPath := filepath.Join(tmpDir, "test.db")
+	db, err := database.New(dbPath)
+	if err != nil {
+		t.Fatalf("failed to create test database: %v", err)
+	}
+	t.Cleanup(func() {
+		db.Close()
+		os.Remove(dbPath)
+	})
+
+	// Seed a series with TVDB ID 200 (simulating it was already rematched)
+	result, err := db.Exec(`
+		INSERT INTO series (tvdb_id, title, status, total_seasons, created_at, updated_at)
+		VALUES (200, 'Rematched Show', 'Continuing', 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+	`)
+	if err != nil {
+		t.Fatalf("failed to seed series: %v", err)
+	}
+	seriesID, err := result.LastInsertId()
+	if err != nil {
+		t.Fatalf("failed to get last insert ID: %v", err)
+	}
+
+	// Try to write parent + child records with OLD tvdb_id (100) — should fail
+	staleOverview := "Stale overview from old TVDB match"
+	staleSeries := &database.Series{
+		Title:        "Stale Title",
+		Overview:     &staleOverview,
+		TotalSeasons: 5,
+		AiredSeasons: 5,
+	}
+	staleSeasons := []database.Season{
+		{SeriesID: seriesID, SeasonNumber: 1, Name: strPtr("Stale Season")},
+	}
+	charName := "Stale Character"
+	staleCharacters := []database.Character{
+		{SeriesID: seriesID, CharacterName: &charName},
+	}
+
+	err = db.SyncSeriesAndChildren(seriesID, 100, staleSeries, staleSeasons, staleCharacters, nil)
+	if err == nil {
+		t.Fatal("expected SyncSeriesAndChildren to fail when tvdb_id mismatches, but it succeeded")
+	}
+
+	// Verify parent was NOT updated with stale data (transaction rolled back)
+	var title string
+	var totalSeasons int
+	if err := db.QueryRow(`SELECT title, total_seasons FROM series WHERE id = ?`, seriesID).Scan(&title, &totalSeasons); err != nil {
+		t.Fatalf("failed to query series: %v", err)
+	}
+	if title != "Rematched Show" {
+		t.Errorf("expected title unchanged as 'Rematched Show', got %q", title)
+	}
+	if totalSeasons != 1 {
+		t.Errorf("expected total_seasons unchanged at 1, got %d", totalSeasons)
+	}
+
+	// Verify no stale seasons were created (transaction should have rolled back)
+	var seasonCount int
+	if err := db.QueryRow(`SELECT COUNT(*) FROM seasons WHERE series_id = ?`, seriesID).Scan(&seasonCount); err != nil {
+		t.Fatalf("failed to count seasons: %v", err)
+	}
+	if seasonCount != 0 {
+		t.Errorf("expected 0 seasons after rolled-back sync, got %d", seasonCount)
+	}
+
+	// Verify no stale characters were created
+	var charCount int
+	if err := db.QueryRow(`SELECT COUNT(*) FROM series_characters WHERE series_id = ?`, seriesID).Scan(&charCount); err != nil {
+		t.Fatalf("failed to count characters: %v", err)
+	}
+	if charCount != 0 {
+		t.Errorf("expected 0 characters after rolled-back sync, got %d", charCount)
+	}
+}
+
+func strPtr(s string) *string { return &s }
+
 func TestSyncSeriesMetadata_TVDBError(t *testing.T) {
 	// Setup test database
 	tmpDir := t.TempDir()

@@ -151,6 +151,24 @@ func (db *DB) DeleteMediaFilesBySeason(seriesID int64, seasonNumber int) error {
 	return nil
 }
 
+// DeleteProcessedFilesBySeason deletes all processed file records for a season
+func (db *DB) DeleteProcessedFilesBySeason(seriesID int64, seasonNumber int) error {
+	result, err := db.Exec(`
+		DELETE FROM processed_files
+		WHERE series_id = ? AND season_number = ?
+	`, seriesID, seasonNumber)
+
+	if err != nil {
+		return fmt.Errorf("failed to delete processed files: %w", err)
+	}
+
+	affected, _ := result.RowsAffected()
+	if affected > 0 {
+		slog.Info("Deleted processed files", "series_id", seriesID, "season", seasonNumber, "count", affected)
+	}
+	return nil
+}
+
 // InvalidateCachedData invalidates all cached data related to changed media files
 // This includes audio track information and processed file records
 func (db *DB) InvalidateCachedData(filePath string) error {

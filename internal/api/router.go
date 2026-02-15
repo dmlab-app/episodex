@@ -1674,7 +1674,6 @@ func (s *Server) handleRescanSeason(w http.ResponseWriter, r *http.Request) {
 
 	slog.Info("Manual rescan triggered", "series_id", sid, "season", snum)
 
-	// Run rescan asynchronously
 	go func() {
 		defer func() {
 			if r := recover(); r != nil {
