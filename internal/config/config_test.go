@@ -1,14 +1,12 @@
 package config
 
 import (
-	"os"
 	"testing"
 )
 
 func TestLoad(t *testing.T) {
 	// Set required environment variables
-	os.Setenv("MEDIA_PATH", "/test/path")
-	defer os.Unsetenv("MEDIA_PATH")
+	t.Setenv("MEDIA_PATH", "/test/path")
 
 	cfg, err := Load()
 	if err != nil {

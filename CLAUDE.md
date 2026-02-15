@@ -107,4 +107,7 @@ TVDB_CHECK_HOUR=5
 - Database backup uses `VACUUM INTO` (atomic, includes WAL contents)
 - TVDB client is thread-safe: token refresh protected by `sync.Mutex`
 - `is_owned` is managed exclusively by the scanner via direct SQL — never set by `UpsertSeason`. Scanner sets `is_owned=1` when files are found, clears it (along with `media_files` and episode file fields, but not `voice_actor_id`) when the folder is gone or empty. `is_watched` is set once and never cleared.
+- Updates logic (`GET /api/updates`) uses `MAX(season_number)` of `is_watched=1` seasons (not `is_owned`) to determine new seasons. A series only appears in updates if it has at least one `is_watched=1` season.
+- `aired_seasons` on `series` table tracks the highest season number with aired episodes (from TVDB). Updates logic uses `aired_seasons` (not `total_seasons`) to avoid showing unaired/announced seasons as new.
+- `SyncSeriesMetadata` and `CheckForTVDBUpdates` in `internal/api/sync.go` are shared between the API and the scheduled `tvdb_check` task. `CheckForTVDBUpdates` uses `sync.Mutex` to prevent concurrent runs. Daily TVDB check auto-syncs full metadata for series not updated in 7+ days.
 - golangci-lint uses v2 config format (`version: "2"`) — requires golangci-lint v2.x

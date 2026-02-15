@@ -37,7 +37,10 @@ func seedTestSeries(t *testing.T, db *database.DB, title string) int64 {
 	if err != nil {
 		t.Fatalf("failed to seed series: %v", err)
 	}
-	id, _ := result.LastInsertId()
+	id, err := result.LastInsertId()
+	if err != nil {
+		t.Fatalf("failed to get last insert ID: %v", err)
+	}
 	return id
 }
 
@@ -51,7 +54,10 @@ func seedTestSeason(t *testing.T, db *database.DB, seriesID int64, seasonNum int
 	if err != nil {
 		t.Fatalf("failed to seed season: %v", err)
 	}
-	id, _ := result.LastInsertId()
+	id, err := result.LastInsertId()
+	if err != nil {
+		t.Fatalf("failed to get last insert ID: %v", err)
+	}
 	return id
 }
 

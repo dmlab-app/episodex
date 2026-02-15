@@ -70,6 +70,10 @@ var (
 	reEpisodeSE = regexp.MustCompile(`(?i)[Ss]\d{1,2}[Ee](\d{1,3})`)
 	reEpisodeX  = regexp.MustCompile(`(?i)\d{1,2}[xX](\d{1,3})`)
 	reEpisodeEP = regexp.MustCompile(`(?i)ep?(\d{1,3})`)
+
+	videoExts = map[string]bool{
+		".mkv": true, ".mp4": true, ".avi": true, ".m4v": true,
+	}
 )
 
 // Scanner scans media folders for TV series
@@ -392,10 +396,6 @@ func hasVideoFiles(path string) bool {
 		return false
 	}
 
-	videoExts := map[string]bool{
-		".mkv": true, ".mp4": true, ".avi": true, ".m4v": true,
-	}
-
 	for _, entry := range entries {
 		if entry.IsDir() {
 			continue
@@ -577,10 +577,6 @@ func (s *Scanner) processSeriesInfo(info SeriesInfo) error {
 
 // scanMediaFiles scans all video files in a season folder and computes/stores their hashes
 func (s *Scanner) scanMediaFiles(seriesID int64, seasonNumber int, folderPath string) error {
-	videoExts := map[string]bool{
-		".mkv": true, ".mp4": true, ".avi": true, ".m4v": true,
-	}
-
 	var filesScanned int
 	var filesChanged int
 	var filesNew int
@@ -598,7 +594,7 @@ func (s *Scanner) scanMediaFiles(seriesID int64, seasonNumber int, folderPath st
 	} else {
 		// Create season if it doesn't exist — use direct SQL to set is_owned,
 		// since UpsertSeason intentionally excludes is_owned (scanner manages it).
-		result, execErr := s.db.Exec(`
+		_, execErr := s.db.Exec(`
 			INSERT INTO seasons (series_id, season_number, folder_path, is_watched, is_owned, created_at, updated_at)
 			VALUES (?, ?, ?, 1, 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
 			ON CONFLICT(series_id, season_number) DO UPDATE SET
@@ -611,7 +607,9 @@ func (s *Scanner) scanMediaFiles(seriesID int64, seasonNumber int, folderPath st
 			slog.Error("Failed to create season", "error", execErr)
 			return execErr
 		}
-		seasonID, err = result.LastInsertId()
+		// Query for the actual ID — LastInsertId() is unreliable after ON CONFLICT DO UPDATE in SQLite
+		err = s.db.QueryRow(`SELECT id FROM seasons WHERE series_id = ? AND season_number = ?`,
+			seriesID, seasonNumber).Scan(&seasonID)
 		if err != nil {
 			slog.Error("Failed to get season ID", "error", err)
 			return err

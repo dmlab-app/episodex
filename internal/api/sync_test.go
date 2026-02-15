@@ -87,7 +87,10 @@ func TestSyncSeriesMetadata_Success(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to seed series: %v", err)
 	}
-	seriesID, _ := result.LastInsertId()
+	seriesID, err := result.LastInsertId()
+	if err != nil {
+		t.Fatalf("failed to get last insert ID: %v", err)
+	}
 
 	// Create mock TVDB server
 	extendedResp := map[string]interface{}{
@@ -223,7 +226,10 @@ func TestSyncSeriesMetadata_TVDBError(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to seed series: %v", err)
 	}
-	seriesID, _ := result.LastInsertId()
+	seriesID, err := result.LastInsertId()
+	if err != nil {
+		t.Fatalf("failed to get last insert ID: %v", err)
+	}
 
 	// Create mock TVDB server that returns errors
 	mux := http.NewServeMux()
