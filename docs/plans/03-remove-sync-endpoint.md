@@ -13,10 +13,10 @@ Two endpoints exist in the router but are never called by the frontend or any ot
 ## Implementation Steps
 
 ### Task 1: Remove sync endpoint
-- [ ] Remove route `r.Post("/{id}/sync", s.handleSyncSeriesFromTVDB)` from `internal/api/router.go`
-- [ ] Delete file `internal/api/handlers_series.go` (contains only this handler)
-- [ ] Verify `SyncSeriesMetadata` in `internal/api/sync.go` is NOT removed (used by scheduler)
-- [ ] Run project tests and linter
+- [x] Remove route `r.Post("/{id}/sync", s.handleSyncSeriesFromTVDB)` from `internal/api/router.go`
+- [x] Delete file `internal/api/handlers_series.go` (contains only this handler)
+- [x] Verify `SyncSeriesMetadata` in `internal/api/sync.go` is NOT removed (used by scheduler)
+- [x] Run project tests and linter
 
 ### Task 2: Remove rescan endpoint
 - [ ] Remove route `r.Post("/{num}/rescan", s.handleRescanSeason)` from `internal/api/router.go`

@@ -87,12 +87,11 @@ func (s *Server) setupRoutes() {
 
 		// Series endpoints
 		r.Route("/series", func(r chi.Router) {
-			r.Get("/", s.handleListSeries)                   // GET /api/series
-			r.Post("/", s.handleCreateSeries)                // POST /api/series
-			r.Get("/{id}", s.handleGetSeries)                // GET /api/series/:id
-			r.Delete("/{id}", s.handleDeleteSeries)          // DELETE /api/series/:id
-			r.Post("/{id}/match", s.handleMatchSeries)       // POST /api/series/:id/match
-			r.Post("/{id}/sync", s.handleSyncSeriesFromTVDB) // POST /api/series/:id/sync
+			r.Get("/", s.handleListSeries)             // GET /api/series
+			r.Post("/", s.handleCreateSeries)          // POST /api/series
+			r.Get("/{id}", s.handleGetSeries)          // GET /api/series/:id
+			r.Delete("/{id}", s.handleDeleteSeries)    // DELETE /api/series/:id
+			r.Post("/{id}/match", s.handleMatchSeries) // POST /api/series/:id/match
 
 			// Seasons endpoints
 			r.Route("/{id}/seasons", func(r chi.Router) {

@@ -1028,3 +1028,17 @@ func TestHandleGetSeason_IsOwnedField(t *testing.T) {
 		t.Errorf("season 2: expected watched=true, got %v", s2["watched"])
 	}
 }
+
+func TestSyncEndpoint_Removed(t *testing.T) {
+	srv, db := setupTestServer(t)
+	seriesID := seedSeries(t, db, "Breaking Bad", 5)
+
+	req := httptest.NewRequest(http.MethodPost, fmt.Sprintf("/api/series/%d/sync", seriesID), http.NoBody)
+	w := httptest.NewRecorder()
+	srv.router.ServeHTTP(w, req)
+
+	// The route no longer exists, so chi returns 405 Method Not Allowed
+	if w.Code != http.StatusMethodNotAllowed && w.Code != http.StatusNotFound {
+		t.Errorf("expected 404 or 405 for removed sync endpoint, got %d", w.Code)
+	}
+}
