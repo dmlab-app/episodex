@@ -118,7 +118,6 @@ All settings are configured via environment variables (`.env` file):
 - `GET /api/series/:id` - series detail with metadata, characters, artwork
 - `DELETE /api/series/:id` - delete series
 - `POST /api/series/:id/match` - match series to TVDB
-- `POST /api/series/:id/sync` - sync metadata from TVDB
 - `GET /api/search` - search TVDB for series
 
 ### Seasons
@@ -126,7 +125,6 @@ All settings are configured via environment variables (`.env` file):
 - `GET /api/series/:id/seasons` - list seasons (owned vs locked)
 - `GET /api/series/:id/seasons/:num` - season detail
 - `PUT /api/series/:id/seasons/:num` - update season (voice actor)
-- `POST /api/series/:id/seasons/:num/rescan` - rescan season folder
 
 ### Audio
 
