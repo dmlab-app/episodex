@@ -17,10 +17,10 @@
 ## Implementation Steps
 
 ### Task 1: Добавить `GetUnsyncedSeries` в database
-- [ ] В `internal/database/series.go` добавить метод `GetUnsyncedSeries() ([]Series, error)` — возвращает серии с `tvdb_id IS NOT NULL AND overview IS NULL`
-- [ ] Возвращать только поля `ID`, `TVDBId`, `Title` (остальные не нужны для синхронизации)
-- [ ] Написать тесты: пустая БД, серия без tvdb_id (не возвращается), серия с tvdb_id и overview (не возвращается), серия с tvdb_id без overview (возвращается)
-- [ ] Запустить тесты — должны пройти перед задачей 2
+- [x] В `internal/database/series.go` добавить метод `GetUnsyncedSeries() ([]Series, error)` — возвращает серии с `tvdb_id IS NOT NULL AND overview IS NULL`
+- [x] Возвращать только поля `ID`, `TVDBId`, `Title` (остальные не нужны для синхронизации)
+- [x] Написать тесты: пустая БД, серия без tvdb_id (не возвращается), серия с tvdb_id и overview (не возвращается), серия с tvdb_id без overview (возвращается)
+- [x] Запустить тесты — должны пройти перед задачей 2
 
 ### Task 2: Добавить `SyncUnsyncedSeries` в sync.go
 - [ ] В `internal/api/sync.go` добавить функцию `SyncUnsyncedSeries(db *database.DB, tvdbClient *tvdb.Client)`

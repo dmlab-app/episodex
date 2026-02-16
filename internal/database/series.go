@@ -52,6 +52,33 @@ type Character struct {
 	SeriesID        int64
 }
 
+// GetUnsyncedSeries returns series that have a TVDB ID but no overview,
+// indicating they were added by the scanner but not yet fully synced.
+func (db *DB) GetUnsyncedSeries() ([]Series, error) {
+	rows, err := db.Query(`
+		SELECT id, tvdb_id, title
+		FROM series
+		WHERE tvdb_id IS NOT NULL AND overview IS NULL
+	`)
+	if err != nil {
+		return nil, fmt.Errorf("failed to query unsynced series: %w", err)
+	}
+	defer rows.Close() //nolint:errcheck
+
+	var series []Series
+	for rows.Next() {
+		var s Series
+		if err := rows.Scan(&s.ID, &s.TVDBId, &s.Title); err != nil {
+			return nil, fmt.Errorf("failed to scan unsynced series: %w", err)
+		}
+		series = append(series, s)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("failed to iterate unsynced series: %w", err)
+	}
+	return series, nil
+}
+
 // UpsertSeason creates or updates a season
 func (db *DB) UpsertSeason(season *Season) (int64, error) {
 	// Check if season exists
