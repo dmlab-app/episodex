@@ -61,11 +61,6 @@ func main() {
 		slog.Warn("TVDB API key not configured, TVDB features will be disabled")
 	}
 
-	// Sync unsynced series in background (series added by scanner but not yet fully synced)
-	if tvdbClient != nil {
-		go api.SyncUnsyncedSeries(db, tvdbClient)
-	}
-
 	// Initialize scanner with TVDB client
 	mediaScanner := scanner.New(db, tvdbClient, cfg.MediaPath)
 
@@ -81,12 +76,23 @@ func main() {
 		},
 	})
 
-	// Schedule hourly scan
+	// Schedule hourly scan + startup sync for unsynced series.
+	// SyncUnsyncedSeries runs after each scan so that series discovered by the
+	// scanner (which only stores basic metadata) get fully synced from TVDB.
+	// It runs regardless of scan outcome because it operates on series already
+	// in the database (scan failure should not block TVDB metadata sync).
 	sch.AddTask(scheduler.Task{
 		Name:     "media_scan",
 		Schedule: &scheduler.IntervalSchedule{Interval: time.Duration(cfg.ScanIntervalHours) * time.Hour},
 		Handler: func(_ context.Context) error {
-			return mediaScanner.Scan()
+			scanErr := mediaScanner.Scan()
+			if scanErr != nil {
+				slog.Error("Media scan failed", "error", scanErr)
+			}
+			if tvdbClient != nil {
+				api.SyncUnsyncedSeries(db, tvdbClient)
+			}
+			return scanErr
 		},
 	})
 
@@ -101,7 +107,10 @@ func main() {
 			}
 
 			slog.Info("Running scheduled TVDB check")
-			api.CheckForTVDBUpdates(db, tvdbClient, true)
+			result := api.CheckForTVDBUpdates(db, tvdbClient, true)
+			if result.Skipped {
+				slog.Info("TVDB check skipped: another sync is in progress")
+			}
 			return nil
 		},
 	})

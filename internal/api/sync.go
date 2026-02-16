@@ -20,6 +20,7 @@ type TVDBCheckResult struct {
 	Updated int
 	Synced  int
 	Errors  int
+	Skipped bool
 }
 
 // CheckForTVDBUpdates checks all series with TVDB IDs for season count changes,
@@ -28,7 +29,7 @@ type TVDBCheckResult struct {
 func CheckForTVDBUpdates(db *database.DB, tvdbClient *tvdb.Client, autoSync bool) TVDBCheckResult {
 	if !tvdbCheckMu.TryLock() {
 		slog.Info("TVDB check already in progress, skipping")
-		return TVDBCheckResult{}
+		return TVDBCheckResult{Skipped: true}
 	}
 	defer tvdbCheckMu.Unlock()
 
@@ -305,6 +306,12 @@ func SyncUnsyncedSeries(db *database.DB, tvdbClient *tvdb.Client) {
 
 	slog.Info("Starting startup sync for unsynced series", "count", len(unsyncedSeries))
 
+	if !tvdbCheckMu.TryLock() {
+		slog.Info("TVDB check already in progress, skipping startup sync")
+		return
+	}
+	defer tvdbCheckMu.Unlock()
+
 	var synced, errors int
 	for i := range unsyncedSeries {
 		s := &unsyncedSeries[i]
@@ -313,6 +320,12 @@ func SyncUnsyncedSeries(db *database.DB, tvdbClient *tvdb.Client) {
 			slog.Error("Failed to sync unsynced series", "series_id", s.ID, "title", s.Title, "error", err)
 			errors++
 			continue
+		}
+		// Mark series as synced even if TVDB returned no overview, to prevent
+		// re-syncing on every restart (overview IS NULL is the "unsynced" marker).
+		// The tvdb_id guard prevents stamping a rematched series with stale data.
+		if _, err := db.Exec(`UPDATE series SET overview = COALESCE(overview, '') WHERE id = ? AND tvdb_id = ?`, s.ID, *s.TVDBId); err != nil {
+			slog.Error("Failed to mark series as synced", "series_id", s.ID, "error", err)
 		}
 		synced++
 	}
