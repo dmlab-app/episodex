@@ -288,3 +288,33 @@ func SyncSeriesMetadata(db *database.DB, tvdbClient *tvdb.Client, seriesID int64
 	slog.Info("Synced series from TVDB", "series_id", seriesID, "tvdb_id", tvdbID, "title", title)
 	return nil
 }
+
+// SyncUnsyncedSeries syncs metadata for all series that have a TVDB ID but
+// no overview (added by scanner but not yet fully synced).
+func SyncUnsyncedSeries(db *database.DB, tvdbClient *tvdb.Client) {
+	unsyncedSeries, err := db.GetUnsyncedSeries()
+	if err != nil {
+		slog.Error("Failed to get unsynced series", "error", err)
+		return
+	}
+
+	if len(unsyncedSeries) == 0 {
+		slog.Info("No unsynced series found")
+		return
+	}
+
+	slog.Info("Starting startup sync for unsynced series", "count", len(unsyncedSeries))
+
+	var synced, errors int
+	for i, s := range unsyncedSeries {
+		slog.Info("Syncing unsynced series", "progress", fmt.Sprintf("%d/%d", i+1, len(unsyncedSeries)), "title", s.Title, "tvdb_id", *s.TVDBId)
+		if err := SyncSeriesMetadata(db, tvdbClient, s.ID, *s.TVDBId); err != nil {
+			slog.Error("Failed to sync unsynced series", "series_id", s.ID, "title", s.Title, "error", err)
+			errors++
+			continue
+		}
+		synced++
+	}
+
+	slog.Info("Startup sync completed", "total", len(unsyncedSeries), "synced", synced, "errors", errors)
+}

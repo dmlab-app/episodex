@@ -23,11 +23,11 @@
 - [x] Запустить тесты — должны пройти перед задачей 2
 
 ### Task 2: Добавить `SyncUnsyncedSeries` в sync.go
-- [ ] В `internal/api/sync.go` добавить функцию `SyncUnsyncedSeries(db *database.DB, tvdbClient *tvdb.Client)`
-- [ ] Вызывает `db.GetUnsyncedSeries()`, для каждого вызывает `SyncSeriesMetadata()`
-- [ ] Логирует: количество найденных, прогресс, ошибки (не прерывая цикл), итог
-- [ ] Написать тесты для `SyncUnsyncedSeries` (мок или integration test — аналогично существующим тестам в `sync_test.go`)
-- [ ] Запустить тесты — должны пройти перед задачей 3
+- [x] В `internal/api/sync.go` добавить функцию `SyncUnsyncedSeries(db *database.DB, tvdbClient *tvdb.Client)`
+- [x] Вызывает `db.GetUnsyncedSeries()`, для каждого вызывает `SyncSeriesMetadata()`
+- [x] Логирует: количество найденных, прогресс, ошибки (не прерывая цикл), итог
+- [x] Написать тесты для `SyncUnsyncedSeries` (мок или integration test — аналогично существующим тестам в `sync_test.go`)
+- [x] Запустить тесты — должны пройти перед задачей 3
 
 ### Task 3: Вызвать при запуске из main.go
 - [ ] В `cmd/server/main.go` после инициализации TVDB клиента (строка 62), запустить `api.SyncUnsyncedSeries(db, tvdbClient)` в фоновой горутине
