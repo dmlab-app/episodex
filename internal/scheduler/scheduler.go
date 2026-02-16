@@ -4,6 +4,7 @@ package scheduler
 import (
 	"context"
 	"log/slog"
+	"sync"
 	"time"
 )
 
@@ -59,7 +60,9 @@ type Scheduler struct {
 	ctx      context.Context
 	cancel   context.CancelFunc
 	ticker   *time.Ticker
+	mu       sync.Mutex
 	lastRuns map[string]time.Time
+	running  map[string]bool
 }
 
 // New creates a new scheduler
@@ -71,6 +74,7 @@ func New() *Scheduler {
 		cancel:   cancel,
 		ticker:   time.NewTicker(1 * time.Minute),
 		lastRuns: make(map[string]time.Time),
+		running:  make(map[string]bool),
 	}
 }
 
@@ -86,11 +90,14 @@ func (s *Scheduler) Start() {
 
 	// Run interval tasks immediately on startup
 	for _, task := range s.tasks {
-		if _, ok := task.Schedule.(*IntervalSchedule); ok {
-			slog.Info("Running task on startup", "name", task.Name)
-			go s.runTask(task)
-			s.lastRuns[task.Name] = time.Now()
+		if _, ok := task.Schedule.(*IntervalSchedule); !ok {
+			continue
 		}
+		slog.Info("Running task on startup", "name", task.Name)
+		s.mu.Lock()
+		s.running[task.Name] = true
+		s.mu.Unlock()
+		go s.runTask(task)
 	}
 
 	for {
@@ -100,25 +107,37 @@ func (s *Scheduler) Start() {
 			return
 
 		case now := <-s.ticker.C:
+			s.mu.Lock()
 			for _, task := range s.tasks {
+				if s.running[task.Name] {
+					continue
+				}
 				lastRun := s.lastRuns[task.Name]
 				nextRun := task.Schedule.NextRun(lastRun)
 
 				if now.After(nextRun) || now.Equal(nextRun) {
+					s.running[task.Name] = true
 					go s.runTask(task)
-					s.lastRuns[task.Name] = now
 				}
 			}
+			s.mu.Unlock()
 		}
 	}
 }
 
-// runTask executes a single task
+// runTask executes a single task and records completion time.
 func (s *Scheduler) runTask(task Task) {
 	slog.Info("Running scheduled task", "name", task.Name)
 	start := time.Now()
 
-	if err := task.Handler(s.ctx); err != nil {
+	err := task.Handler(s.ctx)
+
+	s.mu.Lock()
+	delete(s.running, task.Name)
+	s.lastRuns[task.Name] = start
+	s.mu.Unlock()
+
+	if err != nil {
 		slog.Error("Task failed", "name", task.Name, "error", err, "duration", time.Since(start))
 		return
 	}

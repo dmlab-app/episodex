@@ -152,6 +152,10 @@ All settings are configured via environment variables (`.env` file):
 
 ## Background Tasks
 
+On startup:
+
+- Automatic TVDB metadata sync for series added by scanner but not yet fully synced
+
 Scheduler automatically runs:
 
 - Media folder scanning (every hour)
