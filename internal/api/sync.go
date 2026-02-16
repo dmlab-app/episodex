@@ -306,7 +306,8 @@ func SyncUnsyncedSeries(db *database.DB, tvdbClient *tvdb.Client) {
 	slog.Info("Starting startup sync for unsynced series", "count", len(unsyncedSeries))
 
 	var synced, errors int
-	for i, s := range unsyncedSeries {
+	for i := range unsyncedSeries {
+		s := &unsyncedSeries[i]
 		slog.Info("Syncing unsynced series", "progress", fmt.Sprintf("%d/%d", i+1, len(unsyncedSeries)), "title", s.Title, "tvdb_id", *s.TVDBId)
 		if err := SyncSeriesMetadata(db, tvdbClient, s.ID, *s.TVDBId); err != nil {
 			slog.Error("Failed to sync unsynced series", "series_id", s.ID, "title", s.Title, "error", err)
