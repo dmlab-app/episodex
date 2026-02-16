@@ -20,12 +20,12 @@
 ## Implementation Steps
 
 ### Task 1: Исправить `handleMatchSeries` — полная синхронизация после match
-- [ ] В `internal/api/router.go` `handleMatchSeries()`: после UPDATE series с новым tvdb_id (строка 757-761), вызвать `SyncSeriesMetadata(s.db, s.tvdbClient, id, req.TVDBId)` для полной синхронизации (overview, genres, networks, characters, seasons)
-- [ ] Если `SyncSeriesMetadata` вернул ошибку — залогировать как warning, но НЕ возвращать ошибку клиенту (базовый матч уже сохранён, полная синхронизация подтянется позже)
-- [ ] В ответе вернуть полные данные сериала (сделать `GET` из БД после синхронизации) вместо ручной сборки response map
-- [ ] Написать тест: rematch сериала с существующим tvdb_id — проверить что tvdb_id обновился
-- [ ] Написать тест: match сериала без tvdb_id — проверить обратную совместимость
-- [ ] Запустить тесты — должны пройти перед задачей 2
+- [x] В `internal/api/router.go` `handleMatchSeries()`: после UPDATE series с новым tvdb_id (строка 757-761), вызвать `SyncSeriesMetadata(s.db, s.tvdbClient, id, req.TVDBId)` для полной синхронизации (overview, genres, networks, characters, seasons)
+- [x] Если `SyncSeriesMetadata` вернул ошибку — залогировать как warning, но НЕ возвращать ошибку клиенту (базовый матч уже сохранён, полная синхронизация подтянется позже)
+- [x] В ответе вернуть полные данные сериала (сделать `GET` из БД после синхронизации) вместо ручной сборки response map
+- [x] Написать тест: rematch сериала с существующим tvdb_id — проверить что tvdb_id обновился
+- [x] Написать тест: match сериала без tvdb_id — проверить обратную совместимость
+- [x] Запустить тесты — должны пройти перед задачей 2
 
 ### Task 2: Кнопка Rematch на detail page
 - [ ] В `web/static/app.js` `loadSeriesDetail()`: добавить кнопку "Fix Match" рядом с заголовком сериала (или в metadata area) — кнопка видна для всех сериалов
