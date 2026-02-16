@@ -28,10 +28,10 @@
 - [x] Запустить тесты — должны пройти перед задачей 2
 
 ### Task 2: Кнопка Rematch на detail page
-- [ ] В `web/static/app.js` `loadSeriesDetail()`: добавить кнопку "Fix Match" рядом с заголовком сериала (или в metadata area) — кнопка видна для всех сериалов
-- [ ] По клику вызывать существующую `openMatchModal(seriesId)`
-- [ ] В `matchSeries()`: после успешного матча, если текущий view — `series-detail`, вызвать `loadSeriesDetail(state.currentSeriesId)` вместо `loadSeries()` чтобы обновить detail page
-- [ ] Запустить тесты
+- [x] В `web/static/app.js` `loadSeriesDetail()`: добавить кнопку "Fix Match" рядом с заголовком сериала (или в metadata area) — кнопка видна для всех сериалов
+- [x] По клику вызывать существующую `openMatchModal(seriesId)`
+- [x] В `matchSeries()`: после успешного матча, если текущий view — `series-detail`, вызвать `loadSeriesDetail(state.currentSeriesId)` вместо `loadSeries()` чтобы обновить detail page
+- [x] Запустить тесты
 
 ### Task 3: Финальная проверка
 - [ ] Запустить полный тестовый набор

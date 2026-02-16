@@ -1022,8 +1022,12 @@ async function matchSeries(tvdbId) {
             showToast('Series matched successfully');
         }
 
-        // Reload series list to show updated data
-        await loadSeries();
+        // Reload current view to show updated data
+        if (state.currentView === 'series-detail' && state.currentSeriesId) {
+            await loadSeriesDetail(state.currentSeriesId);
+        } else {
+            await loadSeries();
+        }
     } catch (e) {
         showToast('Failed to match series', 'error');
         console.error(e);
@@ -1061,6 +1065,9 @@ document.addEventListener('DOMContentLoaded', () => {
     document.getElementById('scan-trigger')?.addEventListener('click', triggerScan);
     document.getElementById('check-updates-btn')?.addEventListener('click', checkUpdates);
     document.getElementById('delete-series-btn')?.addEventListener('click', deleteSeries);
+    document.getElementById('fix-match-btn')?.addEventListener('click', () => {
+        if (state.currentSeriesId) openMatchModal(state.currentSeriesId);
+    });
 
     // Back buttons
     document.getElementById('back-to-series')?.addEventListener('click', () => navigate('/series'));
