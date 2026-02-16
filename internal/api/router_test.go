@@ -15,7 +15,8 @@ import (
 )
 
 // setupTestServer creates a Server with a temporary SQLite database for testing.
-func setupTestServer(t *testing.T) (*Server, *database.DB) {
+// An optional tvdb.Client can be passed for tests that need TVDB integration.
+func setupTestServer(t *testing.T, tvdbClient ...*tvdb.Client) (*Server, *database.DB) {
 	t.Helper()
 
 	tmpDir := t.TempDir()
@@ -31,7 +32,11 @@ func setupTestServer(t *testing.T) (*Server, *database.DB) {
 		os.Remove(dbPath)
 	})
 
-	srv := NewServer(db, nil, nil)
+	var tc *tvdb.Client
+	if len(tvdbClient) > 0 {
+		tc = tvdbClient[0]
+	}
+	srv := NewServer(db, nil, tc)
 	return srv, db
 }
 
@@ -1059,90 +1064,51 @@ func TestRescanEndpoint_Removed(t *testing.T) {
 	}
 }
 
-// setupTestServerWithTVDB creates a Server with a temporary SQLite database and TVDB client.
-func setupTestServerWithTVDB(t *testing.T, tvdbClient *tvdb.Client) (*Server, *database.DB) {
-	t.Helper()
-
-	tmpDir := t.TempDir()
-	dbPath := filepath.Join(tmpDir, "test.db")
-
-	db, err := database.New(dbPath)
-	if err != nil {
-		t.Fatalf("failed to create test database: %v", err)
-	}
-
-	t.Cleanup(func() {
-		db.Close()
-		os.Remove(dbPath)
-	})
-
-	srv := NewServer(db, nil, tvdbClient)
-	return srv, db
-}
-
-// matchTVDBMux creates a handler for handleMatchSeries tests.
-// It serves responses for GetSeriesDetails(/extended), GetSeriesTranslation, and GetSeriesExtendedFull.
-func matchTVDBMux(tvdbID int, name, rusName, overview, rusOverview, image, status string) http.Handler {
-	mux := http.NewServeMux()
-
-	mux.HandleFunc("/v4/login", func(w http.ResponseWriter, _ *http.Request) {
-		_ = json.NewEncoder(w).Encode(map[string]interface{}{
-			"status": "success",
-			"data":   map[string]string{"token": "test-token"},
-		})
-	})
-
-	mux.HandleFunc("/v4/series/", func(w http.ResponseWriter, r *http.Request) {
-		path := r.URL.Path
-		if strings.Contains(path, "/translations/") {
-			_ = json.NewEncoder(w).Encode(map[string]interface{}{
-				"status": "success",
-				"data": map[string]interface{}{
-					"name":     rusName,
-					"overview": rusOverview,
-					"language": "rus",
-				},
-			})
-			return
-		}
-		// /v4/series/{id}/extended — used by both GetSeriesDetails and GetSeriesExtendedFull
-		_ = json.NewEncoder(w).Encode(map[string]interface{}{
-			"status": "success",
-			"data": map[string]interface{}{
-				"id":           tvdbID,
-				"name":         name,
-				"originalName": name,
-				"slug":         "test-show",
-				"overview":     overview,
-				"image":        image,
-				"status":       map[string]interface{}{"name": status},
-				"firstAired":   "2020-01-01",
-				"year":         "2020",
-				"seasons": []map[string]interface{}{
-					{"id": 1001, "number": 1, "type": map[string]interface{}{"name": "Official", "type": "official"}, "name": "Season 1", "year": "2020"},
-					{"id": 1002, "number": 2, "type": map[string]interface{}{"name": "Official", "type": "official"}, "name": "Season 2", "year": "2021"},
-				},
-				"genres":         []interface{}{},
-				"artworks":       []interface{}{},
-				"characters":     []interface{}{},
-				"contentRatings": []interface{}{},
-				"companies":      []interface{}{},
+// matchTVDBResponses builds the extended and translation response maps for match tests.
+func matchTVDBResponses(tvdbID int, name, rusName, overview, rusOverview, image, status string) (extendedResp, translationResp interface{}) {
+	extendedResp = map[string]interface{}{
+		"status": "success",
+		"data": map[string]interface{}{
+			"id":           tvdbID,
+			"name":         name,
+			"originalName": name,
+			"slug":         "test-show",
+			"overview":     overview,
+			"image":        image,
+			"status":       map[string]interface{}{"name": status},
+			"firstAired":   "2020-01-01",
+			"year":         "2020",
+			"seasons": []map[string]interface{}{
+				{"id": 1001, "number": 1, "type": map[string]interface{}{"name": "Official", "type": "official"}, "name": "Season 1", "year": "2020"},
+				{"id": 1002, "number": 2, "type": map[string]interface{}{"name": "Official", "type": "official"}, "name": "Season 2", "year": "2021"},
 			},
-		})
-	})
-
-	return mux
+			"genres":         []interface{}{},
+			"artworks":       []interface{}{},
+			"characters":     []interface{}{},
+			"contentRatings": []interface{}{},
+			"companies":      []interface{}{},
+		},
+	}
+	translationResp = map[string]interface{}{
+		"status": "success",
+		"data": map[string]interface{}{
+			"name":     rusName,
+			"overview": rusOverview,
+			"language": "rus",
+		},
+	}
+	return
 }
 
 func TestHandleMatchSeries_Rematch(t *testing.T) {
 	tvdbID := 54321
-	tvdbHandler := matchTVDBMux(tvdbID, "New Show EN", "Новый Сериал", "English overview", "Русское описание", "https://tvdb.com/new.jpg", "Continuing")
-	tvdbClient := newTestTVDBServer(t, tvdbHandler)
+	ext, trans := matchTVDBResponses(tvdbID, "New Show EN", "Новый Сериал", "English overview", "Русское описание", "https://tvdb.com/new.jpg", "Continuing")
+	tvdbClient := newTestTVDBServer(t, tvdbMux(ext, trans))
 	if err := tvdbClient.Login(); err != nil {
 		t.Fatalf("failed to login to mock TVDB: %v", err)
 	}
 
-	srv, db := setupTestServerWithTVDB(t, tvdbClient)
+	srv, db := setupTestServer(t, tvdbClient)
 
 	// Seed series with an existing tvdb_id (simulates rematch)
 	result, err := db.Exec(`
@@ -1208,13 +1174,13 @@ func TestHandleMatchSeries_Rematch(t *testing.T) {
 
 func TestHandleMatchSeries_FirstMatch(t *testing.T) {
 	tvdbID := 99887
-	tvdbHandler := matchTVDBMux(tvdbID, "Brand New Show", "Новое Шоу", "A brand new show", "Новое описание", "https://tvdb.com/brandnew.jpg", "Continuing")
-	tvdbClient := newTestTVDBServer(t, tvdbHandler)
+	ext, trans := matchTVDBResponses(tvdbID, "Brand New Show", "Новое Шоу", "A brand new show", "Новое описание", "https://tvdb.com/brandnew.jpg", "Continuing")
+	tvdbClient := newTestTVDBServer(t, tvdbMux(ext, trans))
 	if err := tvdbClient.Login(); err != nil {
 		t.Fatalf("failed to login to mock TVDB: %v", err)
 	}
 
-	srv, db := setupTestServerWithTVDB(t, tvdbClient)
+	srv, db := setupTestServer(t, tvdbClient)
 
 	// Seed series WITHOUT tvdb_id (first match scenario)
 	seriesID := seedSeries(t, db, "Unknown Show", 0)

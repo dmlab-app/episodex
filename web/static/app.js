@@ -1018,9 +1018,12 @@ async function matchSeries(tvdbId) {
         // Check if this was a merge operation
         if (result.merged) {
             showToast(result.message || 'Seasons merged successfully');
-        } else {
-            showToast('Series matched successfully');
+            // Navigate to the merged-into series (current one was deleted)
+            navigate(`/series/${result.id}`);
+            return;
         }
+
+        showToast('Series matched successfully');
 
         // Reload current view to show updated data
         if (state.currentView === 'series-detail' && state.currentSeriesId) {
