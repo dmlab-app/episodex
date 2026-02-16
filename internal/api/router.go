@@ -276,13 +276,12 @@ func (s *Server) handleCreateSeries(w http.ResponseWriter, r *http.Request) {
 		posterURL = details.Image
 		status = details.Status
 		totalSeasons = len(details.Seasons)
-		airedSeasons := tvdb.MaxAiredSeasonNumber(details.Seasons)
 
-		// Insert series with TVDB metadata
+		// Insert series with TVDB metadata (aired_seasons=0, corrected by SyncSeriesMetadata)
 		result, err := s.db.Exec(`
 			INSERT INTO series (tvdb_id, title, original_title, poster_url, status, total_seasons, aired_seasons, created_at, updated_at)
-			VALUES (?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
-		`, *req.TVDBId, title, originalTitle, posterURL, status, totalSeasons, airedSeasons)
+			VALUES (?, ?, ?, ?, ?, ?, 0, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+		`, *req.TVDBId, title, originalTitle, posterURL, status, totalSeasons)
 		if err != nil {
 			if strings.Contains(err.Error(), "UNIQUE constraint failed") {
 				s.respondError(w, http.StatusConflict, "series already exists")
@@ -668,6 +667,7 @@ func (s *Server) handleMatchSeries(w http.ResponseWriter, r *http.Request) {
 			SET folder_path = COALESCE((SELECT src.folder_path FROM seasons src WHERE src.series_id = ? AND src.season_number = seasons.season_number), folder_path),
 				is_watched = MAX(is_watched, COALESCE((SELECT src.is_watched FROM seasons src WHERE src.series_id = ? AND src.season_number = seasons.season_number), 0)),
 				is_owned = MAX(is_owned, COALESCE((SELECT src.is_owned FROM seasons src WHERE src.series_id = ? AND src.season_number = seasons.season_number), 0)),
+				aired_episodes = MAX(aired_episodes, COALESCE((SELECT src.aired_episodes FROM seasons src WHERE src.series_id = ? AND src.season_number = seasons.season_number), 0)),
 				voice_actor_id = COALESCE(voice_actor_id, (SELECT src.voice_actor_id FROM seasons src WHERE src.series_id = ? AND src.season_number = seasons.season_number)),
 				discovered_at = COALESCE(discovered_at, (SELECT src.discovered_at FROM seasons src WHERE src.series_id = ? AND src.season_number = seasons.season_number)),
 				tvdb_season_id = COALESCE(tvdb_season_id, (SELECT src.tvdb_season_id FROM seasons src WHERE src.series_id = ? AND src.season_number = seasons.season_number)),
@@ -676,7 +676,7 @@ func (s *Server) handleMatchSeries(w http.ResponseWriter, r *http.Request) {
 			WHERE series_id = ? AND season_number IN (
 				SELECT season_number FROM seasons WHERE series_id = ?
 			)
-		`, id, id, id, id, id, id, id, id, existingSeriesID, id)
+		`, id, id, id, id, id, id, id, id, id, existingSeriesID, id)
 		if err != nil {
 			slog.Error("Failed to update overlapping seasons", "error", err)
 			s.respondError(w, http.StatusInternalServerError, "failed to merge seasons")
@@ -754,11 +754,12 @@ func (s *Server) handleMatchSeries(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Update series with TVDB metadata (Name = Russian, OriginalName = English)
+	// aired_seasons is not set here — SyncSeriesMetadata (called below) computes it from episodes
 	_, err = s.db.Exec(`
 		UPDATE series
-		SET tvdb_id = ?, title = ?, original_title = ?, poster_url = ?, status = ?, total_seasons = ?, aired_seasons = ?, updated_at = CURRENT_TIMESTAMP
+		SET tvdb_id = ?, title = ?, original_title = ?, poster_url = ?, status = ?, total_seasons = ?, updated_at = CURRENT_TIMESTAMP
 		WHERE id = ?
-	`, req.TVDBId, details.Name, details.OriginalName, details.Image, details.Status, len(details.Seasons), tvdb.MaxAiredSeasonNumber(details.Seasons), id)
+	`, req.TVDBId, details.Name, details.OriginalName, details.Image, details.Status, len(details.Seasons), id)
 
 	if err != nil {
 		slog.Error("Failed to update series", "id", id, "error", err)
@@ -952,18 +953,25 @@ func (s *Server) handleTriggerScan(w http.ResponseWriter, _ *http.Request) {
 
 // Updates handlers
 func (s *Server) handleGetUpdates(w http.ResponseWriter, _ *http.Request) {
-	// Show series where aired seasons exist HIGHER than the user's max owned season.
-	// Excludes: series with no owned seasons, unaired/future seasons.
+	// Episode-based updates: a series appears if it has seasons with
+	// season_number > max_watched AND aired_episodes > 0.
+	// Requires at least one watched season (season_number > 0).
 	query := `
 		SELECT s.id, s.tvdb_id, s.title, s.original_title, s.poster_url, s.status,
 			s.aired_seasons,
 			(SELECT MAX(sn.season_number) FROM seasons sn WHERE sn.series_id = s.id AND sn.is_watched = 1 AND sn.season_number > 0) as max_watched
 		FROM series s
-		WHERE s.aired_seasons > COALESCE(
-			(SELECT MAX(sn.season_number) FROM seasons sn WHERE sn.series_id = s.id AND sn.is_watched = 1 AND sn.season_number > 0),
-			0
+		WHERE (SELECT COUNT(*) FROM seasons sn WHERE sn.series_id = s.id AND sn.is_watched = 1 AND sn.season_number > 0) > 0
+		AND EXISTS (
+			SELECT 1 FROM seasons sn
+			WHERE sn.series_id = s.id
+			AND sn.season_number > COALESCE(
+				(SELECT MAX(sn2.season_number) FROM seasons sn2 WHERE sn2.series_id = s.id AND sn2.is_watched = 1 AND sn2.season_number > 0),
+				0
+			)
+			AND sn.aired_episodes > 0
+			AND sn.is_watched = 0
 		)
-		AND (SELECT COUNT(*) FROM seasons sn WHERE sn.series_id = s.id AND sn.is_watched = 1 AND sn.season_number > 0) > 0
 		ORDER BY s.updated_at DESC
 	`
 
@@ -994,11 +1002,12 @@ func (s *Server) handleGetUpdates(w http.ResponseWriter, _ *http.Request) {
 		}
 		collected = append(collected, r)
 	}
-	rows.Close() //nolint:errcheck
 	if err := rows.Err(); err != nil {
+		rows.Close() //nolint:errcheck
 		s.respondError(w, http.StatusInternalServerError, "error reading updates")
 		return
 	}
+	rows.Close() //nolint:errcheck
 
 	updates := make([]map[string]interface{}, 0, len(collected))
 	for _, r := range collected {
@@ -1007,12 +1016,11 @@ func (s *Server) handleGetUpdates(w http.ResponseWriter, _ *http.Request) {
 			maxWatchedNum = *r.maxWatched
 		}
 
-		// Query actual non-owned season rows from the DB that are beyond max owned.
-		// Only returns seasons that exist in TVDB (synced to DB), avoiding phantom numbers.
-		newSeasons, err := s.queryNewSeasonNumbers(r.id, maxWatchedNum, r.airedSeasons)
+		// Query aired seasons beyond max watched directly from the DB.
+		newSeasons, err := s.queryAiredSeasonsAfter(r.id, maxWatchedNum)
 		if err != nil {
-			slog.Warn("Failed to query new season numbers", "series_id", r.id, "error", err)
-			newSeasons = []int{}
+			slog.Warn("Failed to query new aired seasons", "series_id", r.id, "error", err)
+			newSeasons = []seasonUpdate{}
 		}
 
 		update := map[string]interface{}{
@@ -1044,35 +1052,41 @@ func (s *Server) handleGetUpdates(w http.ResponseWriter, _ *http.Request) {
 	s.respondJSON(w, http.StatusOK, updates)
 }
 
-// queryNewSeasonNumbers returns non-owned season numbers that are > maxWatched
-// and <= airedSeasons, based on actual season rows in the DB (synced from TVDB).
-// This avoids generating phantom season numbers for non-contiguous TVDB data.
-func (s *Server) queryNewSeasonNumbers(seriesID, maxWatched, airedSeasons int) ([]int, error) {
+// seasonUpdate represents a new season with episode count for the Updates response.
+type seasonUpdate struct {
+	SeasonNumber  int `json:"season_number"`
+	AiredEpisodes int `json:"aired_episodes"`
+}
+
+// queryAiredSeasonsAfter returns seasons with aired_episodes > 0 that are
+// beyond maxWatched, ordered by season_number.
+func (s *Server) queryAiredSeasonsAfter(seriesID, maxWatched int) ([]seasonUpdate, error) {
 	rows, err := s.db.Query(`
-		SELECT season_number FROM seasons
-		WHERE series_id = ? AND season_number > ? AND season_number <= ? AND is_watched = 0
+		SELECT season_number, aired_episodes FROM seasons
+		WHERE series_id = ? AND season_number > ? AND aired_episodes > 0 AND is_watched = 0
 		ORDER BY season_number
-	`, seriesID, maxWatched, airedSeasons)
+	`, seriesID, maxWatched)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close() //nolint:errcheck
 
-	var nums []int
+	var result []seasonUpdate
 	for rows.Next() {
-		var n int
-		if err := rows.Scan(&n); err != nil {
+		var su seasonUpdate
+		if err := rows.Scan(&su.SeasonNumber, &su.AiredEpisodes); err != nil {
+			slog.Warn("Failed to scan season update row", "series_id", seriesID, "error", err)
 			continue
 		}
-		nums = append(nums, n)
+		result = append(result, su)
 	}
 	if err := rows.Err(); err != nil {
 		return nil, err
 	}
-	if nums == nil {
-		nums = []int{}
+	if result == nil {
+		result = []seasonUpdate{}
 	}
-	return nums, nil
+	return result, nil
 }
 
 func (s *Server) handleCheckUpdates(w http.ResponseWriter, _ *http.Request) {
