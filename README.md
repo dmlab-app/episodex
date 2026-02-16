@@ -6,7 +6,7 @@ Local web service for tracking watched TV series with automatic media folder sca
 
 - Automatic scanning of TV shows folder
 - TheTVDB integration for metadata (series info, characters, artwork)
-- New season notifications
+- New season and episode update notifications
 - Per-season voice dubbing tracking
 - AudioCutter for audio track management (mkvmerge/ffmpeg)
 - Automatic database backups
@@ -139,8 +139,8 @@ All settings are configured via environment variables (`.env` file):
 
 ### Updates
 
-- `GET /api/updates` - get new season updates
-- `POST /api/updates/check` - check for TVDB updates
+- `GET /api/updates` - get new season updates (with aired episode counts per season)
+- `POST /api/updates/check` - check for TVDB episode updates
 
 ## Technologies
 

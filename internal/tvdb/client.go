@@ -270,7 +270,15 @@ type SeasonInfo struct {
 	Image  string `json:"image"`
 	ID     int    `json:"id"`
 	Number int    `json:"number"`
-	Aired  bool   `json:"aired"`
+}
+
+// EpisodeBase represents basic episode data from the TVDB API.
+type EpisodeBase struct {
+	Name         string `json:"name"`
+	Aired        string `json:"aired"`
+	ID           int    `json:"id"`
+	SeasonNumber int    `json:"seasonNumber"`
+	Number       int    `json:"number"`
 }
 
 // rawSeason represents the season data as returned by TVDB API responses.
@@ -302,7 +310,6 @@ func filterSeasons(raw []rawSeason) []SeasonInfo {
 		if season.Year == "" && seasonType != "official" {
 			continue
 		}
-		aired := isSeasonAired(season.Year)
 		seasons = append(seasons, SeasonInfo{
 			ID:     season.ID,
 			Number: season.Number,
@@ -310,46 +317,9 @@ func filterSeasons(raw []rawSeason) []SeasonInfo {
 			Type:   season.Type.Name,
 			Year:   season.Year,
 			Image:  season.Image,
-			Aired:  aired,
 		})
 	}
 	return seasons
-}
-
-// isSeasonAired checks whether a season has aired based on its year.
-// A season is considered aired if its year is non-empty and <= the current year.
-func isSeasonAired(year string) bool {
-	if year == "" {
-		return false
-	}
-	var y int
-	if _, err := fmt.Sscanf(year, "%d", &y); err != nil || y <= 0 {
-		return false
-	}
-	return y <= nowFunc().Year()
-}
-
-// MaxAiredSeasonNumber returns the highest season number among aired seasons.
-// This is used for comparison against the user's max owned season number.
-func MaxAiredSeasonNumber(seasons []SeasonInfo) int {
-	maxNum := 0
-	for _, s := range seasons {
-		if s.Aired && s.Number > maxNum {
-			maxNum = s.Number
-		}
-	}
-	return maxNum
-}
-
-// AiredSeasonNumbers returns the season numbers of all aired seasons.
-func AiredSeasonNumbers(seasons []SeasonInfo) []int {
-	nums := make([]int, 0)
-	for _, s := range seasons {
-		if s.Aired {
-			nums = append(nums, s.Number)
-		}
-	}
-	return nums
 }
 
 // GetSeriesDetails fetches detailed information about a series
@@ -537,6 +507,62 @@ func (c *Client) GetSeriesExtendedFull(tvdbID int) (*SeriesExtended, error) {
 	extended.Seasons = filterSeasons(result.Data.Seasons)
 
 	return extended, nil
+}
+
+// GetSeriesEpisodes fetches all episodes for a series from the official season order.
+// Handles pagination automatically (TVDB returns ~500 episodes per page).
+func (c *Client) GetSeriesEpisodes(tvdbID int) ([]EpisodeBase, error) {
+	var allEpisodes []EpisodeBase
+
+	const maxPages = 100
+	for page := 0; page < maxPages; page++ {
+		resp, err := c.makeRequest("GET", fmt.Sprintf("/series/%d/episodes/official?page=%d", tvdbID, page), nil)
+		if err != nil {
+			return nil, err
+		}
+
+		var result struct {
+			Data struct {
+				Episodes []EpisodeBase `json:"episodes"`
+			} `json:"data"`
+			Links struct {
+				Next *string `json:"next"`
+			} `json:"links"`
+		}
+
+		if resp.StatusCode != http.StatusOK {
+			body, _ := io.ReadAll(resp.Body)
+			resp.Body.Close() //nolint:errcheck
+			return nil, fmt.Errorf("get series episodes failed with status %d: %s", resp.StatusCode, string(body))
+		}
+
+		if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+			resp.Body.Close() //nolint:errcheck
+			return nil, fmt.Errorf("failed to decode episodes response: %w", err)
+		}
+		resp.Body.Close() //nolint:errcheck
+
+		allEpisodes = append(allEpisodes, result.Data.Episodes...)
+
+		if result.Links.Next == nil || *result.Links.Next == "" {
+			break
+		}
+	}
+
+	return allEpisodes, nil
+}
+
+// CountAiredEpisodesBySeason groups episodes by season number and counts
+// only those that have already aired (aired date is non-empty and <= today).
+func CountAiredEpisodesBySeason(episodes []EpisodeBase) map[int]int {
+	today := nowFunc().Format("2006-01-02")
+	counts := make(map[int]int)
+	for _, ep := range episodes {
+		if ep.Aired != "" && ep.Aired <= today {
+			counts[ep.SeasonNumber]++
+		}
+	}
+	return counts
 }
 
 // SeriesTranslation represents a translation for a series

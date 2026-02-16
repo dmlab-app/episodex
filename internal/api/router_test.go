@@ -83,6 +83,19 @@ func seedSeasonWithOwned(t *testing.T, db *database.DB, seriesID int64, seasonNu
 	}
 }
 
+// seedSeasonWithEpisodes inserts a season with aired_episodes set.
+func seedSeasonWithEpisodes(t *testing.T, db *database.DB, seriesID int64, seasonNum int, folderPath string, isWatched bool, airedEpisodes int) {
+	t.Helper()
+	isOwned := isWatched
+	_, err := db.Exec(`
+		INSERT INTO seasons (series_id, season_number, folder_path, is_watched, is_owned, aired_episodes, discovered_at, created_at, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+	`, seriesID, seasonNum, folderPath, isWatched, isOwned, airedEpisodes)
+	if err != nil {
+		t.Fatalf("failed to seed season with episodes: %v", err)
+	}
+}
+
 // getVoiceActorID retrieves a voice actor ID by name.
 func getVoiceActorID(t *testing.T, db *database.DB, name string) int {
 	t.Helper()
@@ -654,13 +667,13 @@ func TestHandleGetUpdates_NewAiredSeasonsOnly(t *testing.T) {
 	srv, db := setupTestServer(t)
 
 	// Series with 5 aired seasons, user owns up to season 3.
-	// Non-owned seasons 4-5 exist in DB from TVDB sync.
+	// Non-owned seasons 4-5 exist in DB from TVDB sync with aired episodes.
 	id := seedSeriesWithAired(t, db, "Breaking Bad", 5, 5)
-	seedSeason(t, db, id, 1, "/media/bb/s01", true, nil)
-	seedSeason(t, db, id, 2, "/media/bb/s02", true, nil)
-	seedSeason(t, db, id, 3, "/media/bb/s03", true, nil)
-	seedSeason(t, db, id, 4, "", false, nil)
-	seedSeason(t, db, id, 5, "", false, nil)
+	seedSeasonWithEpisodes(t, db, id, 1, "/media/bb/s01", true, 10)
+	seedSeasonWithEpisodes(t, db, id, 2, "/media/bb/s02", true, 13)
+	seedSeasonWithEpisodes(t, db, id, 3, "/media/bb/s03", true, 13)
+	seedSeasonWithEpisodes(t, db, id, 4, "", false, 13)
+	seedSeasonWithEpisodes(t, db, id, 5, "", false, 16)
 
 	req := httptest.NewRequest(http.MethodGet, "/api/updates", http.NoBody)
 	w := httptest.NewRecorder()
@@ -691,8 +704,14 @@ func TestHandleGetUpdates_NewAiredSeasonsOnly(t *testing.T) {
 	if len(newSeasons) != 2 {
 		t.Fatalf("expected 2 new seasons, got %d: %v", len(newSeasons), newSeasons)
 	}
-	if int(newSeasons[0].(float64)) != 4 || int(newSeasons[1].(float64)) != 5 {
-		t.Errorf("expected new seasons [4, 5], got %v", newSeasons)
+	// new_seasons now contains objects with season_number and aired_episodes
+	s4 := newSeasons[0].(map[string]interface{})
+	s5 := newSeasons[1].(map[string]interface{})
+	if int(s4["season_number"].(float64)) != 4 || int(s4["aired_episodes"].(float64)) != 13 {
+		t.Errorf("expected season 4 with 13 episodes, got %v", s4)
+	}
+	if int(s5["season_number"].(float64)) != 5 || int(s5["aired_episodes"].(float64)) != 16 {
+		t.Errorf("expected season 5 with 16 episodes, got %v", s5)
 	}
 }
 
@@ -723,12 +742,14 @@ func TestHandleGetUpdates_NoOwnedSeasons_Excluded(t *testing.T) {
 func TestHandleGetUpdates_UnairedFutureSeasons_Excluded(t *testing.T) {
 	srv, db := setupTestServer(t)
 
-	// Series with total_seasons=5 but only aired_seasons=3, user owns up to season 3
-	// Even though TVDB lists 5 seasons, only 3 have aired - no update should show
+	// Series with total_seasons=5, user owns up to season 3.
+	// Seasons 4-5 exist but have aired_episodes=0 (unaired) — should not trigger update.
 	id := seedSeriesWithAired(t, db, "Future Show", 5, 3)
-	seedSeason(t, db, id, 1, "/media/fs/s01", true, nil)
-	seedSeason(t, db, id, 2, "/media/fs/s02", true, nil)
-	seedSeason(t, db, id, 3, "/media/fs/s03", true, nil)
+	seedSeasonWithEpisodes(t, db, id, 1, "/media/fs/s01", true, 10)
+	seedSeasonWithEpisodes(t, db, id, 2, "/media/fs/s02", true, 10)
+	seedSeasonWithEpisodes(t, db, id, 3, "/media/fs/s03", true, 10)
+	seedSeasonWithEpisodes(t, db, id, 4, "", false, 0)
+	seedSeasonWithEpisodes(t, db, id, 5, "", false, 0)
 
 	req := httptest.NewRequest(http.MethodGet, "/api/updates", http.NoBody)
 	w := httptest.NewRecorder()
@@ -744,7 +765,7 @@ func TestHandleGetUpdates_UnairedFutureSeasons_Excluded(t *testing.T) {
 	}
 
 	if len(updates) != 0 {
-		t.Errorf("expected 0 updates when aired_seasons <= max_watched, got %d", len(updates))
+		t.Errorf("expected 0 updates when future seasons have no aired episodes, got %d", len(updates))
 	}
 }
 
@@ -752,10 +773,10 @@ func TestHandleGetUpdates_DeletedOldSeasons_NotShownAsNew(t *testing.T) {
 	srv, db := setupTestServer(t)
 
 	// Series with 5 aired seasons. User has only season 3 and 5 (deleted 1,2,4).
-	// Max owned = 5, aired = 5, so no update should show.
+	// Max watched = 5, no unwatched seasons beyond 5. No update should show.
 	id := seedSeriesWithAired(t, db, "Gaps Show", 5, 5)
-	seedSeason(t, db, id, 3, "/media/gs/s03", true, nil)
-	seedSeason(t, db, id, 5, "/media/gs/s05", true, nil)
+	seedSeasonWithEpisodes(t, db, id, 3, "/media/gs/s03", true, 10)
+	seedSeasonWithEpisodes(t, db, id, 5, "/media/gs/s05", true, 10)
 
 	req := httptest.NewRequest(http.MethodGet, "/api/updates", http.NoBody)
 	w := httptest.NewRecorder()
@@ -770,9 +791,8 @@ func TestHandleGetUpdates_DeletedOldSeasons_NotShownAsNew(t *testing.T) {
 		t.Fatalf("failed to decode response: %v", err)
 	}
 
-	// Max owned is 5, aired is 5, so no updates
 	if len(updates) != 0 {
-		t.Errorf("expected 0 updates when max owned season covers aired, got %d", len(updates))
+		t.Errorf("expected 0 updates when max watched season covers aired, got %d", len(updates))
 	}
 }
 
@@ -780,15 +800,15 @@ func TestHandleGetUpdates_GapsInSeasons_OnlyShowsNewerThanMax(t *testing.T) {
 	srv, db := setupTestServer(t)
 
 	// Series with 7 aired seasons. User owns season 1 and 3 (max=3). Seasons 4-7 are new.
-	// Non-owned seasons 2, 4-7 exist in DB from TVDB sync.
+	// Non-owned seasons 2, 4-7 exist in DB from TVDB sync with aired episodes.
 	id := seedSeriesWithAired(t, db, "Gap Series", 7, 7)
-	seedSeason(t, db, id, 1, "/media/gap/s01", true, nil)
-	seedSeason(t, db, id, 2, "", false, nil)
-	seedSeason(t, db, id, 3, "/media/gap/s03", true, nil)
-	seedSeason(t, db, id, 4, "", false, nil)
-	seedSeason(t, db, id, 5, "", false, nil)
-	seedSeason(t, db, id, 6, "", false, nil)
-	seedSeason(t, db, id, 7, "", false, nil)
+	seedSeasonWithEpisodes(t, db, id, 1, "/media/gap/s01", true, 10)
+	seedSeasonWithEpisodes(t, db, id, 2, "", false, 10)
+	seedSeasonWithEpisodes(t, db, id, 3, "/media/gap/s03", true, 10)
+	seedSeasonWithEpisodes(t, db, id, 4, "", false, 8)
+	seedSeasonWithEpisodes(t, db, id, 5, "", false, 12)
+	seedSeasonWithEpisodes(t, db, id, 6, "", false, 10)
+	seedSeasonWithEpisodes(t, db, id, 7, "", false, 6)
 
 	req := httptest.NewRequest(http.MethodGet, "/api/updates", http.NoBody)
 	w := httptest.NewRecorder()
@@ -811,14 +831,18 @@ func TestHandleGetUpdates_GapsInSeasons_OnlyShowsNewerThanMax(t *testing.T) {
 	if !ok {
 		t.Fatalf("expected new_seasons to be an array, got %T", updates[0]["new_seasons"])
 	}
-	// Seasons 4, 5, 6, 7 are newer than max owned (3)
+	// Seasons 4, 5, 6, 7 are newer than max watched (3) and have aired episodes
 	if len(newSeasons) != 4 {
 		t.Fatalf("expected 4 new seasons, got %d: %v", len(newSeasons), newSeasons)
 	}
-	expected := []int{4, 5, 6, 7}
-	for i, exp := range expected {
-		if int(newSeasons[i].(float64)) != exp {
-			t.Errorf("new_seasons[%d]: expected %d, got %v", i, exp, newSeasons[i])
+	expectedSeasons := []struct{ num, eps int }{{4, 8}, {5, 12}, {6, 10}, {7, 6}}
+	for i, exp := range expectedSeasons {
+		s := newSeasons[i].(map[string]interface{})
+		if int(s["season_number"].(float64)) != exp.num {
+			t.Errorf("new_seasons[%d]: expected season %d, got %v", i, exp.num, s["season_number"])
+		}
+		if int(s["aired_episodes"].(float64)) != exp.eps {
+			t.Errorf("new_seasons[%d]: expected %d episodes, got %v", i, exp.eps, s["aired_episodes"])
 		}
 	}
 }
@@ -828,9 +852,9 @@ func TestHandleGetUpdates_AllSeasonsOwned_NoUpdates(t *testing.T) {
 
 	// Series with 3 aired seasons, user owns all 3
 	id := seedSeriesWithAired(t, db, "Complete Show", 3, 3)
-	seedSeason(t, db, id, 1, "/media/cs/s01", true, nil)
-	seedSeason(t, db, id, 2, "/media/cs/s02", true, nil)
-	seedSeason(t, db, id, 3, "/media/cs/s03", true, nil)
+	seedSeasonWithEpisodes(t, db, id, 1, "/media/cs/s01", true, 10)
+	seedSeasonWithEpisodes(t, db, id, 2, "/media/cs/s02", true, 10)
+	seedSeasonWithEpisodes(t, db, id, 3, "/media/cs/s03", true, 10)
 
 	req := httptest.NewRequest(http.MethodGet, "/api/updates", http.NoBody)
 	w := httptest.NewRecorder()
@@ -854,12 +878,12 @@ func TestHandleGetUpdates_ScannerCreatedNoNonOwnedRows(t *testing.T) {
 	srv, db := setupTestServer(t)
 
 	// Simulates scanner-created series: aired_seasons is set high but only owned
-	// season rows exist (no non-owned rows from TVDB sync). The series should still
-	// appear in updates but with empty new_seasons (no phantom numbers).
+	// season rows exist (no non-owned rows from TVDB sync). Since there are no
+	// unwatched seasons with aired_episodes > 0 beyond max watched, no update shows.
 	id := seedSeriesWithAired(t, db, "Scanner Show", 5, 5)
-	seedSeason(t, db, id, 1, "/media/ss/s01", true, nil)
-	seedSeason(t, db, id, 2, "/media/ss/s02", true, nil)
-	seedSeason(t, db, id, 3, "/media/ss/s03", true, nil)
+	seedSeasonWithEpisodes(t, db, id, 1, "/media/ss/s01", true, 10)
+	seedSeasonWithEpisodes(t, db, id, 2, "/media/ss/s02", true, 10)
+	seedSeasonWithEpisodes(t, db, id, 3, "/media/ss/s03", true, 10)
 	// No non-owned rows for seasons 4-5 (scanner doesn't create them)
 
 	req := httptest.NewRequest(http.MethodGet, "/api/updates", http.NoBody)
@@ -875,17 +899,37 @@ func TestHandleGetUpdates_ScannerCreatedNoNonOwnedRows(t *testing.T) {
 		t.Fatalf("failed to decode response: %v", err)
 	}
 
-	if len(updates) != 1 {
-		t.Fatalf("expected 1 update, got %d", len(updates))
+	// With episode-based logic, no unwatched seasons with aired_episodes > 0 exist,
+	// so the series should NOT appear in updates.
+	if len(updates) != 0 {
+		t.Errorf("expected 0 updates (no unwatched aired seasons), got %d", len(updates))
+	}
+}
+
+func TestHandleGetUpdates_UnairedSeason_NotInUpdates(t *testing.T) {
+	srv, db := setupTestServer(t)
+
+	// Series where user watched S1, S2 exists with aired_episodes=0 (unaired).
+	// Should NOT appear in updates because the new season has no aired episodes.
+	id := seedSeriesWithAired(t, db, "Unaired Show", 2, 1)
+	seedSeasonWithEpisodes(t, db, id, 1, "/media/us/s01", true, 8)
+	seedSeasonWithEpisodes(t, db, id, 2, "", false, 0)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/updates", http.NoBody)
+	w := httptest.NewRecorder()
+	srv.router.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected status 200, got %d: %s", w.Code, w.Body.String())
 	}
 
-	// new_seasons should be empty since no non-owned rows exist
-	newSeasons, ok := updates[0]["new_seasons"].([]interface{})
-	if !ok {
-		t.Fatalf("expected new_seasons to be an array, got %T", updates[0]["new_seasons"])
+	var updates []map[string]interface{}
+	if err := json.NewDecoder(w.Body).Decode(&updates); err != nil {
+		t.Fatalf("failed to decode response: %v", err)
 	}
-	if len(newSeasons) != 0 {
-		t.Errorf("expected 0 new seasons (no non-owned rows), got %d: %v", len(newSeasons), newSeasons)
+
+	if len(updates) != 0 {
+		t.Errorf("expected 0 updates for season with aired_episodes=0, got %d", len(updates))
 	}
 }
 

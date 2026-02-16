@@ -440,11 +440,11 @@ func (s *Scanner) processSeriesInfo(info SeriesInfo) error {
 					return fmt.Errorf("failed to check existing series by tvdb_id %d: %w", tvdbID, err)
 				}
 				if err == sql.ErrNoRows {
-					// Create new series with TVDB metadata
+					// Create new series with TVDB metadata (aired_seasons=0, corrected by CheckForTVDBUpdates)
 					result, err := s.db.Exec(`
 						INSERT INTO series (tvdb_id, title, original_title, poster_url, status, total_seasons, aired_seasons, created_at, updated_at)
-						VALUES (?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
-					`, tvdbID, details.Name, details.OriginalName, details.Image, details.Status, len(details.Seasons), tvdb.MaxAiredSeasonNumber(details.Seasons))
+						VALUES (?, ?, ?, ?, ?, ?, 0, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+					`, tvdbID, details.Name, details.OriginalName, details.Image, details.Status, len(details.Seasons))
 
 					if err != nil {
 						return err

@@ -23,8 +23,9 @@ type TVDBCheckResult struct {
 	Skipped bool
 }
 
-// CheckForTVDBUpdates checks all series with TVDB IDs for season count changes,
-// creates alerts for new aired seasons, and optionally auto-syncs stale metadata.
+// CheckForTVDBUpdates checks all series with TVDB IDs for episode-level changes,
+// creates alerts for new aired seasons and mid-season returns, and optionally
+// auto-syncs stale metadata.
 // This function is used by both the scheduled tvdb_check task and the manual API trigger.
 func CheckForTVDBUpdates(db *database.DB, tvdbClient *tvdb.Client, autoSync bool) TVDBCheckResult {
 	if !tvdbCheckMu.TryLock() {
@@ -36,13 +37,13 @@ func CheckForTVDBUpdates(db *database.DB, tvdbClient *tvdb.Client, autoSync bool
 	var result TVDBCheckResult
 
 	type seriesRow struct {
-		id, tvdbID, totalSeasons, airedSeasons, maxWatched int
-		title                                              string
-		updatedAt                                          time.Time
+		id, tvdbID, airedSeasons, maxWatched int
+		title                                string
+		updatedAt                            time.Time
 	}
 
 	rows, err := db.Query(`
-		SELECT s.id, s.tvdb_id, s.title, s.total_seasons, s.aired_seasons,
+		SELECT s.id, s.tvdb_id, s.title, s.aired_seasons,
 			COALESCE((SELECT MAX(sn.season_number) FROM seasons sn WHERE sn.series_id = s.id AND sn.is_watched = 1 AND sn.season_number > 0), 0),
 			s.updated_at
 		FROM series s
@@ -56,7 +57,7 @@ func CheckForTVDBUpdates(db *database.DB, tvdbClient *tvdb.Client, autoSync bool
 	var seriesList []seriesRow
 	for rows.Next() {
 		var s seriesRow
-		if err := rows.Scan(&s.id, &s.tvdbID, &s.title, &s.totalSeasons, &s.airedSeasons, &s.maxWatched, &s.updatedAt); err != nil {
+		if err := rows.Scan(&s.id, &s.tvdbID, &s.title, &s.airedSeasons, &s.maxWatched, &s.updatedAt); err != nil {
 			slog.Error("Failed to scan series check row", "error", err)
 			continue
 		}
@@ -72,41 +73,110 @@ func CheckForTVDBUpdates(db *database.DB, tvdbClient *tvdb.Client, autoSync bool
 	for _, s := range seriesList {
 		result.Checked++
 
-		details, err := tvdbClient.GetSeriesDetails(s.tvdbID)
+		// Fetch episodes from TVDB and count aired episodes per season.
+		episodes, err := tvdbClient.GetSeriesEpisodes(s.tvdbID)
 		if err != nil {
-			slog.Error("Failed to get TVDB seasons", "series_id", s.id, "tvdb_id", s.tvdbID, "error", err)
+			slog.Error("Failed to get TVDB episodes", "series_id", s.id, "tvdb_id", s.tvdbID, "error", err)
+			result.Errors++
+			continue
+		}
+		newAiredPerSeason := tvdb.CountAiredEpisodesBySeason(episodes)
+
+		// Load current aired_episodes from DB for comparison.
+		oldAiredPerSeason, err := loadAiredEpisodesFromDB(db, s.id)
+		if err != nil {
+			slog.Error("Failed to load aired episodes from DB", "series_id", s.id, "error", err)
 			result.Errors++
 			continue
 		}
 
-		newTotalSeasons := len(details.Seasons)
-		newAiredSeasons := tvdb.MaxAiredSeasonNumber(details.Seasons)
+		// Calculate new aired_seasons count (seasons with aired_episodes > 0, excluding specials).
+		newAiredSeasons := 0
+		for sn, count := range newAiredPerSeason {
+			if sn > 0 && count > 0 {
+				newAiredSeasons++
+			}
+		}
 
-		seasonCountChanged := newTotalSeasons != s.totalSeasons || newAiredSeasons != s.airedSeasons
-		if seasonCountChanged {
-			if newAiredSeasons > s.maxWatched && s.maxWatched > 0 {
-				message := "New seasons available for " + s.title
-
-				if _, err = db.Exec(`
-					INSERT INTO system_alerts (type, message, created_at, dismissed)
-					SELECT ?, ?, CURRENT_TIMESTAMP, 0
-					WHERE NOT EXISTS (
-						SELECT 1 FROM system_alerts WHERE type = ? AND message = ? AND dismissed = 0
-					)
-				`, "new_seasons", message, "new_seasons", message); err != nil {
-					slog.Error("Failed to create alert", "series_id", s.id, "error", err)
+		// Detect changes: new seasons with aired episodes, or increased aired_episodes.
+		hasChanges := false
+		for sn, newCount := range newAiredPerSeason {
+			if sn <= 0 || newCount <= 0 {
+				continue
+			}
+			oldCount := oldAiredPerSeason[sn]
+			if newCount > oldCount {
+				hasChanges = true
+				// Only alert for seasons beyond the user's max watched.
+				if sn > s.maxWatched && s.maxWatched > 0 {
+					var message string
+					if oldCount == 0 {
+						message = fmt.Sprintf("%s — new season S%02d", s.title, sn)
+					} else {
+						message = fmt.Sprintf("%s — S%02d: %d new episodes", s.title, sn, newCount-oldCount)
+					}
+					if _, err = db.Exec(`
+						INSERT INTO system_alerts (type, message, created_at, dismissed)
+						SELECT ?, ?, CURRENT_TIMESTAMP, 0
+						WHERE NOT EXISTS (
+							SELECT 1 FROM system_alerts WHERE type = ? AND message = ? AND dismissed = 0
+						)
+					`, "new_seasons", message, "new_seasons", message); err != nil {
+						slog.Error("Failed to create alert", "series_id", s.id, "error", err)
+					}
 				}
 			}
+		}
 
-			slog.Info("Detected season changes", "series", s.title,
-				"old_total", s.totalSeasons, "new_total", newTotalSeasons,
-				"old_aired", s.airedSeasons, "new_aired", newAiredSeasons)
+		if hasChanges {
+			slog.Info("Detected episode changes", "series", s.title,
+				"old_aired_seasons", s.airedSeasons, "new_aired_seasons", newAiredSeasons)
 			result.Updated++
 		}
 
-		// Auto-sync full metadata when season counts changed (so new season rows are
-		// created immediately, not after a 7-day delay) or for stale series.
-		needsSync := autoSync && (seasonCountChanged || time.Since(s.updatedAt) > 7*24*time.Hour)
+		// Update aired_episodes per season in DB.
+		dbWriteErr := false
+		for sn, newCount := range newAiredPerSeason {
+			if _, err := db.Exec(`
+				UPDATE seasons SET aired_episodes = ?, updated_at = CURRENT_TIMESTAMP
+				WHERE series_id = ? AND season_number = ?
+			`, newCount, s.id, sn); err != nil {
+				slog.Error("Failed to update season aired_episodes", "series_id", s.id, "season", sn, "error", err)
+				dbWriteErr = true
+			}
+		}
+
+		// Reset aired_episodes to 0 for seasons that previously had aired episodes
+		// but are no longer present in the TVDB response (e.g. episodes were removed).
+		for sn, oldCount := range oldAiredPerSeason {
+			if oldCount > 0 && newAiredPerSeason[sn] == 0 {
+				if _, err := db.Exec(`
+					UPDATE seasons SET aired_episodes = 0, updated_at = CURRENT_TIMESTAMP
+					WHERE series_id = ? AND season_number = ?
+				`, s.id, sn); err != nil {
+					slog.Error("Failed to reset season aired_episodes", "series_id", s.id, "season", sn, "error", err)
+					dbWriteErr = true
+				}
+			}
+		}
+
+		// Update aired_seasons in series.
+		if newAiredSeasons != s.airedSeasons {
+			if _, err := db.Exec(`
+				UPDATE series SET aired_seasons = ?, updated_at = CURRENT_TIMESTAMP
+				WHERE id = ?
+			`, newAiredSeasons, s.id); err != nil {
+				slog.Error("Failed to update series aired_seasons", "series_id", s.id, "error", err)
+				dbWriteErr = true
+			}
+		}
+
+		if dbWriteErr {
+			result.Errors++
+		}
+
+		// Auto-sync full metadata when changes detected or for stale series.
+		needsSync := autoSync && (hasChanges || time.Since(s.updatedAt) > 7*24*time.Hour)
 		if needsSync {
 			// Verify series still exists (may have been deleted during this check run)
 			var exists int
@@ -120,8 +190,8 @@ func CheckForTVDBUpdates(db *database.DB, tvdbClient *tvdb.Client, autoSync bool
 				continue
 			}
 
-			if seasonCountChanged {
-				slog.Info("Syncing series metadata after season count change", "series", s.title)
+			if hasChanges {
+				slog.Info("Syncing series metadata after episode changes", "series", s.title)
 			} else {
 				slog.Info("Auto-syncing stale series metadata", "series", s.title, "last_updated", s.updatedAt)
 			}
@@ -131,22 +201,33 @@ func CheckForTVDBUpdates(db *database.DB, tvdbClient *tvdb.Client, autoSync bool
 			} else {
 				result.Synced++
 			}
-		} else if seasonCountChanged {
-			// autoSync disabled — update season counts directly.
-			if _, err = db.Exec(`
-				UPDATE series
-				SET total_seasons = ?, aired_seasons = ?, updated_at = CURRENT_TIMESTAMP
-				WHERE id = ?
-			`, newTotalSeasons, newAiredSeasons, s.id); err != nil {
-				slog.Error("Failed to update series seasons", "series_id", s.id, "error", err)
-				result.Errors++
-				continue
-			}
 		}
 	}
 
 	slog.Info("TVDB check completed", "checked", result.Checked, "updated", result.Updated, "synced", result.Synced, "errors", result.Errors)
 	return result
+}
+
+// loadAiredEpisodesFromDB loads current aired_episodes per season for a series.
+func loadAiredEpisodesFromDB(db *database.DB, seriesID int) (map[int]int, error) {
+	rows, err := db.Query(`
+		SELECT season_number, aired_episodes FROM seasons
+		WHERE series_id = ? AND season_number > 0
+	`, seriesID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close() //nolint:errcheck
+
+	result := make(map[int]int)
+	for rows.Next() {
+		var sn, count int
+		if err := rows.Scan(&sn, &count); err != nil {
+			return nil, err
+		}
+		result[sn] = count
+	}
+	return result, rows.Err()
 }
 
 // SyncSeriesMetadata fetches full metadata from TVDB and updates the database.
@@ -156,6 +237,23 @@ func SyncSeriesMetadata(db *database.DB, tvdbClient *tvdb.Client, seriesID int64
 	extended, err := tvdbClient.GetSeriesExtendedFull(tvdbID)
 	if err != nil {
 		return fmt.Errorf("failed to fetch series from TVDB: %w", err)
+	}
+
+	// Fetch episodes to count aired episodes per season.
+	// On error, log a warning and preserve existing values from DB.
+	airedPerSeason := make(map[int]int)
+	episodesFailed := false
+	episodes, err := tvdbClient.GetSeriesEpisodes(tvdbID)
+	if err != nil {
+		slog.Warn("Failed to fetch episodes from TVDB, preserving existing aired_episodes",
+			"tvdb_id", tvdbID, "error", err)
+		episodesFailed = true
+		// Load existing aired_episodes so upsertSeasonTx preserves them.
+		if existing, loadErr := loadAiredEpisodesFromDB(db, int(seriesID)); loadErr == nil {
+			airedPerSeason = existing
+		}
+	} else {
+		airedPerSeason = tvdb.CountAiredEpisodesBySeason(episodes)
 	}
 
 	// Get Russian translation
@@ -210,12 +308,25 @@ func SyncSeriesMetadata(db *database.DB, tvdbClient *tvdb.Client, seriesID int64
 		contentRating = extended.ContentRatings[0].Name
 	}
 
+	// Calculate aired seasons as count of seasons with aired_episodes > 0 (excluding specials).
+	// When episode fetch failed, preserve existing aired_seasons from DB.
+	airedSeasons := 0
+	if episodesFailed {
+		_ = db.QueryRow(`SELECT aired_seasons FROM series WHERE id = ?`, seriesID).Scan(&airedSeasons)
+	} else {
+		for sn, count := range airedPerSeason {
+			if sn > 0 && count > 0 {
+				airedSeasons++
+			}
+		}
+	}
+
 	// Update series in database
 	seriesData := &database.Series{
 		TVDBId:       &tvdbID,
 		Title:        title,
 		TotalSeasons: len(extended.Seasons),
-		AiredSeasons: tvdb.MaxAiredSeasonNumber(extended.Seasons),
+		AiredSeasons: airedSeasons,
 	}
 	if originalTitle != "" {
 		seriesData.OriginalTitle = &originalTitle
@@ -255,9 +366,10 @@ func SyncSeriesMetadata(db *database.DB, tvdbClient *tvdb.Client, seriesID int64
 	seasons := make([]database.Season, 0, len(extended.Seasons))
 	for _, seasonInfo := range extended.Seasons {
 		seasonData := database.Season{
-			SeriesID:     seriesID,
-			TVDBSeasonID: &seasonInfo.ID,
-			SeasonNumber: seasonInfo.Number,
+			SeriesID:      seriesID,
+			TVDBSeasonID:  &seasonInfo.ID,
+			SeasonNumber:  seasonInfo.Number,
+			AiredEpisodes: airedPerSeason[seasonInfo.Number],
 		}
 		if seasonInfo.Name != "" {
 			seasonData.Name = &seasonInfo.Name

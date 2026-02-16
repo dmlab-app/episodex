@@ -5,96 +5,103 @@ import (
 	"time"
 )
 
-func TestIsSeasonAired(t *testing.T) {
-	// Fix nowFunc to a known date for deterministic tests
+func TestCountAiredEpisodesBySeason_Empty(t *testing.T) {
 	origNow := nowFunc
-	nowFunc = func() time.Time {
-		return time.Date(2026, 2, 14, 0, 0, 0, 0, time.UTC)
-	}
+	nowFunc = func() time.Time { return time.Date(2026, 2, 14, 0, 0, 0, 0, time.UTC) }
 	t.Cleanup(func() { nowFunc = origNow })
 
-	tests := []struct {
-		name     string
-		year     string
-		expected bool
-	}{
-		{"past year", "2020", true},
-		{"current year", "2026", true},
-		{"future year", "2027", false},
-		{"empty year", "", false},
-		{"invalid year", "abc", false},
-		{"zero year", "0", false},
-		{"negative year", "-1", false},
+	got := CountAiredEpisodesBySeason(nil)
+	if len(got) != 0 {
+		t.Errorf("expected empty map for nil input, got %v", got)
 	}
 
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			result := isSeasonAired(tt.year)
-			if result != tt.expected {
-				t.Errorf("isSeasonAired(%q) = %v, want %v", tt.year, result, tt.expected)
-			}
-		})
+	got = CountAiredEpisodesBySeason([]EpisodeBase{})
+	if len(got) != 0 {
+		t.Errorf("expected empty map for empty input, got %v", got)
 	}
 }
 
-func TestMaxAiredSeasonNumber(t *testing.T) {
-	seasons := []SeasonInfo{
-		{Number: 1, Year: "2020", Aired: true},
-		{Number: 2, Year: "2021", Aired: true},
-		{Number: 3, Year: "2025", Aired: true},
-		{Number: 4, Year: "2028", Aired: false}, // future
-		{Number: 5, Year: "", Aired: false},     // no year
+func TestCountAiredEpisodesBySeason_AllAired(t *testing.T) {
+	origNow := nowFunc
+	nowFunc = func() time.Time { return time.Date(2026, 2, 14, 0, 0, 0, 0, time.UTC) }
+	t.Cleanup(func() { nowFunc = origNow })
+
+	episodes := []EpisodeBase{
+		{SeasonNumber: 1, Number: 1, Aired: "2024-01-15"},
+		{SeasonNumber: 1, Number: 2, Aired: "2024-01-22"},
+		{SeasonNumber: 2, Number: 1, Aired: "2025-06-01"},
+		{SeasonNumber: 2, Number: 2, Aired: "2025-06-08"},
+		{SeasonNumber: 2, Number: 3, Aired: "2025-06-15"},
 	}
 
-	got := MaxAiredSeasonNumber(seasons)
-	if got != 3 {
-		t.Errorf("MaxAiredSeasonNumber() = %d, want 3", got)
+	got := CountAiredEpisodesBySeason(episodes)
+	if got[1] != 2 {
+		t.Errorf("season 1: expected 2, got %d", got[1])
+	}
+	if got[2] != 3 {
+		t.Errorf("season 2: expected 3, got %d", got[2])
 	}
 }
 
-func TestMaxAiredSeasonNumber_Empty(t *testing.T) {
-	got := MaxAiredSeasonNumber(nil)
-	if got != 0 {
-		t.Errorf("MaxAiredSeasonNumber(nil) = %d, want 0", got)
+func TestCountAiredEpisodesBySeason_AllFuture(t *testing.T) {
+	origNow := nowFunc
+	nowFunc = func() time.Time { return time.Date(2026, 2, 14, 0, 0, 0, 0, time.UTC) }
+	t.Cleanup(func() { nowFunc = origNow })
+
+	episodes := []EpisodeBase{
+		{SeasonNumber: 1, Number: 1, Aired: "2027-01-15"},
+		{SeasonNumber: 1, Number: 2, Aired: "2027-01-22"},
 	}
 
-	got = MaxAiredSeasonNumber([]SeasonInfo{})
-	if got != 0 {
-		t.Errorf("MaxAiredSeasonNumber([]) = %d, want 0", got)
+	got := CountAiredEpisodesBySeason(episodes)
+	if len(got) != 0 {
+		t.Errorf("expected empty map for all-future episodes, got %v", got)
 	}
 }
 
-func TestMaxAiredSeasonNumber_AllAired(t *testing.T) {
-	seasons := []SeasonInfo{
-		{Number: 1, Aired: true},
-		{Number: 2, Aired: true},
+func TestCountAiredEpisodesBySeason_Mix(t *testing.T) {
+	origNow := nowFunc
+	nowFunc = func() time.Time { return time.Date(2026, 2, 14, 0, 0, 0, 0, time.UTC) }
+	t.Cleanup(func() { nowFunc = origNow })
+
+	episodes := []EpisodeBase{
+		{SeasonNumber: 1, Number: 1, Aired: "2024-01-15"},
+		{SeasonNumber: 1, Number: 2, Aired: "2024-01-22"},
+		{SeasonNumber: 2, Number: 1, Aired: "2026-02-01"},
+		{SeasonNumber: 2, Number: 2, Aired: "2026-02-14"}, // today — should count
+		{SeasonNumber: 2, Number: 3, Aired: "2026-03-01"}, // future
+		{SeasonNumber: 2, Number: 4, Aired: ""},           // no date
+		{SeasonNumber: 3, Number: 1, Aired: "2027-01-01"}, // all future
 	}
-	got := MaxAiredSeasonNumber(seasons)
-	if got != 2 {
-		t.Errorf("MaxAiredSeasonNumber() = %d, want 2", got)
+
+	got := CountAiredEpisodesBySeason(episodes)
+	if got[1] != 2 {
+		t.Errorf("season 1: expected 2, got %d", got[1])
+	}
+	if got[2] != 2 {
+		t.Errorf("season 2: expected 2, got %d", got[2])
+	}
+	if got[3] != 0 {
+		t.Errorf("season 3: expected 0, got %d", got[3])
 	}
 }
 
-func TestMaxAiredSeasonNumber_NoneAired(t *testing.T) {
-	seasons := []SeasonInfo{
-		{Number: 1, Aired: false},
-		{Number: 2, Aired: false},
-	}
-	got := MaxAiredSeasonNumber(seasons)
-	if got != 0 {
-		t.Errorf("MaxAiredSeasonNumber() = %d, want 0", got)
-	}
-}
+func TestCountAiredEpisodesBySeason_Specials(t *testing.T) {
+	origNow := nowFunc
+	nowFunc = func() time.Time { return time.Date(2026, 2, 14, 0, 0, 0, 0, time.UTC) }
+	t.Cleanup(func() { nowFunc = origNow })
 
-func TestMaxAiredSeasonNumber_NonContiguous(t *testing.T) {
-	// Seasons numbered 1, 2, 5 (gap at 3, 4) — max should be 5, not count of 3
-	seasons := []SeasonInfo{
-		{Number: 1, Aired: true},
-		{Number: 2, Aired: true},
-		{Number: 5, Aired: true},
+	episodes := []EpisodeBase{
+		{SeasonNumber: 0, Number: 1, Aired: "2024-01-15"},
+		{SeasonNumber: 0, Number: 2, Aired: "2024-06-01"},
+		{SeasonNumber: 1, Number: 1, Aired: "2024-01-15"},
 	}
-	got := MaxAiredSeasonNumber(seasons)
-	if got != 5 {
-		t.Errorf("MaxAiredSeasonNumber() = %d, want 5", got)
+
+	got := CountAiredEpisodesBySeason(episodes)
+	if got[0] != 2 {
+		t.Errorf("season 0 (specials): expected 2, got %d", got[0])
+	}
+	if got[1] != 1 {
+		t.Errorf("season 1: expected 1, got %d", got[1])
 	}
 }
