@@ -61,6 +61,11 @@ func main() {
 		slog.Warn("TVDB API key not configured, TVDB features will be disabled")
 	}
 
+	// Sync unsynced series in background (series added by scanner but not yet fully synced)
+	if tvdbClient != nil {
+		go api.SyncUnsyncedSeries(db, tvdbClient)
+	}
+
 	// Initialize scanner with TVDB client
 	mediaScanner := scanner.New(db, tvdbClient, cfg.MediaPath)
 
