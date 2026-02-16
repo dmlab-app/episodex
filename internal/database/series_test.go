@@ -124,3 +124,141 @@ func TestGetUnsyncedSeries_Unsynced(t *testing.T) {
 		t.Errorf("expected tvdb_id 67890, got %v", s.TVDBId)
 	}
 }
+
+func createTestSeries(t *testing.T, db *DB) int64 {
+	t.Helper()
+	result, err := db.Exec(`
+		INSERT INTO series (tvdb_id, title, created_at, updated_at)
+		VALUES (99999, 'Test Show', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+	`)
+	if err != nil {
+		t.Fatalf("failed to insert series: %v", err)
+	}
+	id, _ := result.LastInsertId()
+	return id
+}
+
+func TestSeasonAiredEpisodes_WithEpisodes(t *testing.T) {
+	db := newTestDB(t)
+	seriesID := createTestSeries(t, db)
+
+	season := &Season{
+		SeriesID:      seriesID,
+		SeasonNumber:  1,
+		AiredEpisodes: 10,
+	}
+	_, err := db.UpsertSeason(season)
+	if err != nil {
+		t.Fatalf("failed to upsert season: %v", err)
+	}
+
+	got, err := db.GetSeasonBySeriesAndNumber(seriesID, 1)
+	if err != nil {
+		t.Fatalf("failed to get season: %v", err)
+	}
+	if got == nil {
+		t.Fatal("expected season, got nil")
+	}
+	if got.AiredEpisodes != 10 {
+		t.Errorf("expected aired_episodes=10, got %d", got.AiredEpisodes)
+	}
+}
+
+func TestSeasonAiredEpisodes_Zero(t *testing.T) {
+	db := newTestDB(t)
+	seriesID := createTestSeries(t, db)
+
+	season := &Season{
+		SeriesID:      seriesID,
+		SeasonNumber:  1,
+		AiredEpisodes: 0,
+	}
+	_, err := db.UpsertSeason(season)
+	if err != nil {
+		t.Fatalf("failed to upsert season: %v", err)
+	}
+
+	got, err := db.GetSeasonBySeriesAndNumber(seriesID, 1)
+	if err != nil {
+		t.Fatalf("failed to get season: %v", err)
+	}
+	if got == nil {
+		t.Fatal("expected season, got nil")
+	}
+	if got.AiredEpisodes != 0 {
+		t.Errorf("expected aired_episodes=0, got %d", got.AiredEpisodes)
+	}
+}
+
+func TestSeasonAiredEpisodes_PreservedOnUpsert(t *testing.T) {
+	db := newTestDB(t)
+	seriesID := createTestSeries(t, db)
+
+	// Insert season with aired_episodes=8
+	season := &Season{
+		SeriesID:      seriesID,
+		SeasonNumber:  1,
+		AiredEpisodes: 8,
+	}
+	_, err := db.UpsertSeason(season)
+	if err != nil {
+		t.Fatalf("failed to upsert season: %v", err)
+	}
+
+	// Upsert same season with aired_episodes=0 (e.g. scanner re-sync)
+	// Direct assignment overwrites the old value.
+	season2 := &Season{
+		SeriesID:      seriesID,
+		SeasonNumber:  1,
+		AiredEpisodes: 0,
+	}
+	_, err = db.UpsertSeason(season2)
+	if err != nil {
+		t.Fatalf("failed to re-upsert season: %v", err)
+	}
+
+	got, err := db.GetSeasonBySeriesAndNumber(seriesID, 1)
+	if err != nil {
+		t.Fatalf("failed to get season: %v", err)
+	}
+	if got.AiredEpisodes != 0 {
+		t.Errorf("expected aired_episodes=0 (overwritten), got %d", got.AiredEpisodes)
+	}
+}
+
+func TestSeasonAiredEpisodes_SyncTransaction(t *testing.T) {
+	db := newTestDB(t)
+	seriesID := createTestSeries(t, db)
+
+	tvdbID := 99999
+	series := &Series{
+		Title:        "Test Show",
+		TotalSeasons: 2,
+		AiredSeasons: 1,
+	}
+	seasons := []Season{
+		{SeriesID: seriesID, SeasonNumber: 1, AiredEpisodes: 10},
+		{SeriesID: seriesID, SeasonNumber: 2, AiredEpisodes: 0},
+	}
+
+	err := db.SyncSeriesAndChildren(seriesID, tvdbID, series, seasons, nil)
+	if err != nil {
+		t.Fatalf("failed to sync: %v", err)
+	}
+
+	s1, err := db.GetSeasonBySeriesAndNumber(seriesID, 1)
+	if err != nil {
+		t.Fatalf("failed to get season 1: %v", err)
+	}
+	if s1.AiredEpisodes != 10 {
+		t.Errorf("season 1: expected aired_episodes=10, got %d", s1.AiredEpisodes)
+	}
+
+	s2, err := db.GetSeasonBySeriesAndNumber(seriesID, 2)
+	if err != nil {
+		t.Fatalf("failed to get season 2: %v", err)
+	}
+	if s2.AiredEpisodes != 0 {
+		t.Errorf("season 2: expected aired_episodes=0, got %d", s2.AiredEpisodes)
+	}
+}

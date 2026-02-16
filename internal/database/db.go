@@ -90,6 +90,7 @@ func (db *DB) initTables() error {
 		voice_actor_id INTEGER,
 		is_watched BOOLEAN DEFAULT 0,
 		is_owned BOOLEAN DEFAULT 0,
+		aired_episodes INTEGER DEFAULT 0,
 		discovered_at TIMESTAMP,
 		created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
 		updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,

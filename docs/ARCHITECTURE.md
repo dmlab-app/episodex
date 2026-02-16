@@ -110,23 +110,21 @@ EpisodeX - сервис для учёта скачанных сериалов в
 1. SELECT все сериалы с tvdb_id из БД
        │
 2. Для каждого сериала:
-   → GetSeriesDetails(tvdb_id) из TVDB
-   → Получить список сезонов, отфильтровать:
-     - season 0 (specials) — пропустить
-     - type != "official"/"aired"/"" — пропустить
-   → Посчитать aired_seasons (MaxAiredSeasonNumber)
+   → GetSeriesEpisodes(tvdb_id) — все эпизоды из TVDB
+   → CountAiredEpisodesBySeason — подсчёт вышедших эпизодов по сезонам
+   → Загрузить текущие aired_episodes из БД для сравнения
        │
-3. Если aired_seasons изменился:
-   ├── Если aired > max_watched И max_watched > 0:
-   │   → INSERT INTO system_alerts (type='new_seasons')
-   │     "New seasons available for Breaking Bad"
+3. Если aired_episodes изменились:
+   ├── Новый сезон с эпизодами → алерт "Series — new season S03"
+   ├── Больше эпизодов в сезоне → алерт "Series — S02: 4 new episodes"
+   ├── UPDATE seasons SET aired_episodes для каждого сезона
+   ├── Сброс aired_episodes = 0 для удалённых эпизодов
    │
    └── autoSync включён?
-       ├── ДА → SyncSeriesMetadata() (полная синхронизация)
-       └── НЕТ → UPDATE series SET aired_seasons = ?
+       └── ДА → SyncSeriesMetadata() (полная синхронизация)
 ```
 
-**Важно:** `aired` = сезон ВЫШЕЛ (year <= текущий год). Это НЕ "продлён", а именно факт выхода.
+**Важно:** `aired` = эпизод ВЫШЕЛ (aired date <= сегодня). Определяется по дате каждого эпизода из TVDB API.
 
 ### 3.3. Полная синхронизация (SyncSeriesMetadata)
 
@@ -137,11 +135,14 @@ EpisodeX - сервис для учёта скачанных сериалов в
    - актёры/персонажи
    - артворки (постеры, фоны, баннеры)
        │
-2. GetSeriesTranslation(tvdb_id, "rus") — русское название и описание
+2. GetSeriesEpisodes(tvdb_id) — все эпизоды, подсчёт aired_episodes по сезонам
+   (при ошибке — сохраняет существующие значения из БД)
        │
-3. db.SyncSeriesAndChildren() — ОДНА транзакция:
+3. GetSeriesTranslation(tvdb_id, "rus") — русское название и описание
+       │
+4. db.SyncSeriesAndChildren() — ОДНА транзакция:
    - UPDATE series (с tvdb_id guard: WHERE tvdb_id = ?)
-   - Для каждого сезона: UPSERT season (не трогает is_owned, folder_path)
+   - Для каждого сезона: UPSERT season (не трогает is_owned, folder_path, сохраняет aired_episodes)
    - DELETE + INSERT characters
    - DELETE + INSERT artworks
 ```

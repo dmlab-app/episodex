@@ -761,9 +761,8 @@ async function loadUpdates() {
 
         list.innerHTML = state.updates.map(u => {
             const newSeasons = u.new_seasons || [];
-            const airedSeasons = u.aired_seasons || 0;
             const seasonLabel = newSeasons.length > 0
-                ? newSeasons.map(n => `S${String(n).padStart(2, '0')}`).join(', ')
+                ? newSeasons.map(s => `S${String(s.season_number).padStart(2, '0')}: ${s.aired_episodes} ep`).join(', ')
                 : 'New seasons';
             return `
             <div class="update-card" onclick="navigate('/series/${u.id}')">
@@ -772,7 +771,7 @@ async function loadUpdates() {
                 </div>
                 <div class="update-info">
                     <h4 class="update-title">${esc(u.title)}</h4>
-                    <p class="update-detail"><span class="update-season">${esc(seasonLabel)}</span> \u2014 ${airedSeasons} aired</p>
+                    <p class="update-detail"><span class="update-season">${esc(seasonLabel)}</span></p>
                 </div>
             </div>
             `;
