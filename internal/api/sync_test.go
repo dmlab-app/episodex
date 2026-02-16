@@ -365,6 +365,16 @@ func TestSyncUnsyncedSeries_NoUnsynced(t *testing.T) {
 
 	// Should return without errors - nothing to sync
 	SyncUnsyncedSeries(db, tvdbClient)
+
+	// Verify the already-synced series was not modified
+	var overview string
+	err = db.QueryRow(`SELECT overview FROM series WHERE tvdb_id = 12345`).Scan(&overview)
+	if err != nil {
+		t.Fatalf("failed to query series: %v", err)
+	}
+	if overview != "Has overview" {
+		t.Errorf("expected overview unchanged as 'Has overview', got %q", overview)
+	}
 }
 
 func TestSyncUnsyncedSeries_SyncsSuccessfully(t *testing.T) {

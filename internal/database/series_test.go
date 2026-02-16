@@ -114,6 +114,9 @@ func TestGetUnsyncedSeries_Unsynced(t *testing.T) {
 	}
 
 	s := series[0]
+	if s.ID == 0 {
+		t.Errorf("expected non-zero ID")
+	}
 	if s.Title != "Unsynced Show" {
 		t.Errorf("expected title 'Unsynced Show', got %q", s.Title)
 	}

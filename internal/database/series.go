@@ -59,6 +59,7 @@ func (db *DB) GetUnsyncedSeries() ([]Series, error) {
 		SELECT id, tvdb_id, title
 		FROM series
 		WHERE tvdb_id IS NOT NULL AND overview IS NULL
+		ORDER BY id
 	`)
 	if err != nil {
 		return nil, fmt.Errorf("failed to query unsynced series: %w", err)
