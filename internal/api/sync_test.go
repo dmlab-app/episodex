@@ -340,6 +340,203 @@ func TestSyncSeriesAndChildren_TVDBIDMismatch(t *testing.T) {
 
 func strPtr(s string) *string { return &s }
 
+func TestSyncUnsyncedSeries_NoUnsynced(t *testing.T) {
+	tmpDir := t.TempDir()
+	dbPath := filepath.Join(tmpDir, "test.db")
+	db, err := database.New(dbPath)
+	if err != nil {
+		t.Fatalf("failed to create test database: %v", err)
+	}
+	t.Cleanup(func() {
+		db.Close()
+		os.Remove(dbPath)
+	})
+
+	// Insert a series that already has overview (should NOT be picked up)
+	_, err = db.Exec(`
+		INSERT INTO series (tvdb_id, title, overview, status, total_seasons, created_at, updated_at)
+		VALUES (12345, 'Already Synced', 'Has overview', 'Continuing', 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+	`)
+	if err != nil {
+		t.Fatalf("failed to seed series: %v", err)
+	}
+
+	tvdbClient := newTestTVDBServer(t, http.NewServeMux())
+
+	// Should return without errors - nothing to sync
+	SyncUnsyncedSeries(db, tvdbClient)
+
+	// Verify the already-synced series was not modified
+	var overview string
+	err = db.QueryRow(`SELECT overview FROM series WHERE tvdb_id = 12345`).Scan(&overview)
+	if err != nil {
+		t.Fatalf("failed to query series: %v", err)
+	}
+	if overview != "Has overview" {
+		t.Errorf("expected overview unchanged as 'Has overview', got %q", overview)
+	}
+}
+
+func TestSyncUnsyncedSeries_SyncsSuccessfully(t *testing.T) {
+	tmpDir := t.TempDir()
+	dbPath := filepath.Join(tmpDir, "test.db")
+	db, err := database.New(dbPath)
+	if err != nil {
+		t.Fatalf("failed to create test database: %v", err)
+	}
+	t.Cleanup(func() {
+		db.Close()
+		os.Remove(dbPath)
+	})
+
+	// Insert an unsynced series (tvdb_id set, overview NULL)
+	tvdbID := 81189
+	_, err = db.Exec(`
+		INSERT INTO series (tvdb_id, title, status, total_seasons, created_at, updated_at)
+		VALUES (?, 'Unsynced Show', 'Continuing', 0, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+	`, tvdbID)
+	if err != nil {
+		t.Fatalf("failed to seed series: %v", err)
+	}
+
+	// Create mock TVDB server
+	extendedResp := map[string]interface{}{
+		"status": "success",
+		"data": map[string]interface{}{
+			"id":             tvdbID,
+			"name":           "Unsynced Show",
+			"originalName":   "Unsynced Show",
+			"slug":           "unsynced-show",
+			"overview":       "Now it has an overview.",
+			"image":          "https://tvdb.com/poster.jpg",
+			"status":         map[string]interface{}{"name": "Continuing"},
+			"seasons":        []map[string]interface{}{},
+			"genres":         []interface{}{},
+			"artworks":       []interface{}{},
+			"characters":     []interface{}{},
+			"contentRatings": []interface{}{},
+			"companies":      []interface{}{},
+		},
+	}
+
+	tvdbClient := newTestTVDBServer(t, tvdbMux(extendedResp, nil))
+	if err := tvdbClient.Login(); err != nil {
+		t.Fatalf("failed to login to mock TVDB: %v", err)
+	}
+
+	SyncUnsyncedSeries(db, tvdbClient)
+
+	// Verify the series was synced (overview should now be set)
+	var overview string
+	err = db.QueryRow(`SELECT overview FROM series WHERE tvdb_id = ?`, tvdbID).Scan(&overview)
+	if err != nil {
+		t.Fatalf("failed to query series: %v", err)
+	}
+	if overview != "Now it has an overview." {
+		t.Errorf("expected overview to be set, got %q", overview)
+	}
+}
+
+func TestSyncUnsyncedSeries_ErrorDoesNotStopOthers(t *testing.T) {
+	tmpDir := t.TempDir()
+	dbPath := filepath.Join(tmpDir, "test.db")
+	db, err := database.New(dbPath)
+	if err != nil {
+		t.Fatalf("failed to create test database: %v", err)
+	}
+	t.Cleanup(func() {
+		db.Close()
+		os.Remove(dbPath)
+	})
+
+	// Insert two unsynced series
+	badTVDBID := 99999
+	goodTVDBID := 81189
+	_, err = db.Exec(`
+		INSERT INTO series (tvdb_id, title, status, total_seasons, created_at, updated_at)
+		VALUES (?, 'Bad Show', 'Continuing', 0, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+	`, badTVDBID)
+	if err != nil {
+		t.Fatalf("failed to seed series: %v", err)
+	}
+	_, err = db.Exec(`
+		INSERT INTO series (tvdb_id, title, status, total_seasons, created_at, updated_at)
+		VALUES (?, 'Good Show', 'Continuing', 0, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+	`, goodTVDBID)
+	if err != nil {
+		t.Fatalf("failed to seed series: %v", err)
+	}
+
+	// Create mock TVDB server that returns error for badTVDBID, success for goodTVDBID
+	extendedResp := map[string]interface{}{
+		"status": "success",
+		"data": map[string]interface{}{
+			"id":             goodTVDBID,
+			"name":           "Good Show",
+			"originalName":   "Good Show",
+			"slug":           "good-show",
+			"overview":       "Successfully synced.",
+			"image":          "https://tvdb.com/poster.jpg",
+			"status":         map[string]interface{}{"name": "Continuing"},
+			"seasons":        []map[string]interface{}{},
+			"genres":         []interface{}{},
+			"artworks":       []interface{}{},
+			"characters":     []interface{}{},
+			"contentRatings": []interface{}{},
+			"companies":      []interface{}{},
+		},
+	}
+
+	mux := http.NewServeMux()
+	mux.HandleFunc("/v4/login", func(w http.ResponseWriter, _ *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{
+			"status": "success",
+			"data":   map[string]string{"token": "test-token"},
+		})
+	})
+	mux.HandleFunc("/v4/series/99999/", func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+		_, _ = w.Write([]byte("TVDB error"))
+	})
+	mux.HandleFunc("/v4/series/81189/", func(w http.ResponseWriter, r *http.Request) {
+		path := r.URL.Path
+		switch {
+		case strings.Contains(path, "/translations/"):
+			w.WriteHeader(http.StatusNotFound)
+		default:
+			_ = json.NewEncoder(w).Encode(extendedResp)
+		}
+	})
+
+	tvdbClient := newTestTVDBServer(t, mux)
+	if err := tvdbClient.Login(); err != nil {
+		t.Fatalf("failed to login to mock TVDB: %v", err)
+	}
+
+	// Should not panic or stop - first series fails, second should still sync
+	SyncUnsyncedSeries(db, tvdbClient)
+
+	// Verify the good series was synced despite the bad one failing
+	var overview string
+	err = db.QueryRow(`SELECT overview FROM series WHERE tvdb_id = ?`, goodTVDBID).Scan(&overview)
+	if err != nil {
+		t.Fatalf("failed to query good series: %v", err)
+	}
+	if overview != "Successfully synced." {
+		t.Errorf("expected good series overview to be set, got %q", overview)
+	}
+
+	// Verify the bad series was NOT synced (overview still NULL)
+	var badOverview *string
+	err = db.QueryRow(`SELECT overview FROM series WHERE tvdb_id = ?`, badTVDBID).Scan(&badOverview)
+	if err != nil {
+		t.Fatalf("failed to query bad series: %v", err)
+	}
+	if badOverview != nil {
+		t.Errorf("expected bad series overview to remain NULL, got %q", *badOverview)
+	}
+}
+
 func TestSyncSeriesMetadata_TVDBError(t *testing.T) {
 	// Setup test database
 	tmpDir := t.TempDir()
