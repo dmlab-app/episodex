@@ -21,8 +21,9 @@ import (
 
 // Pre-compiled regexps for performance (used in hot path during folder scan)
 var (
-	reSeasonS       = regexp.MustCompile(`(?i)[Ss](\d{1,2})`)
-	reSeasonWord    = regexp.MustCompile(`(?i)[Ss]eason\s*(\d{1,2})`)
+	reSeasonS          = regexp.MustCompile(`(?i)[Ss](\d{1,2})`)
+	reSeasonStandalone = regexp.MustCompile(`(?i)\bS(\d{1,2})\b`)
+	reSeasonWord       = regexp.MustCompile(`(?i)[Ss]eason\s*(\d{1,2})`)
 	reSeasonEnd     = regexp.MustCompile(`(?i)\s*[Ss]\d{1,2}$`)
 	reSeasonWordEnd = regexp.MustCompile(`(?i)\s*[Ss]eason\s*\d{1,2}$`)
 	reSeasonMid     = regexp.MustCompile(`(?i)\s+[Ss]\d{1,2}\s+`)
@@ -239,6 +240,15 @@ func (s *Scanner) parseSeriesFolder(name, path string) *SeriesInfo {
 	season := info.Season
 	title := info.Title
 
+	// Detect ptn misparsing: if NxLang suffix (e.g. 2xRus) was parsed as season,
+	// the real S## marker will still be in the title. Override with manual extraction.
+	// Use standalone season matching to avoid false positives on names like PS5, DS9.
+	if season > 0 && extractStandaloneSeasonNumber(title) > 0 {
+		if corrected := extractStandaloneSeasonNumber(name); corrected > 0 {
+			season = corrected
+		}
+	}
+
 	// If ptn didn't find season, try manual extraction
 	if season == 0 {
 		season = extractSeasonNumber(name)
@@ -341,6 +351,22 @@ func extractSeasonNumber(name string) int {
 		}
 	}
 
+	return 0
+}
+
+// extractStandaloneSeasonNumber extracts season number only from standalone S## tokens
+// (word-boundary aware). Used to detect ptn misparsing without false-positives
+// on names like PS5, DS9 where S+digit is part of the title.
+func extractStandaloneSeasonNumber(name string) int {
+	for _, pattern := range []*regexp.Regexp{reSeasonStandalone, reSeasonWord} {
+		matches := pattern.FindStringSubmatch(name)
+		if len(matches) >= 2 {
+			num, err := strconv.Atoi(matches[1])
+			if err == nil && num > 0 {
+				return num
+			}
+		}
+	}
 	return 0
 }
 
