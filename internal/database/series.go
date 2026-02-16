@@ -212,11 +212,9 @@ func (db *DB) SyncSeriesAndChildren(seriesID int64, expectedTVDBID int, series *
 		}
 	}
 
-	// Replace characters
-	if len(characters) > 0 {
-		if err := upsertCharactersTx(tx, seriesID, characters); err != nil {
-			return err
-		}
+	// Replace characters (always delete old ones, even if new list is empty)
+	if err := upsertCharactersTx(tx, seriesID, characters); err != nil {
+		return err
 	}
 
 	return tx.Commit()

@@ -768,15 +768,44 @@ func (s *Server) handleMatchSeries(w http.ResponseWriter, r *http.Request) {
 
 	slog.Info("Matched series with TVDB", "series_id", id, "tvdb_id", req.TVDBId, "title", details.Name)
 
-	// Return updated series
+	// Full sync: overview, genres, networks, characters, seasons
+	if err := SyncSeriesMetadata(s.db, s.tvdbClient, id, req.TVDBId); err != nil {
+		slog.Warn("Full sync after match failed (basic match saved)", "series_id", id, "tvdb_id", req.TVDBId, "error", err)
+	}
+
+	// Return updated series from DB
+	var updated struct {
+		TVDBId        *int
+		OriginalTitle *string
+		PosterURL     *string
+		Status        *string
+		Title         string
+		TotalSeasons  int
+	}
+	err = s.db.QueryRow(`SELECT tvdb_id, title, original_title, poster_url, status, total_seasons FROM series WHERE id = ?`, id).
+		Scan(&updated.TVDBId, &updated.Title, &updated.OriginalTitle, &updated.PosterURL, &updated.Status, &updated.TotalSeasons)
+	if err != nil {
+		slog.Error("Failed to read series after match", "id", id, "error", err)
+		s.respondError(w, http.StatusInternalServerError, "failed to read updated series")
+		return
+	}
+
 	response := map[string]interface{}{
-		"id":             id,
-		"tvdb_id":        req.TVDBId,
-		"title":          details.Name,
-		"original_title": details.OriginalName,
-		"poster_url":     details.Image,
-		"status":         details.Status,
-		"total_seasons":  len(details.Seasons),
+		"id":            id,
+		"title":         updated.Title,
+		"total_seasons": updated.TotalSeasons,
+	}
+	if updated.TVDBId != nil {
+		response["tvdb_id"] = *updated.TVDBId
+	}
+	if updated.OriginalTitle != nil {
+		response["original_title"] = *updated.OriginalTitle
+	}
+	if updated.PosterURL != nil {
+		response["poster_url"] = *updated.PosterURL
+	}
+	if updated.Status != nil {
+		response["status"] = *updated.Status
 	}
 
 	s.respondJSON(w, http.StatusOK, response)

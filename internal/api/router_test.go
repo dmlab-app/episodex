@@ -11,10 +11,12 @@ import (
 	"testing"
 
 	"github.com/episodex/episodex/internal/database"
+	"github.com/episodex/episodex/internal/tvdb"
 )
 
 // setupTestServer creates a Server with a temporary SQLite database for testing.
-func setupTestServer(t *testing.T) (*Server, *database.DB) {
+// An optional tvdb.Client can be passed for tests that need TVDB integration.
+func setupTestServer(t *testing.T, tvdbClient ...*tvdb.Client) (*Server, *database.DB) {
 	t.Helper()
 
 	tmpDir := t.TempDir()
@@ -30,7 +32,11 @@ func setupTestServer(t *testing.T) (*Server, *database.DB) {
 		os.Remove(dbPath)
 	})
 
-	srv := NewServer(db, nil, nil)
+	var tc *tvdb.Client
+	if len(tvdbClient) > 0 {
+		tc = tvdbClient[0]
+	}
+	srv := NewServer(db, nil, tc)
 	return srv, db
 }
 
@@ -1055,5 +1061,169 @@ func TestRescanEndpoint_Removed(t *testing.T) {
 	// The route no longer exists; chi returns 404 for unmatched path segments
 	if w.Code != http.StatusNotFound {
 		t.Errorf("expected 404 for removed rescan endpoint, got %d", w.Code)
+	}
+}
+
+// matchTVDBResponses builds the extended and translation response maps for match tests.
+func matchTVDBResponses(tvdbID int, name, rusName, overview, rusOverview, image, status string) (extendedResp, translationResp interface{}) {
+	extendedResp = map[string]interface{}{
+		"status": "success",
+		"data": map[string]interface{}{
+			"id":           tvdbID,
+			"name":         name,
+			"originalName": name,
+			"slug":         "test-show",
+			"overview":     overview,
+			"image":        image,
+			"status":       map[string]interface{}{"name": status},
+			"firstAired":   "2020-01-01",
+			"year":         "2020",
+			"seasons": []map[string]interface{}{
+				{"id": 1001, "number": 1, "type": map[string]interface{}{"name": "Official", "type": "official"}, "name": "Season 1", "year": "2020"},
+				{"id": 1002, "number": 2, "type": map[string]interface{}{"name": "Official", "type": "official"}, "name": "Season 2", "year": "2021"},
+			},
+			"genres":         []interface{}{},
+			"artworks":       []interface{}{},
+			"characters":     []interface{}{},
+			"contentRatings": []interface{}{},
+			"companies":      []interface{}{},
+		},
+	}
+	translationResp = map[string]interface{}{
+		"status": "success",
+		"data": map[string]interface{}{
+			"name":     rusName,
+			"overview": rusOverview,
+			"language": "rus",
+		},
+	}
+	return
+}
+
+func TestHandleMatchSeries_Rematch(t *testing.T) {
+	tvdbID := 54321
+	ext, trans := matchTVDBResponses(tvdbID, "New Show EN", "Новый Сериал", "English overview", "Русское описание", "https://tvdb.com/new.jpg", "Continuing")
+	tvdbClient := newTestTVDBServer(t, tvdbMux(ext, trans))
+	if err := tvdbClient.Login(); err != nil {
+		t.Fatalf("failed to login to mock TVDB: %v", err)
+	}
+
+	srv, db := setupTestServer(t, tvdbClient)
+
+	// Seed series with an existing tvdb_id (simulates rematch)
+	result, err := db.Exec(`
+		INSERT INTO series (tvdb_id, title, original_title, poster_url, status, total_seasons, created_at, updated_at)
+		VALUES (11111, 'Old Title', 'Old Original', 'https://tvdb.com/old.jpg', 'Ended', 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+	`)
+	if err != nil {
+		t.Fatalf("failed to seed series: %v", err)
+	}
+	seriesID, _ := result.LastInsertId()
+
+	// Match to new TVDB ID
+	body := fmt.Sprintf(`{"tvdb_id": %d}`, tvdbID)
+	req := httptest.NewRequest(http.MethodPost, fmt.Sprintf("/api/series/%d/match", seriesID), strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	srv.router.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected status 200, got %d: %s", w.Code, w.Body.String())
+	}
+
+	var resp map[string]interface{}
+	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+		t.Fatalf("failed to decode response: %v", err)
+	}
+
+	// Verify response has the new tvdb_id
+	if int(resp["tvdb_id"].(float64)) != tvdbID {
+		t.Errorf("expected tvdb_id=%d, got %v", tvdbID, resp["tvdb_id"])
+	}
+
+	// Verify DB was updated with the new tvdb_id
+	var dbTVDBId int
+	err = db.QueryRow(`SELECT tvdb_id FROM series WHERE id = ?`, seriesID).Scan(&dbTVDBId)
+	if err != nil {
+		t.Fatalf("failed to query series: %v", err)
+	}
+	if dbTVDBId != tvdbID {
+		t.Errorf("expected DB tvdb_id=%d, got %d", tvdbID, dbTVDBId)
+	}
+
+	// Verify SyncSeriesMetadata ran: overview should be set
+	var overview *string
+	err = db.QueryRow(`SELECT overview FROM series WHERE id = ?`, seriesID).Scan(&overview)
+	if err != nil {
+		t.Fatalf("failed to query overview: %v", err)
+	}
+	if overview == nil || *overview == "" {
+		t.Error("expected overview to be set after sync")
+	}
+
+	// Verify seasons were created by SyncSeriesMetadata
+	var seasonCount int
+	err = db.QueryRow(`SELECT COUNT(*) FROM seasons WHERE series_id = ?`, seriesID).Scan(&seasonCount)
+	if err != nil {
+		t.Fatalf("failed to count seasons: %v", err)
+	}
+	if seasonCount != 2 {
+		t.Errorf("expected 2 seasons from sync, got %d", seasonCount)
+	}
+}
+
+func TestHandleMatchSeries_FirstMatch(t *testing.T) {
+	tvdbID := 99887
+	ext, trans := matchTVDBResponses(tvdbID, "Brand New Show", "Новое Шоу", "A brand new show", "Новое описание", "https://tvdb.com/brandnew.jpg", "Continuing")
+	tvdbClient := newTestTVDBServer(t, tvdbMux(ext, trans))
+	if err := tvdbClient.Login(); err != nil {
+		t.Fatalf("failed to login to mock TVDB: %v", err)
+	}
+
+	srv, db := setupTestServer(t, tvdbClient)
+
+	// Seed series WITHOUT tvdb_id (first match scenario)
+	seriesID := seedSeries(t, db, "Unknown Show", 0)
+
+	// Match to TVDB ID
+	body := fmt.Sprintf(`{"tvdb_id": %d}`, tvdbID)
+	req := httptest.NewRequest(http.MethodPost, fmt.Sprintf("/api/series/%d/match", seriesID), strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	srv.router.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected status 200, got %d: %s", w.Code, w.Body.String())
+	}
+
+	var resp map[string]interface{}
+	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+		t.Fatalf("failed to decode response: %v", err)
+	}
+
+	// Verify tvdb_id in response
+	if int(resp["tvdb_id"].(float64)) != tvdbID {
+		t.Errorf("expected tvdb_id=%d, got %v", tvdbID, resp["tvdb_id"])
+	}
+
+	// Verify DB was updated
+	var dbTVDBId int
+	err := db.QueryRow(`SELECT tvdb_id FROM series WHERE id = ?`, seriesID).Scan(&dbTVDBId)
+	if err != nil {
+		t.Fatalf("failed to query series: %v", err)
+	}
+	if dbTVDBId != tvdbID {
+		t.Errorf("expected DB tvdb_id=%d, got %d", tvdbID, dbTVDBId)
+	}
+
+	// Verify title was updated from TVDB
+	var title string
+	err = db.QueryRow(`SELECT title FROM series WHERE id = ?`, seriesID).Scan(&title)
+	if err != nil {
+		t.Fatalf("failed to query title: %v", err)
+	}
+	// GetSeriesDetailsWithRussian uses Russian name as primary
+	if title != "Новое Шоу" {
+		t.Errorf("expected Russian title 'Новое Шоу', got %q", title)
 	}
 }
