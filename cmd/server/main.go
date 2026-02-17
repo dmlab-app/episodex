@@ -120,7 +120,7 @@ func main() {
 	defer sch.Stop()
 
 	// Initialize HTTP server
-	apiServer := api.NewServer(db, mediaScanner, tvdbClient)
+	apiServer := api.NewServer(db, mediaScanner, tvdbClient, cfg.MediaPath)
 	httpServer := &http.Server{
 		Addr:         cfg.Host + ":" + cfg.Port,
 		Handler:      apiServer.Handler(),

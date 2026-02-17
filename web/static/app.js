@@ -345,14 +345,14 @@ function renderSeasons(series, seasons) {
 async function deleteSeries() {
     if (!state.currentSeriesId) return;
     const series = state.series.find(s => s.id === state.currentSeriesId);
-    if (!confirm(`Delete "${series?.title}"?`)) return;
+    if (!confirm(`Delete "${series?.title}" and all its files from disk? This cannot be undone.`)) return;
 
     try {
         await api.delete(`/api/series/${state.currentSeriesId}`);
         showToast('Series deleted');
         navigate('/series');
     } catch (e) {
-        showToast('Failed to delete series', 'error');
+        showToast(`Failed to delete series: ${e.message || e}`, 'error');
     }
 }
 

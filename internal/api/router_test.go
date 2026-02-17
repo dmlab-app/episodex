@@ -36,7 +36,7 @@ func setupTestServer(t *testing.T, tvdbClient ...*tvdb.Client) (*Server, *databa
 	if len(tvdbClient) > 0 {
 		tc = tvdbClient[0]
 	}
-	srv := NewServer(db, nil, tc)
+	srv := NewServer(db, nil, tc, "")
 	return srv, db
 }
 
@@ -1269,5 +1269,215 @@ func TestHandleMatchSeries_FirstMatch(t *testing.T) {
 	// GetSeriesDetailsWithRussian uses Russian name as primary
 	if title != "Новое Шоу" {
 		t.Errorf("expected Russian title 'Новое Шоу', got %q", title)
+	}
+}
+
+// seedMediaFile inserts a media file record for testing.
+func seedMediaFile(t *testing.T, db *database.DB, seriesID int64, seasonNum int, filePath string) {
+	t.Helper()
+	_, err := db.Exec(`
+		INSERT INTO media_files (series_id, season_number, file_path, file_name, file_size, file_hash, mod_time, first_seen, last_checked)
+		VALUES (?, ?, ?, ?, 1000, 'abc123', 0, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+	`, seriesID, seasonNum, filePath, filepath.Base(filePath))
+	if err != nil {
+		t.Fatalf("failed to seed media file: %v", err)
+	}
+}
+
+func TestHandleDeleteSeries_RemovesFilesAndFolders(t *testing.T) {
+	srv, db := setupTestServer(t)
+
+	// Create temp directory structure simulating media library
+	mediaDir := t.TempDir()
+	srv.mediaPath = mediaDir
+	s01Dir := filepath.Join(mediaDir, "Show.S01")
+	s02Dir := filepath.Join(mediaDir, "Show.S02")
+	if err := os.Mkdir(s01Dir, 0o755); err != nil {
+		t.Fatalf("failed to create test dir: %v", err)
+	}
+	if err := os.Mkdir(s02Dir, 0o755); err != nil {
+		t.Fatalf("failed to create test dir: %v", err)
+	}
+
+	// Create temp media files
+	ep1Path := filepath.Join(s01Dir, "ep1.mkv")
+	ep2Path := filepath.Join(s01Dir, "ep2.mkv")
+	ep3Path := filepath.Join(s02Dir, "ep3.mkv")
+	if err := os.WriteFile(ep1Path, []byte("video1"), 0o644); err != nil {
+		t.Fatalf("failed to create test file: %v", err)
+	}
+	if err := os.WriteFile(ep2Path, []byte("video2"), 0o644); err != nil {
+		t.Fatalf("failed to create test file: %v", err)
+	}
+	if err := os.WriteFile(ep3Path, []byte("video3"), 0o644); err != nil {
+		t.Fatalf("failed to create test file: %v", err)
+	}
+
+	// Seed DB records
+	seriesID := seedSeries(t, db, "Test Show", 2)
+	seedSeason(t, db, seriesID, 1, s01Dir, true, nil)
+	seedSeason(t, db, seriesID, 2, s02Dir, true, nil)
+	seedMediaFile(t, db, seriesID, 1, ep1Path)
+	seedMediaFile(t, db, seriesID, 1, ep2Path)
+	seedMediaFile(t, db, seriesID, 2, ep3Path)
+
+	// Delete the series
+	req := httptest.NewRequest(http.MethodDelete, fmt.Sprintf("/api/series/%d", seriesID), http.NoBody)
+	w := httptest.NewRecorder()
+	srv.router.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected status 200, got %d: %s", w.Code, w.Body.String())
+	}
+
+	var result map[string]interface{}
+	if err := json.NewDecoder(w.Body).Decode(&result); err != nil {
+		t.Fatalf("failed to decode response: %v", err)
+	}
+	if result["success"] != true {
+		t.Errorf("expected success=true, got %v", result["success"])
+	}
+
+	// Verify media files were removed from disk
+	for _, fp := range []string{ep1Path, ep2Path, ep3Path} {
+		if _, err := os.Stat(fp); !os.IsNotExist(err) {
+			t.Errorf("expected file %s to be removed", fp)
+		}
+	}
+
+	// Verify season folders were removed (they should be empty now)
+	for _, fp := range []string{s01Dir, s02Dir} {
+		if _, err := os.Stat(fp); !os.IsNotExist(err) {
+			t.Errorf("expected folder %s to be removed", fp)
+		}
+	}
+
+	// Verify DB records are gone
+	var count int
+	db.QueryRow(`SELECT COUNT(*) FROM series WHERE id = ?`, seriesID).Scan(&count)
+	if count != 0 {
+		t.Errorf("expected series to be deleted from DB, got count=%d", count)
+	}
+}
+
+func TestHandleDeleteSeries_SucceedsWhenFilesAlreadyMissing(t *testing.T) {
+	srv, db := setupTestServer(t)
+
+	// Seed DB records pointing to non-existent files
+	seriesID := seedSeries(t, db, "Ghost Show", 1)
+	seedSeason(t, db, seriesID, 1, "/nonexistent/path/Show.S01", true, nil)
+	seedMediaFile(t, db, seriesID, 1, "/nonexistent/path/Show.S01/ep1.mkv")
+
+	// Delete should still succeed
+	req := httptest.NewRequest(http.MethodDelete, fmt.Sprintf("/api/series/%d", seriesID), http.NoBody)
+	w := httptest.NewRecorder()
+	srv.router.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected status 200, got %d: %s", w.Code, w.Body.String())
+	}
+
+	var result map[string]interface{}
+	if err := json.NewDecoder(w.Body).Decode(&result); err != nil {
+		t.Fatalf("failed to decode response: %v", err)
+	}
+	if result["success"] != true {
+		t.Errorf("expected success=true, got %v", result["success"])
+	}
+
+	// Verify DB records are gone
+	var count int
+	db.QueryRow(`SELECT COUNT(*) FROM series WHERE id = ?`, seriesID).Scan(&count)
+	if count != 0 {
+		t.Errorf("expected series to be deleted from DB, got count=%d", count)
+	}
+}
+
+func TestHandleDeleteSeries_NotFound(t *testing.T) {
+	srv, _ := setupTestServer(t)
+
+	req := httptest.NewRequest(http.MethodDelete, "/api/series/999", http.NoBody)
+	w := httptest.NewRecorder()
+	srv.router.ServeHTTP(w, req)
+
+	if w.Code != http.StatusNotFound {
+		t.Errorf("expected status 404, got %d: %s", w.Code, w.Body.String())
+	}
+}
+
+func TestIsWithinMediaPath(t *testing.T) {
+	srv := &Server{}
+
+	// When mediaPath is empty, everything is allowed
+	srv.mediaPath = ""
+	if !srv.isWithinMediaPath("/any/path") {
+		t.Error("empty mediaPath: expected true for any path")
+	}
+
+	// Normal media path
+	srv.mediaPath = "/media"
+	if !srv.isWithinMediaPath("/media/show/ep.mkv") {
+		t.Error("expected /media/show/ep.mkv to be within /media")
+	}
+	if srv.isWithinMediaPath("/other/file.mkv") {
+		t.Error("expected /other/file.mkv to be outside /media")
+	}
+
+	// Root media path "/" — should allow all absolute paths
+	srv.mediaPath = "/"
+	if !srv.isWithinMediaPath("/media/file.mkv") {
+		t.Error("root mediaPath: expected /media/file.mkv to be within /")
+	}
+	if !srv.isWithinMediaPath("/any/deep/path.mkv") {
+		t.Error("root mediaPath: expected /any/deep/path.mkv to be within /")
+	}
+}
+
+func TestHandleDeleteSeries_SkipsFilesOutsideMediaPath(t *testing.T) {
+	srv, db := setupTestServer(t)
+
+	// Create two separate directories: one is the "media library", the other is "outside"
+	mediaDir := t.TempDir()
+	outsideDir := t.TempDir()
+	srv.mediaPath = mediaDir
+
+	// Create a file outside the media path
+	outsideFile := filepath.Join(outsideDir, "secret.mkv")
+	if err := os.WriteFile(outsideFile, []byte("important"), 0o644); err != nil {
+		t.Fatalf("failed to create test file: %v", err)
+	}
+
+	// Create a file inside the media path
+	insideDir := filepath.Join(mediaDir, "Show.S01")
+	if err := os.Mkdir(insideDir, 0o755); err != nil {
+		t.Fatalf("failed to create test dir: %v", err)
+	}
+	insideFile := filepath.Join(insideDir, "ep1.mkv")
+	if err := os.WriteFile(insideFile, []byte("video"), 0o644); err != nil {
+		t.Fatalf("failed to create test file: %v", err)
+	}
+
+	// Seed DB with both paths
+	seriesID := seedSeries(t, db, "Boundary Test", 1)
+	seedSeason(t, db, seriesID, 1, insideDir, true, nil)
+	seedMediaFile(t, db, seriesID, 1, insideFile)
+	seedMediaFile(t, db, seriesID, 1, outsideFile)
+
+	req := httptest.NewRequest(http.MethodDelete, fmt.Sprintf("/api/series/%d", seriesID), http.NoBody)
+	w := httptest.NewRecorder()
+	srv.router.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected status 200, got %d: %s", w.Code, w.Body.String())
+	}
+
+	// File inside media path should be deleted
+	if _, err := os.Stat(insideFile); !os.IsNotExist(err) {
+		t.Errorf("expected file inside media path to be removed: %s", insideFile)
+	}
+
+	// File outside media path should NOT be deleted
+	if _, err := os.Stat(outsideFile); err != nil {
+		t.Errorf("expected file outside media path to be preserved: %s", outsideFile)
 	}
 }

@@ -116,7 +116,7 @@ All settings are configured via environment variables (`.env` file):
 - `GET /api/series` - list series with season counts
 - `POST /api/series` - create series
 - `GET /api/series/:id` - series detail with metadata, characters, artwork
-- `DELETE /api/series/:id` - delete series
+- `DELETE /api/series/:id` - delete series with all media files from disk
 - `POST /api/series/:id/match` - match series to TVDB
 - `GET /api/search` - search TVDB for series
 

@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"os"
 	"path/filepath"
 	"sort"
 	"strconv"
@@ -30,16 +31,21 @@ type Server struct {
 	tvdbClient  *tvdb.Client
 	audioCutter *audio.AudioCutter
 	router      *chi.Mux
+	mediaPath   string
 }
 
-// NewServer creates a new API server
-func NewServer(db *database.DB, sc *scanner.Scanner, tvdbClient *tvdb.Client) *Server {
+// NewServer creates a new API server.
+// mediaPath is the root directory of the media library; filesystem deletions
+// are restricted to paths under this directory. Pass "" to disable the boundary
+// check (e.g. in tests that don't exercise filesystem operations).
+func NewServer(db *database.DB, sc *scanner.Scanner, tvdbClient *tvdb.Client, mediaPath string) *Server {
 	s := &Server{
 		db:          db,
 		scanner:     sc,
 		tvdbClient:  tvdbClient,
 		audioCutter: audio.New(),
 		router:      chi.NewRouter(),
+		mediaPath:   mediaPath,
 	}
 
 	s.setupMiddleware()
@@ -576,6 +582,50 @@ func (s *Server) handleDeleteSeries(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Collect file paths and folder paths before DB deletion (CASCADE will remove records).
+	// Fail if lookups error — proceeding would orphan files on disk.
+	filePaths, err := s.db.GetMediaFilePathsBySeriesID(id)
+	if err != nil {
+		slog.Error("Failed to get media file paths for series", "id", id, "error", err)
+		s.respondError(w, http.StatusInternalServerError, "failed to look up media files for deletion")
+		return
+	}
+	folderPaths, err := s.db.GetSeasonFolderPaths(id)
+	if err != nil {
+		slog.Error("Failed to get season folder paths for series", "id", id, "error", err)
+		s.respondError(w, http.StatusInternalServerError, "failed to look up season folders for deletion")
+		return
+	}
+
+	// Delete media files from disk (only within media library boundary)
+	var filesRemoved, foldersRemoved int
+	for _, fp := range filePaths {
+		if !s.isWithinMediaPath(fp) {
+			slog.Warn("Skipping file outside media path", "path", fp, "media_path", s.mediaPath)
+			continue
+		}
+		if err := os.Remove(fp); err != nil {
+			slog.Warn("Failed to remove media file", "path", fp, "error", err)
+		} else {
+			filesRemoved++
+			slog.Info("Removed media file", "path", fp)
+		}
+	}
+
+	// Remove empty season folders (only within media library boundary)
+	for _, fp := range folderPaths {
+		if !s.isWithinMediaPath(fp) {
+			slog.Warn("Skipping folder outside media path", "path", fp, "media_path", s.mediaPath)
+			continue
+		}
+		if err := os.Remove(fp); err != nil {
+			slog.Warn("Failed to remove season folder", "path", fp, "error", err)
+		} else {
+			foldersRemoved++
+			slog.Info("Removed season folder", "path", fp)
+		}
+	}
+
 	query := "DELETE FROM series WHERE id = ?"
 	result, err := s.db.Exec(query, id)
 	if err != nil {
@@ -593,10 +643,38 @@ func (s *Server) handleDeleteSeries(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	slog.Info("Deleted series", "id", id)
+	slog.Info("Deleted series", "id", id, "files_removed", filesRemoved, "folders_removed", foldersRemoved)
 	s.respondJSON(w, http.StatusOK, map[string]interface{}{
 		"success": true,
 	})
+}
+
+// isWithinMediaPath checks that a file path is inside the configured media library root.
+// Returns true if no media path is configured (boundary check disabled).
+func (s *Server) isWithinMediaPath(filePath string) bool {
+	if s.mediaPath == "" {
+		return true
+	}
+	absFile, err := filepath.EvalSymlinks(filePath)
+	if err != nil {
+		// File may not exist (already deleted); fall back to lexical check
+		absFile = filepath.Clean(filePath)
+		if !filepath.IsAbs(absFile) {
+			return false
+		}
+	}
+	absMedia, err := filepath.EvalSymlinks(s.mediaPath)
+	if err != nil {
+		absMedia = filepath.Clean(s.mediaPath)
+		if !filepath.IsAbs(absMedia) {
+			return false
+		}
+	}
+	// When absMedia is the filesystem root ("/"), every absolute path is inside it.
+	if absMedia == string(filepath.Separator) {
+		return filepath.IsAbs(absFile)
+	}
+	return strings.HasPrefix(absFile, absMedia+string(filepath.Separator)) || absFile == absMedia
 }
 
 func (s *Server) handleMatchSeries(w http.ResponseWriter, r *http.Request) {

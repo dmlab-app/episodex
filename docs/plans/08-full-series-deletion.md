@@ -44,41 +44,41 @@
 ## Implementation Steps
 
 ### Task 1: Add database method to get media file paths and season folders for a series
-- [ ] In `internal/database/media_files.go`, add method `GetMediaFilePathsBySeriesID(seriesID int64) ([]string, error)` that returns all `file_path` values from `media_files` where `series_id = ?`
-- [ ] In `internal/database/series.go`, add method `GetSeasonFolderPaths(seriesID int64) ([]string, error)` that returns all `folder_path` values from `seasons` where `series_id = ?` and `folder_path IS NOT NULL AND folder_path != ''`
-- [ ] Write table-driven tests for `GetMediaFilePathsBySeriesID` (series with files, series with no files, non-existent series)
-- [ ] Write table-driven tests for `GetSeasonFolderPaths` (series with folders, seasons without folder_path, non-existent series)
-- [ ] Run `go test ./internal/database/...` — must pass before next task
+- [x] In `internal/database/media_files.go`, add method `GetMediaFilePathsBySeriesID(seriesID int64) ([]string, error)` that returns all `file_path` values from `media_files` where `series_id = ?`
+- [x] In `internal/database/series.go`, add method `GetSeasonFolderPaths(seriesID int64) ([]string, error)` that returns all `folder_path` values from `seasons` where `series_id = ?` and `folder_path IS NOT NULL AND folder_path != ''`
+- [x] Write table-driven tests for `GetMediaFilePathsBySeriesID` (series with files, series with no files, non-existent series)
+- [x] Write table-driven tests for `GetSeasonFolderPaths` (series with folders, seasons without folder_path, non-existent series)
+- [x] Run `go test ./internal/database/...` — must pass before next task
 
 ### Task 2: Enhance DELETE handler to remove files from disk before DB deletion
-- [ ] In `internal/api/router.go` `handleDeleteSeries()` (line 572), before the existing `DELETE FROM series` query:
+- [x] In `internal/api/router.go` `handleDeleteSeries()` (line 572), before the existing `DELETE FROM series` query:
   1. Call `s.db.GetMediaFilePathsBySeriesID(id)` to get all video file paths
   2. Call `s.db.GetSeasonFolderPaths(id)` to get all season folder paths
   3. Delete each media file from disk using `os.Remove()` — log errors but don't fail the request (files may already be gone)
   4. Delete each season folder using `os.Remove()` (not `RemoveAll` — only removes empty folders after files are deleted) — log errors but don't fail
   5. Proceed with existing DB deletion as before
-- [ ] Add `slog.Info` logging for each deleted file and folder
-- [ ] Write tests for enhanced `handleDeleteSeries`:
+- [x] Add `slog.Info` logging for each deleted file and folder
+- [x] Write tests for enhanced `handleDeleteSeries`:
   - test that handler calls file deletion before DB deletion (use temp files)
   - test that handler succeeds even if files don't exist on disk (already removed)
   - test that handler still returns 404 for non-existent series
-- [ ] Run `go test ./internal/api/...` — must pass before next task
+- [x] Run `go test ./internal/api/...` — must pass before next task
 
 ### Task 3: Update frontend confirmation dialog with more details
-- [ ] In `web/static/app.js` `deleteSeries()` (line 345), update the `confirm()` message to warn that files will also be deleted from disk. Example: `Delete "${series?.title}" and all its files from disk? This cannot be undone.`
-- [ ] Update error toast to include error details (consistent with recent fix): `Failed to delete series: ${e.message || e}`
-- [ ] No automated tests for frontend — manual verification
+- [x] In `web/static/app.js` `deleteSeries()` (line 345), update the `confirm()` message to warn that files will also be deleted from disk. Example: `Delete "${series?.title}" and all its files from disk? This cannot be undone.`
+- [x] Update error toast to include error details (consistent with recent fix): `Failed to delete series: ${e.message || e}`
+- [x] No automated tests for frontend — manual verification
 
 ### Task 4: Verify acceptance criteria
-- [ ] Verify all requirements from Overview are implemented
-- [ ] Verify edge cases are handled (missing files, empty folder_path, non-existent series)
-- [ ] Run full test suite: `go test ./...`
-- [ ] Run linter: `go vet ./...`
-- [ ] Verify test coverage meets project standard
+- [x] Verify all requirements from Overview are implemented
+- [x] Verify edge cases are handled (missing files, empty folder_path, non-existent series)
+- [x] Run full test suite: `go test ./...`
+- [x] Run linter: `go vet ./...`
+- [x] Verify test coverage meets project standard
 
 ### Task 5: [Final] Update documentation
-- [ ] Update README.md if needed
-- [ ] Update project knowledge docs if new patterns discovered
+- [x] Update README.md if needed
+- [x] Update project knowledge docs if new patterns discovered
 
 *Note: ralphex automatically moves completed plans to `docs/plans/completed/`*
 
