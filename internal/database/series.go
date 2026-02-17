@@ -138,6 +138,32 @@ func (db *DB) UpsertSeason(season *Season) (int64, error) {
 	return result.LastInsertId()
 }
 
+// GetSeasonFolderPaths returns all non-empty folder paths for seasons of a series
+func (db *DB) GetSeasonFolderPaths(seriesID int64) ([]string, error) {
+	rows, err := db.Query(`
+		SELECT folder_path FROM seasons
+		WHERE series_id = ? AND folder_path IS NOT NULL AND folder_path != ''
+		ORDER BY folder_path
+	`, seriesID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to query season folder paths: %w", err)
+	}
+	defer rows.Close() //nolint:errcheck
+
+	var paths []string
+	for rows.Next() {
+		var path string
+		if err := rows.Scan(&path); err != nil {
+			return nil, fmt.Errorf("failed to scan season folder path: %w", err)
+		}
+		paths = append(paths, path)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("failed to iterate season folder paths: %w", err)
+	}
+	return paths, nil
+}
+
 // GetSeasonBySeriesAndNumber retrieves a season by series ID and season number
 func (db *DB) GetSeasonBySeriesAndNumber(seriesID int64, seasonNumber int) (*Season, error) {
 	var season Season

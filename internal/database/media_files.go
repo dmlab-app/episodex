@@ -126,6 +126,30 @@ func (db *DB) UpsertMediaFile(mf *MediaFile) error {
 	return nil
 }
 
+// GetMediaFilePathsBySeriesID returns all file paths for media files belonging to a series
+func (db *DB) GetMediaFilePathsBySeriesID(seriesID int64) ([]string, error) {
+	rows, err := db.Query(`
+		SELECT file_path FROM media_files WHERE series_id = ? ORDER BY file_path
+	`, seriesID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to query media file paths: %w", err)
+	}
+	defer rows.Close() //nolint:errcheck
+
+	var paths []string
+	for rows.Next() {
+		var path string
+		if err := rows.Scan(&path); err != nil {
+			return nil, fmt.Errorf("failed to scan media file path: %w", err)
+		}
+		paths = append(paths, path)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("failed to iterate media file paths: %w", err)
+	}
+	return paths, nil
+}
+
 // DeleteMediaFilesBySeason deletes all media files for a season
 func (db *DB) DeleteMediaFilesBySeason(seriesID int64, seasonNumber int) error {
 	result, err := db.Exec(`

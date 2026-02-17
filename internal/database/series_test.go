@@ -138,6 +138,78 @@ func createTestSeries(t *testing.T, db *DB) int64 {
 	return id
 }
 
+func TestGetSeasonFolderPaths(t *testing.T) {
+	tests := []struct {
+		name      string
+		setup     func(t *testing.T, db *DB) int64
+		wantPaths []string
+	}{
+		{
+			name: "series with folder paths",
+			setup: func(t *testing.T, db *DB) int64 {
+				t.Helper()
+				seriesID := createTestSeries(t, db)
+				fp1 := "/mnt/media/Show.S01"
+				fp2 := "/mnt/media/Show.S02"
+				if _, err := db.UpsertSeason(&Season{SeriesID: seriesID, SeasonNumber: 1, FolderPath: &fp1}); err != nil {
+					t.Fatalf("failed to upsert season: %v", err)
+				}
+				if _, err := db.UpsertSeason(&Season{SeriesID: seriesID, SeasonNumber: 2, FolderPath: &fp2}); err != nil {
+					t.Fatalf("failed to upsert season: %v", err)
+				}
+				return seriesID
+			},
+			wantPaths: []string{"/mnt/media/Show.S01", "/mnt/media/Show.S02"},
+		},
+		{
+			name: "seasons without folder_path",
+			setup: func(t *testing.T, db *DB) int64 {
+				t.Helper()
+				seriesID := createTestSeries(t, db)
+				// Season with NULL folder_path
+				if _, err := db.UpsertSeason(&Season{SeriesID: seriesID, SeasonNumber: 1}); err != nil {
+					t.Fatalf("failed to upsert season: %v", err)
+				}
+				// Season with empty folder_path
+				empty := ""
+				if _, err := db.UpsertSeason(&Season{SeriesID: seriesID, SeasonNumber: 2, FolderPath: &empty}); err != nil {
+					t.Fatalf("failed to upsert season: %v", err)
+				}
+				return seriesID
+			},
+			wantPaths: nil,
+		},
+		{
+			name: "non-existent series",
+			setup: func(t *testing.T, _ *DB) int64 {
+				t.Helper()
+				return 99999
+			},
+			wantPaths: nil,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			db := newTestDB(t)
+			seriesID := tt.setup(t, db)
+
+			paths, err := db.GetSeasonFolderPaths(seriesID)
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if len(paths) != len(tt.wantPaths) {
+				t.Fatalf("expected %d paths, got %d", len(tt.wantPaths), len(paths))
+			}
+			for i, want := range tt.wantPaths {
+				if paths[i] != want {
+					t.Errorf("path[%d]: expected %q, got %q", i, want, paths[i])
+				}
+			}
+		})
+	}
+}
+
 func TestSeasonAiredEpisodes_WithEpisodes(t *testing.T) {
 	db := newTestDB(t)
 	seriesID := createTestSeries(t, db)
