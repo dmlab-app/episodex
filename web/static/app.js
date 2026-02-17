@@ -145,7 +145,7 @@ async function loadSeries() {
         updateStats();
     } catch (e) {
         loading.style.display = 'none';
-        showToast('Failed to load series', 'error');
+        showToast(`Failed to load series: ${e.message || e}`, 'error');
     }
 }
 
@@ -290,7 +290,7 @@ async function loadSeriesDetail(seriesId) {
         renderSeasons(series, seasons);
 
     } catch (e) {
-        showToast('Failed to load series detail', 'error');
+        showToast(`Failed to load series detail: ${e.message || e}`, 'error');
         console.error(e);
     }
 }
@@ -488,7 +488,7 @@ async function loadSeasonDetail(seriesId, seasonNum) {
         }
 
     } catch (e) {
-        showToast('Failed to load season detail', 'error');
+        showToast(`Failed to load season detail: ${e.message || e}`, 'error');
         console.error(e);
     }
 }
@@ -777,7 +777,7 @@ async function loadUpdates() {
             `;
         }).join('');
     } catch (e) {
-        showToast('Failed to load updates', 'error');
+        showToast(`Failed to load updates: ${e.message || e}`, 'error');
     }
 }
 
