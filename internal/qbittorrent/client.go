@@ -2,12 +2,25 @@
 package qbittorrent
 
 import (
+	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
 	"net/url"
 	"strings"
 )
+
+// Torrent represents a torrent from qBittorrent.
+type Torrent struct {
+	Name     string `json:"name"`
+	SavePath string `json:"save_path"`
+	Hash     string `json:"hash"`
+}
+
+// Properties represents torrent properties from qBittorrent.
+type Properties struct {
+	Comment string `json:"comment"`
+}
 
 // Client communicates with a qBittorrent instance via its Web API.
 type Client struct {
@@ -74,6 +87,47 @@ func (c *Client) doRequest(method, path string, body io.Reader) (*http.Response,
 	}
 
 	return resp, nil
+}
+
+// ListTorrents returns all torrents from qBittorrent.
+func (c *Client) ListTorrents() ([]Torrent, error) {
+	resp, err := c.doRequest("GET", "/api/v2/torrents/info", nil)
+	if err != nil {
+		return nil, fmt.Errorf("list torrents: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("list torrents: unexpected status %d", resp.StatusCode)
+	}
+
+	var torrents []Torrent
+	if err := json.NewDecoder(resp.Body).Decode(&torrents); err != nil {
+		return nil, fmt.Errorf("list torrents: %w", err)
+	}
+	return torrents, nil
+}
+
+// GetTorrentProperties returns properties for a torrent identified by its hash.
+func (c *Client) GetTorrentProperties(hash string) (*Properties, error) {
+	resp, err := c.doRequest("GET", "/api/v2/torrents/properties?hash="+url.QueryEscape(hash), nil)
+	if err != nil {
+		return nil, fmt.Errorf("get torrent properties: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode == http.StatusNotFound {
+		return nil, fmt.Errorf("get torrent properties: torrent not found")
+	}
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("get torrent properties: unexpected status %d", resp.StatusCode)
+	}
+
+	var props Properties
+	if err := json.NewDecoder(resp.Body).Decode(&props); err != nil {
+		return nil, fmt.Errorf("get torrent properties: %w", err)
+	}
+	return &props, nil
 }
 
 func (c *Client) rawRequest(method, path string, body io.Reader) (*http.Response, error) {
