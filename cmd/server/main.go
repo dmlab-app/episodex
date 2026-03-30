@@ -13,6 +13,7 @@ import (
 	"github.com/episodex/episodex/internal/api"
 	"github.com/episodex/episodex/internal/config"
 	"github.com/episodex/episodex/internal/database"
+	"github.com/episodex/episodex/internal/qbittorrent"
 	"github.com/episodex/episodex/internal/scanner"
 	"github.com/episodex/episodex/internal/scheduler"
 	"github.com/episodex/episodex/internal/tvdb"
@@ -132,8 +133,19 @@ func main() {
 		}()
 	}
 
+	// Initialize qBittorrent client (optional)
+	var qbitClient *qbittorrent.Client
+	if cfg.QbitURL != "" {
+		qbitClient = qbittorrent.NewClient(cfg.QbitURL, cfg.QbitUser, cfg.QbitPassword)
+		if err := qbitClient.Login(); err != nil {
+			slog.Warn("Failed to login to qBittorrent, will retry on demand", "error", err)
+		} else {
+			slog.Info("qBittorrent client initialized successfully")
+		}
+	}
+
 	// Initialize HTTP server
-	apiServer := api.NewServer(db, mediaScanner, tvdbClient, cfg.MediaPath)
+	apiServer := api.NewServer(db, mediaScanner, tvdbClient, qbitClient, cfg.MediaPath)
 	httpServer := &http.Server{
 		Addr:         cfg.Host + ":" + cfg.Port,
 		Handler:      apiServer.Handler(),

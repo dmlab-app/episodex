@@ -90,7 +90,7 @@ func TestAutoRelogin_On403(t *testing.T) {
 	// Set an expired cookie to simulate expired session
 	c.cookie = &http.Cookie{Name: "SID", Value: "expired-session"}
 
-	resp, err := c.doRequest("GET", "/api/v2/torrents/info", nil)
+	resp, err := c.doRequest("/api/v2/torrents/info")
 	if err != nil {
 		t.Fatalf("expected successful request after relogin, got %v", err)
 	}
@@ -314,7 +314,10 @@ func TestAutoRelogin_FailsIfReloginFails(t *testing.T) {
 	c := NewClient(srv.URL, "admin", "secret")
 	c.cookie = &http.Cookie{Name: "SID", Value: "expired"}
 
-	_, err := c.doRequest("GET", "/api/v2/torrents/info", nil)
+	resp, err := c.doRequest("/api/v2/torrents/info")
+	if resp != nil {
+		resp.Body.Close()
+	}
 	if err == nil {
 		t.Fatal("expected error when relogin fails")
 	}

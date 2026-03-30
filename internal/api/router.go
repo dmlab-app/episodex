@@ -4,9 +4,11 @@ package api
 import (
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"sort"
@@ -20,6 +22,7 @@ import (
 
 	"github.com/episodex/episodex/internal/audio"
 	"github.com/episodex/episodex/internal/database"
+	"github.com/episodex/episodex/internal/qbittorrent"
 	"github.com/episodex/episodex/internal/scanner"
 	"github.com/episodex/episodex/internal/tvdb"
 )
@@ -29,6 +32,7 @@ type Server struct {
 	db          *database.DB
 	scanner     *scanner.Scanner
 	tvdbClient  *tvdb.Client
+	qbitClient  *qbittorrent.Client
 	audioCutter *audio.AudioCutter
 	router      *chi.Mux
 	mediaPath   string
@@ -38,11 +42,12 @@ type Server struct {
 // mediaPath is the root directory of the media library; filesystem deletions
 // are restricted to paths under this directory. Pass "" to disable the boundary
 // check (e.g. in tests that don't exercise filesystem operations).
-func NewServer(db *database.DB, sc *scanner.Scanner, tvdbClient *tvdb.Client, mediaPath string) *Server {
+func NewServer(db *database.DB, sc *scanner.Scanner, tvdbClient *tvdb.Client, qbitClient *qbittorrent.Client, mediaPath string) *Server {
 	s := &Server{
 		db:          db,
 		scanner:     sc,
 		tvdbClient:  tvdbClient,
+		qbitClient:  qbitClient,
 		audioCutter: audio.New(),
 		router:      chi.NewRouter(),
 		mediaPath:   mediaPath,
@@ -107,6 +112,7 @@ func (s *Server) setupRoutes() {
 				r.Put("/{num}", s.handleUpdateSeason)                        // PUT /api/series/:id/seasons/:num
 				r.Get("/{num}/audio", s.handleGetAudioTracks)                // GET /api/series/:id/seasons/:num/audio
 				r.Post("/{num}/audio/preview", s.handleGenerateAudioPreview) // POST /api/series/:id/seasons/:num/audio/preview
+				r.Get("/{num}/tracker", s.handleGetSeasonTracker)            // GET /api/series/:id/seasons/:num/tracker
 			})
 		})
 
@@ -213,11 +219,11 @@ func (s *Server) handleListSeries(w http.ResponseWriter, _ *http.Request) {
 		}
 
 		item := map[string]interface{}{
-			"id":              id,
-			"title":           title,
-			"total_seasons":   totalSeasons,
+			"id":                 id,
+			"title":              title,
+			"total_seasons":      totalSeasons,
 			"downloaded_seasons": downloadedSeasons,
-			"created_at":      createdAt,
+			"created_at":         createdAt,
 		}
 
 		if tvdbID != nil {
@@ -517,13 +523,13 @@ func (s *Server) handleGetSeries(w http.ResponseWriter, r *http.Request) {
 
 	// Build response
 	response := map[string]interface{}{
-		"id":              seriesInfo.ID,
-		"title":           seriesInfo.Title,
-		"total_seasons":   seriesInfo.TotalSeasons,
+		"id":                 seriesInfo.ID,
+		"title":              seriesInfo.Title,
+		"total_seasons":      seriesInfo.TotalSeasons,
 		"downloaded_seasons": countDownloadedSeasons(seasons),
-		"seasons":         seasons,
-		"characters":      characters,
-		"created_at":      seriesInfo.CreatedAt,
+		"seasons":            seasons,
+		"characters":         characters,
+		"created_at":         seriesInfo.CreatedAt,
 	}
 
 	if seriesInfo.TVDBId != nil {
@@ -962,6 +968,81 @@ func (s *Server) handleDismissAlert(w http.ResponseWriter, r *http.Request) {
 	s.respondJSON(w, http.StatusOK, map[string]interface{}{
 		"success": true,
 	})
+}
+
+// handleGetSeasonTracker returns the tracker URL for a season by matching its
+// folder_path against torrents in qBittorrent and extracting the comment field.
+func (s *Server) handleGetSeasonTracker(w http.ResponseWriter, r *http.Request) {
+	if s.qbitClient == nil {
+		s.respondJSON(w, http.StatusOK, map[string]interface{}{"tracker_url": nil})
+		return
+	}
+
+	id, err := strconv.ParseInt(chi.URLParam(r, "id"), 10, 64)
+	if err != nil {
+		s.respondError(w, http.StatusBadRequest, "invalid series ID")
+		return
+	}
+
+	num, err := strconv.Atoi(chi.URLParam(r, "num"))
+	if err != nil {
+		s.respondError(w, http.StatusBadRequest, "invalid season number")
+		return
+	}
+
+	season, err := s.db.GetSeasonBySeriesAndNumber(id, num)
+	if err != nil {
+		slog.Error("Failed to get season", "series_id", id, "season_number", num, "error", err)
+		s.respondError(w, http.StatusInternalServerError, "failed to get season")
+		return
+	}
+	if season == nil {
+		s.respondError(w, http.StatusNotFound, "season not found")
+		return
+	}
+
+	if season.FolderPath == nil || *season.FolderPath == "" {
+		s.respondJSON(w, http.StatusOK, map[string]interface{}{"tracker_url": nil})
+		return
+	}
+
+	torrents, err := s.qbitClient.ListTorrents()
+	if err != nil {
+		slog.Error("Failed to list torrents", "error", err)
+		s.respondError(w, http.StatusInternalServerError, "failed to list torrents")
+		return
+	}
+
+	matched := qbittorrent.FindTorrentByFolder(torrents, *season.FolderPath)
+	if matched == nil {
+		s.respondJSON(w, http.StatusOK, map[string]interface{}{"tracker_url": nil})
+		return
+	}
+
+	props, err := s.qbitClient.GetTorrentProperties(matched.Hash)
+	if err != nil {
+		if errors.Is(err, qbittorrent.ErrTorrentNotFound) {
+			s.respondJSON(w, http.StatusOK, map[string]interface{}{"tracker_url": nil})
+			return
+		}
+		slog.Error("Failed to get torrent properties", "hash", matched.Hash, "error", err)
+		s.respondError(w, http.StatusInternalServerError, "failed to get torrent properties")
+		return
+	}
+
+	if props.Comment == "" {
+		s.respondJSON(w, http.StatusOK, map[string]interface{}{"tracker_url": nil})
+		return
+	}
+
+	// Validate that comment is a valid HTTP(S) URL to prevent javascript: XSS
+	parsed, err := url.Parse(props.Comment)
+	if err != nil || (parsed.Scheme != "http" && parsed.Scheme != "https") {
+		s.respondJSON(w, http.StatusOK, map[string]interface{}{"tracker_url": nil})
+		return
+	}
+
+	s.respondJSON(w, http.StatusOK, map[string]interface{}{"tracker_url": props.Comment})
 }
 
 // Helper methods for JSON responses

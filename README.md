@@ -10,6 +10,7 @@ Local web service for tracking TV series with automatic media folder scanning.
 - Per-season voice dubbing tracking
 - AudioCutter for audio track management (mkvmerge/ffmpeg)
 - Automatic database backups
+- qBittorrent integration (tracker links on season pages)
 - Plex-inspired dark theme web interface
 
 ## Quick Start
@@ -66,7 +67,8 @@ episodex/
 │   ├── scanner/        # Media folder scanning
 │   ├── tvdb/           # TVDB API client
 │   ├── hash/           # File hashing utilities
-│   └── audio/          # AudioCutter (mkvmerge/ffmpeg)
+│   ├── audio/          # AudioCutter (mkvmerge/ffmpeg)
+│   └── qbittorrent/    # qBittorrent Web API client
 ├── web/
 │   ├── static/         # CSS, JS
 │   └── templates/      # HTML templates
@@ -101,6 +103,9 @@ All settings are configured via environment variables (`.env` file):
 - `BACKUP_HOUR` - hour of day for backup (default 3, range 0-23)
 - `SCAN_INTERVAL_HOURS` - scanning interval in hours
 - `TVDB_CHECK_HOUR` - hour of day for TVDB update check (default 5, range 0-23)
+- `QBIT_URL` - qBittorrent Web UI URL (optional, enables qBittorrent integration)
+- `QBIT_USER` - qBittorrent username (required when QBIT_URL is set)
+- `QBIT_PASSWORD` - qBittorrent password (required when QBIT_URL is set)
 
 ## API Endpoints
 
@@ -132,6 +137,10 @@ All settings are configured via environment variables (`.env` file):
 - `POST /api/series/:id/seasons/:num/audio/preview` - generate audio preview
 - `POST /api/series/:id/seasons/:num/audio/process` - process audio (SSE); body: `{track_id, keep_original}`
 - `GET /api/audio/preview/:hash` - serve audio preview file
+
+### Tracker
+
+- `GET /api/series/:id/seasons/:num/tracker` - get tracker URL for season (from qBittorrent)
 
 ### Voice Actors
 
@@ -204,6 +213,7 @@ All core features implemented:
 - [x] Voice dubbing management
 - [x] AudioCutter (mkvmerge/ffmpeg)
 - [x] Plex-inspired dark theme UI
+- [x] qBittorrent integration (tracker links)
 - [x] Linting and tests
 
 ## License

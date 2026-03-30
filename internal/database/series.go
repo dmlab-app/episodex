@@ -37,7 +37,7 @@ type Season struct {
 	SeriesID      int64
 	SeasonNumber  int
 	AiredEpisodes int
-	Downloaded       bool
+	Downloaded    bool
 }
 
 // Character represents a character in a series

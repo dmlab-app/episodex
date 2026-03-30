@@ -24,11 +24,11 @@ var (
 	reSeasonS          = regexp.MustCompile(`(?i)[Ss](\d{1,2})`)
 	reSeasonStandalone = regexp.MustCompile(`(?i)\bS(\d{1,2})\b`)
 	reSeasonWord       = regexp.MustCompile(`(?i)[Ss]eason\s*(\d{1,2})`)
-	reSeasonEnd     = regexp.MustCompile(`(?i)\s*[Ss]\d{1,2}$`)
-	reSeasonWordEnd = regexp.MustCompile(`(?i)\s*[Ss]eason\s*\d{1,2}$`)
-	reSeasonMid     = regexp.MustCompile(`(?i)\s+[Ss]\d{1,2}\s+`)
-	reSeasonWordMid = regexp.MustCompile(`(?i)\s+[Ss]eason\s*\d{1,2}\s+`)
-	reMultiSpace    = regexp.MustCompile(`\s+`)
+	reSeasonEnd        = regexp.MustCompile(`(?i)\s*[Ss]\d{1,2}$`)
+	reSeasonWordEnd    = regexp.MustCompile(`(?i)\s*[Ss]eason\s*\d{1,2}$`)
+	reSeasonMid        = regexp.MustCompile(`(?i)\s+[Ss]\d{1,2}\s+`)
+	reSeasonWordMid    = regexp.MustCompile(`(?i)\s+[Ss]eason\s*\d{1,2}\s+`)
+	reMultiSpace       = regexp.MustCompile(`\s+`)
 
 	reQualityPatterns = []*regexp.Regexp{
 		regexp.MustCompile(`(?i)\s*\bHDR\b`),

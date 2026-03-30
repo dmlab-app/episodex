@@ -350,9 +350,9 @@ func TestParseSeriesFolder(t *testing.T) {
 
 func TestExtractSeasonNumber(t *testing.T) {
 	tests := []struct {
-		name string
+		name  string
 		input string
-		want int
+		want  int
 	}{
 		{"S03 pattern", "Ginny.and.Georgia.S03.1080p", 3},
 		{"S01 pattern", "Show.S01.720p", 1},

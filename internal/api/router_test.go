@@ -11,6 +11,7 @@ import (
 	"testing"
 
 	"github.com/episodex/episodex/internal/database"
+	"github.com/episodex/episodex/internal/qbittorrent"
 	"github.com/episodex/episodex/internal/tvdb"
 )
 
@@ -36,7 +37,7 @@ func setupTestServer(t *testing.T, tvdbClient ...*tvdb.Client) (*Server, *databa
 	if len(tvdbClient) > 0 {
 		tc = tvdbClient[0]
 	}
-	srv := NewServer(db, nil, tc, "")
+	srv := NewServer(db, nil, tc, nil, "")
 	return srv, db
 }
 
@@ -1467,5 +1468,218 @@ func TestHandleDeleteSeries_SkipsFilesOutsideMediaPath(t *testing.T) {
 	// File outside media path should NOT be deleted
 	if _, err := os.Stat(outsideFile); err != nil {
 		t.Errorf("expected file outside media path to be preserved: %s", outsideFile)
+	}
+}
+
+// setupQbitMock creates a mock qBittorrent API server that returns the given
+// torrents list and properties by hash. Returns the mock server and a logged-in client.
+func setupQbitMock(t *testing.T, torrents []qbittorrent.Torrent, properties map[string]qbittorrent.Properties) *qbittorrent.Client {
+	t.Helper()
+
+	mock := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/v2/auth/login":
+			http.SetCookie(w, &http.Cookie{Name: "SID", Value: "test-session"})
+			w.WriteHeader(http.StatusOK)
+		case "/api/v2/torrents/info":
+			json.NewEncoder(w).Encode(torrents)
+		case "/api/v2/torrents/properties":
+			hash := r.URL.Query().Get("hash")
+			props, ok := properties[hash]
+			if !ok {
+				w.WriteHeader(http.StatusNotFound)
+				return
+			}
+			json.NewEncoder(w).Encode(props)
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	t.Cleanup(mock.Close)
+
+	client := qbittorrent.NewClient(mock.URL, "admin", "pass")
+	if err := client.Login(); err != nil {
+		t.Fatalf("failed to login to mock qbit: %v", err)
+	}
+	return client
+}
+
+// setupTestServerWithQbit creates a test server with a qBittorrent client attached.
+func setupTestServerWithQbit(t *testing.T, qbitClient *qbittorrent.Client) (*Server, *database.DB) {
+	t.Helper()
+
+	tmpDir := t.TempDir()
+	dbPath := filepath.Join(tmpDir, "test.db")
+
+	db, err := database.New(dbPath)
+	if err != nil {
+		t.Fatalf("failed to create test database: %v", err)
+	}
+
+	t.Cleanup(func() {
+		db.Close()
+		os.Remove(dbPath)
+	})
+
+	srv := NewServer(db, nil, nil, qbitClient, "")
+	return srv, db
+}
+
+func TestHandleGetSeasonTracker_MatchFound(t *testing.T) {
+	torrents := []qbittorrent.Torrent{
+		{Name: "Breaking.Bad.S01.1080p", SavePath: "/downloads/", Hash: "abc123"},
+	}
+	properties := map[string]qbittorrent.Properties{
+		"abc123": {Comment: "https://tracker.example.com/torrent/12345"},
+	}
+	qbitClient := setupQbitMock(t, torrents, properties)
+	srv, db := setupTestServerWithQbit(t, qbitClient)
+
+	seriesID := seedSeries(t, db, "Breaking Bad", 5)
+	seedSeason(t, db, seriesID, 1, "/media/Breaking.Bad.S01.1080p", true, nil)
+
+	req := httptest.NewRequest(http.MethodGet, fmt.Sprintf("/api/series/%d/seasons/1/tracker", seriesID), http.NoBody)
+	w := httptest.NewRecorder()
+	srv.router.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected status 200, got %d: %s", w.Code, w.Body.String())
+	}
+
+	var resp map[string]interface{}
+	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+		t.Fatalf("failed to decode response: %v", err)
+	}
+
+	trackerURL, ok := resp["tracker_url"].(string)
+	if !ok || trackerURL != "https://tracker.example.com/torrent/12345" {
+		t.Fatalf("expected tracker_url to be 'https://tracker.example.com/torrent/12345', got %v", resp["tracker_url"])
+	}
+}
+
+func TestHandleGetSeasonTracker_NoMatch(t *testing.T) {
+	torrents := []qbittorrent.Torrent{
+		{Name: "Other.Show.S01", SavePath: "/downloads/", Hash: "xyz789"},
+	}
+	qbitClient := setupQbitMock(t, torrents, nil)
+	srv, db := setupTestServerWithQbit(t, qbitClient)
+
+	seriesID := seedSeries(t, db, "Breaking Bad", 5)
+	seedSeason(t, db, seriesID, 1, "/media/Breaking.Bad.S01.1080p", true, nil)
+
+	req := httptest.NewRequest(http.MethodGet, fmt.Sprintf("/api/series/%d/seasons/1/tracker", seriesID), http.NoBody)
+	w := httptest.NewRecorder()
+	srv.router.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected status 200, got %d", w.Code)
+	}
+
+	var resp map[string]interface{}
+	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+		t.Fatalf("failed to decode response: %v", err)
+	}
+
+	if resp["tracker_url"] != nil {
+		t.Fatalf("expected tracker_url to be null, got %v", resp["tracker_url"])
+	}
+}
+
+func TestHandleGetSeasonTracker_QbitNotConfigured(t *testing.T) {
+	srv, db := setupTestServer(t)
+
+	seriesID := seedSeries(t, db, "Breaking Bad", 5)
+	seedSeason(t, db, seriesID, 1, "/media/Breaking.Bad.S01.1080p", true, nil)
+
+	req := httptest.NewRequest(http.MethodGet, fmt.Sprintf("/api/series/%d/seasons/1/tracker", seriesID), http.NoBody)
+	w := httptest.NewRecorder()
+	srv.router.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected status 200, got %d", w.Code)
+	}
+
+	var resp map[string]interface{}
+	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+		t.Fatalf("failed to decode response: %v", err)
+	}
+
+	if resp["tracker_url"] != nil {
+		t.Fatalf("expected tracker_url to be null when qbit not configured, got %v", resp["tracker_url"])
+	}
+}
+
+func TestHandleGetSeasonTracker_EmptyComment(t *testing.T) {
+	torrents := []qbittorrent.Torrent{
+		{Name: "Breaking.Bad.S01.1080p", SavePath: "/downloads/", Hash: "abc123"},
+	}
+	properties := map[string]qbittorrent.Properties{
+		"abc123": {Comment: ""},
+	}
+	qbitClient := setupQbitMock(t, torrents, properties)
+	srv, db := setupTestServerWithQbit(t, qbitClient)
+
+	seriesID := seedSeries(t, db, "Breaking Bad", 5)
+	seedSeason(t, db, seriesID, 1, "/media/Breaking.Bad.S01.1080p", true, nil)
+
+	req := httptest.NewRequest(http.MethodGet, fmt.Sprintf("/api/series/%d/seasons/1/tracker", seriesID), http.NoBody)
+	w := httptest.NewRecorder()
+	srv.router.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected status 200, got %d", w.Code)
+	}
+
+	var resp map[string]interface{}
+	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+		t.Fatalf("failed to decode response: %v", err)
+	}
+
+	if resp["tracker_url"] != nil {
+		t.Fatalf("expected tracker_url to be null when comment is empty, got %v", resp["tracker_url"])
+	}
+}
+
+func TestHandleGetSeasonTracker_SeasonNotFound(t *testing.T) {
+	torrents := []qbittorrent.Torrent{}
+	qbitClient := setupQbitMock(t, torrents, nil)
+	srv, db := setupTestServerWithQbit(t, qbitClient)
+
+	seriesID := seedSeries(t, db, "Breaking Bad", 5)
+
+	req := httptest.NewRequest(http.MethodGet, fmt.Sprintf("/api/series/%d/seasons/99/tracker", seriesID), http.NoBody)
+	w := httptest.NewRecorder()
+	srv.router.ServeHTTP(w, req)
+
+	if w.Code != http.StatusNotFound {
+		t.Fatalf("expected status 404, got %d", w.Code)
+	}
+}
+
+func TestHandleGetSeasonTracker_NoFolderPath(t *testing.T) {
+	torrents := []qbittorrent.Torrent{
+		{Name: "Breaking.Bad.S01.1080p", SavePath: "/downloads/", Hash: "abc123"},
+	}
+	qbitClient := setupQbitMock(t, torrents, nil)
+	srv, db := setupTestServerWithQbit(t, qbitClient)
+
+	seriesID := seedSeries(t, db, "Breaking Bad", 5)
+	seedSeason(t, db, seriesID, 1, "", false, nil)
+
+	req := httptest.NewRequest(http.MethodGet, fmt.Sprintf("/api/series/%d/seasons/1/tracker", seriesID), http.NoBody)
+	w := httptest.NewRecorder()
+	srv.router.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected status 200, got %d", w.Code)
+	}
+
+	var resp map[string]interface{}
+	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+		t.Fatalf("failed to decode response: %v", err)
+	}
+
+	if resp["tracker_url"] != nil {
+		t.Fatalf("expected tracker_url to be null when folder_path is empty, got %v", resp["tracker_url"])
 	}
 }

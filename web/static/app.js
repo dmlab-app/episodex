@@ -379,6 +379,8 @@ async function showSeasonDetailPage(seriesId, seasonNum) {
     document.getElementById('audio-tracks-list').innerHTML = '';
     document.getElementById('progress-container').style.display = 'none';
     document.getElementById('processed-files-list').innerHTML = '';
+    document.getElementById('tracker-link-container').style.display = 'none';
+    document.getElementById('tracker-link').removeAttribute('href');
 
     updateNav('series');
 
@@ -390,7 +392,11 @@ let selectedTrackId = null;
 let currentAudioPlayer = null;
 let voiceSelectHandler = null;
 
+loadSeasonDetail._trackerId = 0;
 async function loadSeasonDetail(seriesId, seasonNum) {
+    // Invalidate any in-flight tracker request immediately, before any await
+    const trackerLoadId = ++loadSeasonDetail._trackerId;
+
     try {
         // Load series info and season info in parallel
         const [series, seasonInfo] = await Promise.all([
@@ -399,6 +405,21 @@ async function loadSeasonDetail(seriesId, seasonNum) {
         ]);
 
         document.getElementById('season-detail-subtitle').textContent = series.title;
+
+        // Fetch tracker link (non-blocking)
+        const trackerContainer = document.getElementById('tracker-link-container');
+        const trackerLink = document.getElementById('tracker-link');
+        trackerContainer.style.display = 'none';
+        trackerLink.removeAttribute('href');
+        api.get(`/api/series/${seriesId}/seasons/${seasonNum}/tracker`)
+            .then(data => {
+                if (trackerLoadId !== loadSeasonDetail._trackerId) return; // stale response
+                if (data.tracker_url) {
+                    trackerLink.href = data.tracker_url;
+                    trackerContainer.style.display = 'flex';
+                }
+            })
+            .catch(() => {}); // silently ignore tracker errors
 
         // Check if season is owned (files present on disk)
         if (!seasonInfo.on_disk) {

@@ -3,12 +3,18 @@ package qbittorrent
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
-	"io"
 	"net/http"
 	"net/url"
+	"path"
 	"strings"
+	"sync"
+	"time"
 )
+
+// ErrTorrentNotFound is returned when a torrent hash no longer exists.
+var ErrTorrentNotFound = errors.New("torrent not found")
 
 // Torrent represents a torrent from qBittorrent.
 type Torrent struct {
@@ -27,6 +33,7 @@ type Client struct {
 	baseURL  string
 	user     string
 	password string
+	mu       sync.Mutex
 	cookie   *http.Cookie
 	client   *http.Client
 }
@@ -37,12 +44,18 @@ func NewClient(baseURL, user, password string) *Client {
 		baseURL:  strings.TrimRight(baseURL, "/"),
 		user:     user,
 		password: password,
-		client:   &http.Client{},
+		client:   &http.Client{Timeout: 10 * time.Second},
 	}
 }
 
 // Login authenticates with the qBittorrent API and stores the session cookie.
 func (c *Client) Login() error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.login()
+}
+
+func (c *Client) login() error {
 	form := url.Values{
 		"username": {c.user},
 		"password": {c.password},
@@ -52,7 +65,7 @@ func (c *Client) Login() error {
 	if err != nil {
 		return fmt.Errorf("qbittorrent login request failed: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode == http.StatusForbidden {
 		return fmt.Errorf("qbittorrent login failed: invalid credentials")
@@ -72,18 +85,21 @@ func (c *Client) Login() error {
 }
 
 // doRequest performs an authenticated HTTP request with automatic re-login on 403.
-func (c *Client) doRequest(method, path string, body io.Reader) (*http.Response, error) {
-	resp, err := c.rawRequest(method, path, body)
+func (c *Client) doRequest(reqPath string) (*http.Response, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	resp, err := c.rawRequest(reqPath)
 	if err != nil {
 		return nil, err
 	}
 
 	if resp.StatusCode == http.StatusForbidden {
-		resp.Body.Close()
-		if err := c.Login(); err != nil {
+		_ = resp.Body.Close()
+		if err := c.login(); err != nil {
 			return nil, fmt.Errorf("re-login failed: %w", err)
 		}
-		return c.rawRequest(method, path, body)
+		return c.rawRequest(reqPath)
 	}
 
 	return resp, nil
@@ -91,11 +107,11 @@ func (c *Client) doRequest(method, path string, body io.Reader) (*http.Response,
 
 // ListTorrents returns all torrents from qBittorrent.
 func (c *Client) ListTorrents() ([]Torrent, error) {
-	resp, err := c.doRequest("GET", "/api/v2/torrents/info", nil)
+	resp, err := c.doRequest("/api/v2/torrents/info")
 	if err != nil {
 		return nil, fmt.Errorf("list torrents: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("list torrents: unexpected status %d", resp.StatusCode)
@@ -110,14 +126,14 @@ func (c *Client) ListTorrents() ([]Torrent, error) {
 
 // GetTorrentProperties returns properties for a torrent identified by its hash.
 func (c *Client) GetTorrentProperties(hash string) (*Properties, error) {
-	resp, err := c.doRequest("GET", "/api/v2/torrents/properties?hash="+url.QueryEscape(hash), nil)
+	resp, err := c.doRequest("/api/v2/torrents/properties?hash=" + url.QueryEscape(hash))
 	if err != nil {
 		return nil, fmt.Errorf("get torrent properties: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode == http.StatusNotFound {
-		return nil, fmt.Errorf("get torrent properties: torrent not found")
+		return nil, ErrTorrentNotFound
 	}
 	if resp.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("get torrent properties: unexpected status %d", resp.StatusCode)
@@ -130,8 +146,20 @@ func (c *Client) GetTorrentProperties(hash string) (*Properties, error) {
 	return &props, nil
 }
 
-func (c *Client) rawRequest(method, path string, body io.Reader) (*http.Response, error) {
-	req, err := http.NewRequest(method, c.baseURL+path, body)
+// FindTorrentByFolder finds a torrent whose Name matches the basename of folderPath.
+// Returns nil if no match is found.
+func FindTorrentByFolder(torrents []Torrent, folderPath string) *Torrent {
+	folderName := path.Base(strings.TrimRight(folderPath, "/"))
+	for i := range torrents {
+		if torrents[i].Name == folderName {
+			return &torrents[i]
+		}
+	}
+	return nil
+}
+
+func (c *Client) rawRequest(reqPath string) (*http.Response, error) {
+	req, err := http.NewRequest(http.MethodGet, c.baseURL+reqPath, http.NoBody)
 	if err != nil {
 		return nil, err
 	}
