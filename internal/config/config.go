@@ -32,6 +32,11 @@ type Config struct {
 	// Scanning settings
 	ScanIntervalHours int
 	TVDBCheckHour     int
+
+	// qBittorrent settings
+	QbitURL      string
+	QbitUser     string
+	QbitPassword string
 }
 
 // Load loads configuration from environment variables
@@ -50,6 +55,9 @@ func Load() (*Config, error) {
 		TVDBApiKey:        getEnv("TVDB_API_KEY", ""),
 		ScanIntervalHours: getEnvAsInt("SCAN_INTERVAL_HOURS", 1),
 		TVDBCheckHour:     getEnvAsInt("TVDB_CHECK_HOUR", 5),
+		QbitURL:           getEnv("QBIT_URL", ""),
+		QbitUser:          getEnv("QBIT_USER", ""),
+		QbitPassword:      getEnv("QBIT_PASSWORD", ""),
 	}
 
 	// Validate required fields
@@ -84,6 +92,15 @@ func (c *Config) Validate() error {
 
 	if c.ScanIntervalHours < 1 {
 		return fmt.Errorf("SCAN_INTERVAL_HOURS must be at least 1")
+	}
+
+	if c.QbitURL != "" {
+		if c.QbitUser == "" {
+			return fmt.Errorf("QBIT_USER is required when QBIT_URL is set")
+		}
+		if c.QbitPassword == "" {
+			return fmt.Errorf("QBIT_PASSWORD is required when QBIT_URL is set")
+		}
 	}
 
 	return nil
