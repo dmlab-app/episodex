@@ -185,7 +185,7 @@ function renderSeries() {
             <div class="series-info">
                 <h4 class="series-title">${esc(s.title)}</h4>
                 <div class="series-meta">
-                    <span>${s.watched_seasons || 0} seasons</span>
+                    <span>${s.downloaded_seasons || 0} seasons</span>
                     <span class="series-status-badge ${esc(s.status)}">${esc(s.status)}</span>
                 </div>
                 ${hasNoMatch ? `
@@ -207,7 +207,7 @@ function updateStats() {
     document.getElementById('stat-total').textContent = state.series.length;
     document.getElementById('stat-continuing').textContent = state.series.filter(s => s.status?.toLowerCase() === 'continuing').length;
     document.getElementById('stat-ended').textContent = state.series.filter(s => s.status?.toLowerCase() === 'ended').length;
-    document.getElementById('stat-seasons').textContent = state.series.reduce((sum, s) => sum + (s.watched_seasons || 0), 0);
+    document.getElementById('stat-seasons').textContent = state.series.reduce((sum, s) => sum + (s.downloaded_seasons || 0), 0);
 }
 
 // ==============================================================================
@@ -299,7 +299,7 @@ function renderSeasons(series, seasons) {
     const grid = document.getElementById('seasons-grid');
 
     grid.innerHTML = seasons.map(season => {
-        const owned = season.owned === true;
+        const owned = season.on_disk === true;
         const seasonImage = season.image || series.poster_url || PLACEHOLDER_SVG;
 
         if (!owned) {
@@ -327,7 +327,7 @@ function renderSeasons(series, seasons) {
                 ? `<span class="voice-badge">${esc(season.voice_actor_name)}</span>`
                 : '';
             return `
-                <div class="season-card watched" data-season="${season.season_number}" onclick="navigate('/series/${series.id}/season/${season.season_number}')">
+                <div class="season-card on-disk" data-season="${season.season_number}" onclick="navigate('/series/${series.id}/season/${season.season_number}')">
                     <div class="season-poster">
                         <img src="${esc(seasonImage)}" alt="Season ${season.season_number}" loading="lazy">
                         <div class="season-overlay">
@@ -371,7 +371,7 @@ async function showSeasonDetailPage(seriesId, seasonNum) {
     // Reset page state
     document.getElementById('season-detail-title').textContent = `Season ${seasonNum}`;
     document.getElementById('season-detail-subtitle').textContent = '';
-    document.getElementById('season-not-watched').style.display = 'none';
+    document.getElementById('season-not-on-disk').style.display = 'none';
     document.getElementById('voice-selector-panel').style.display = 'flex';
     document.getElementById('audio-tracks-container').style.display = 'none';
     document.getElementById('season-files-box').style.display = 'block';
@@ -392,42 +392,17 @@ let voiceSelectHandler = null;
 
 async function loadSeasonDetail(seriesId, seasonNum) {
     try {
-        // Load series info, voices list, and season info in parallel
-        const [series, voices, seasonInfo] = await Promise.all([
+        // Load series info and season info in parallel
+        const [series, seasonInfo] = await Promise.all([
             api.get(`/api/series/${seriesId}`),
-            api.get('/api/voices'),
             api.get(`/api/series/${seriesId}/seasons/${seasonNum}`)
         ]);
 
         document.getElementById('season-detail-subtitle').textContent = series.title;
 
-        // Populate voice selector
-        const voiceSelect = document.getElementById('voice-select');
-        if (voiceSelect) {
-            voiceSelect.innerHTML = '<option value="">No voice selected</option>';
-            voices.forEach(v => {
-                const option = document.createElement('option');
-                option.value = v.id;
-                option.textContent = v.name;
-                if (seasonInfo.voice_actor_id && seasonInfo.voice_actor_id === v.id) {
-                    option.selected = true;
-                }
-                voiceSelect.appendChild(option);
-            });
-            // Remove old handler if exists, add new one
-            if (voiceSelectHandler) {
-                voiceSelect.removeEventListener('change', voiceSelectHandler);
-            }
-            voiceSelectHandler = () => {
-                const voiceId = voiceSelect.value ? parseInt(voiceSelect.value) : null;
-                updateSeasonVoice(seriesId, seasonNum, voiceId);
-            };
-            voiceSelect.addEventListener('change', voiceSelectHandler);
-        }
-
         // Check if season is owned (files present on disk)
-        if (!seasonInfo.owned) {
-            document.getElementById('season-not-watched').style.display = 'block';
+        if (!seasonInfo.on_disk) {
+            document.getElementById('season-not-on-disk').style.display = 'block';
             document.getElementById('voice-selector-panel').style.display = 'none';
             document.getElementById('season-files-box').style.display = 'none';
             return;
@@ -485,6 +460,34 @@ async function loadSeasonDetail(seriesId, seasonNum) {
             if (audioData.audio_tracks.length > 0) {
                 selectedTrackId = audioData.audio_tracks[0].id;
             }
+
+            // Parse studio names from Russian audio track names
+            const studioNames = parseStudiosFromTracks(audioData.audio_tracks);
+
+            const voiceSelect = document.getElementById('voice-select');
+            if (voiceSelect && studioNames.length > 0) {
+                voiceSelect.innerHTML = '<option value="">No voice selected</option>';
+                studioNames.forEach(name => {
+                    const option = document.createElement('option');
+                    option.value = name;
+                    option.textContent = name;
+                    // Match against current voice actor name
+                    if (seasonInfo.voice_actor_name && seasonInfo.voice_actor_name === name) {
+                        option.selected = true;
+                    }
+                    voiceSelect.appendChild(option);
+                });
+                if (voiceSelectHandler) {
+                    voiceSelect.removeEventListener('change', voiceSelectHandler);
+                }
+                voiceSelectHandler = () => {
+                    const name = voiceSelect.value || null;
+                    updateSeasonVoice(seriesId, seasonNum, name);
+                };
+                voiceSelect.addEventListener('change', voiceSelectHandler);
+            } else {
+                document.getElementById('voice-selector-panel').style.display = 'none';
+            }
         }
 
     } catch (e) {
@@ -493,10 +496,39 @@ async function loadSeasonDetail(seriesId, seasonNum) {
     }
 }
 
-async function updateSeasonVoice(seriesId, seasonNum, voiceActorId) {
+// Parse studio names from audio track names.
+// Tracks like "Dub | HDRezka Studio", "DUB SomeName" → extract the studio part.
+// Only considers Russian language tracks.
+function parseStudiosFromTracks(tracks) {
+    const studios = [];
+    const seen = new Set();
+
+    for (const track of tracks) {
+        if (track.language !== 'rus' || !track.name) continue;
+
+        let name = track.name.trim();
+
+        // "Dub | HDRezka Studio" → "HDRezka Studio"
+        if (name.includes('|')) {
+            name = name.split('|').pop().trim();
+        } else {
+            // "DUB SomeName" → "SomeName"
+            name = name.replace(/^dub\s+/i, '').trim();
+        }
+
+        if (name && !seen.has(name)) {
+            seen.add(name);
+            studios.push(name);
+        }
+    }
+
+    return studios;
+}
+
+async function updateSeasonVoice(seriesId, seasonNum, voiceName) {
     try {
         await api.put(`/api/series/${seriesId}/seasons/${seasonNum}`, {
-            voice_actor_id: voiceActorId
+            voice_name: voiceName
         });
         showToast('Voice studio updated');
     } catch (e) {
@@ -668,6 +700,66 @@ async function processSeasonAudio() {
         document.getElementById('progress-container').style.display = 'none';
         document.getElementById('audio-tracks-container').style.display = 'block';
         showToast('Processing failed', 'error');
+    }
+}
+
+async function setDefaultTrack() {
+    if (!selectedTrackId) {
+        showToast('Please select an audio track', 'error');
+        return;
+    }
+
+    if (!confirm('Set selected track as default for all files in this season?')) {
+        return;
+    }
+
+    // Hide tracks container, show progress
+    document.getElementById('audio-tracks-container').style.display = 'none';
+    document.getElementById('progress-container').style.display = 'block';
+
+    try {
+        const response = await fetch(`/api/series/${state.currentSeriesId}/seasons/${state.currentSeasonNum}/audio/set-default`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ track_id: selectedTrackId })
+        });
+
+        if (!response.ok) {
+            throw new Error('Failed to start set-default');
+        }
+
+        const reader = response.body.getReader();
+        const decoder = new TextDecoder();
+        let buffer = '';
+        let stats = { success: 0, error: 0, skipped: 0 };
+
+        while (true) {
+            const { done, value } = await reader.read();
+            if (done) break;
+
+            buffer += decoder.decode(value, { stream: true });
+            const lines = buffer.split('\n\n');
+            buffer = lines.pop();
+
+            for (const line of lines) {
+                if (line.startsWith('data: ')) {
+                    try {
+                        const data = JSON.parse(line.slice(6));
+                        handleProgressEvent(data, stats);
+                    } catch (e) {
+                        console.error('Failed to parse SSE event:', line, e);
+                    }
+                }
+            }
+        }
+
+        showToast('Default track set successfully!');
+        setTimeout(() => showSeasonDetail(state.currentSeriesId, state.currentSeasonNum), 2000);
+
+    } catch (e) {
+        document.getElementById('progress-container').style.display = 'none';
+        document.getElementById('audio-tracks-container').style.display = 'block';
+        showToast('Failed to set default track', 'error');
     }
 }
 
@@ -1082,8 +1174,9 @@ document.addEventListener('DOMContentLoaded', () => {
     });
     document.getElementById('back-from-add')?.addEventListener('click', () => navigate('/series'));
 
-    // Process audio button
+    // Process audio buttons
     document.getElementById('process-audio-btn')?.addEventListener('click', processSeasonAudio);
+    document.getElementById('set-default-btn')?.addEventListener('click', setDefaultTrack);
 
     // Setup router
     window.addEventListener('hashchange', router);
@@ -1099,6 +1192,7 @@ window.navigate = navigate;
 window.selectTrack = selectTrack;
 window.togglePreview = togglePreview;
 window.processSeasonAudio = processSeasonAudio;
+window.setDefaultTrack = setDefaultTrack;
 window.addSeries = addSeries;
 window.dismissAlert = dismissAlert;
 window.deleteSeries = deleteSeries;

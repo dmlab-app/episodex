@@ -737,7 +737,7 @@ func tvdbEpisodesMux(episodesResp interface{}) http.Handler {
 func TestCheckForTVDBUpdates_NewAiredSeason(t *testing.T) {
 	// Series has S1 with 10 aired episodes in DB.
 	// TVDB now returns S1 with 10 and S2 with 5 aired episodes.
-	// User watches S1 (max_watched=1). S2 is new -> alert.
+	// User watches S1 (max_owned=1). S2 is new -> alert.
 	tmpDir := t.TempDir()
 	dbPath := filepath.Join(tmpDir, "test.db")
 	db, err := database.New(dbPath)
@@ -759,10 +759,10 @@ func TestCheckForTVDBUpdates_NewAiredSeason(t *testing.T) {
 	}
 	seriesID, _ := result.LastInsertId()
 
-	// S1: watched, 10 aired episodes in DB
+	// S1: owned, 10 aired episodes in DB
 	_, err = db.Exec(`
-		INSERT INTO seasons (series_id, season_number, is_watched, is_owned, aired_episodes, created_at, updated_at)
-		VALUES (?, 1, 1, 1, 10, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+		INSERT INTO seasons (series_id, season_number, downloaded, aired_episodes, created_at, updated_at)
+		VALUES (?, 1, 1, 10, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
 	`, seriesID)
 	if err != nil {
 		t.Fatalf("failed to seed season: %v", err)
@@ -810,16 +810,6 @@ func TestCheckForTVDBUpdates_NewAiredSeason(t *testing.T) {
 		t.Errorf("expected 0 errors, got %d", checkResult.Errors)
 	}
 
-	// Verify alert was created for new season S02
-	var alertMsg string
-	err = db.QueryRow(`SELECT message FROM system_alerts WHERE type = 'new_seasons' AND dismissed = 0`).Scan(&alertMsg)
-	if err != nil {
-		t.Fatalf("expected alert to be created, got error: %v", err)
-	}
-	if alertMsg != "Test Show — new season S02" {
-		t.Errorf("expected alert 'Test Show — new season S02', got %q", alertMsg)
-	}
-
 	// Verify aired_seasons was updated to 2
 	var airedSeasons int
 	err = db.QueryRow(`SELECT aired_seasons FROM series WHERE id = ?`, seriesID).Scan(&airedSeasons)
@@ -834,7 +824,7 @@ func TestCheckForTVDBUpdates_NewAiredSeason(t *testing.T) {
 func TestCheckForTVDBUpdates_MidSeasonReturn(t *testing.T) {
 	// Series has S1 with 10 aired, S2 with 5 aired in DB.
 	// TVDB now shows S2 with 8 aired (3 new episodes = mid-season return).
-	// User watches S1 (max_watched=1). Alert for S2 increase.
+	// User watches S1 (max_owned=1). Alert for S2 increase.
 	tmpDir := t.TempDir()
 	dbPath := filepath.Join(tmpDir, "test.db")
 	db, err := database.New(dbPath)
@@ -856,18 +846,18 @@ func TestCheckForTVDBUpdates_MidSeasonReturn(t *testing.T) {
 	}
 	seriesID, _ := result.LastInsertId()
 
-	// S1: watched, 10 aired
+	// S1: owned, 10 aired
 	_, err = db.Exec(`
-		INSERT INTO seasons (series_id, season_number, is_watched, is_owned, aired_episodes, created_at, updated_at)
-		VALUES (?, 1, 1, 1, 10, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+		INSERT INTO seasons (series_id, season_number, downloaded, aired_episodes, created_at, updated_at)
+		VALUES (?, 1, 1, 10, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
 	`, seriesID)
 	if err != nil {
 		t.Fatalf("failed to seed S1: %v", err)
 	}
-	// S2: not watched, 5 aired
+	// S2: not owned, 5 aired
 	_, err = db.Exec(`
-		INSERT INTO seasons (series_id, season_number, is_watched, is_owned, aired_episodes, created_at, updated_at)
-		VALUES (?, 2, 0, 0, 5, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+		INSERT INTO seasons (series_id, season_number, downloaded, aired_episodes, created_at, updated_at)
+		VALUES (?, 2, 0, 5, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
 	`, seriesID)
 	if err != nil {
 		t.Fatalf("failed to seed S2: %v", err)
@@ -902,16 +892,6 @@ func TestCheckForTVDBUpdates_MidSeasonReturn(t *testing.T) {
 
 	if checkResult.Updated != 1 {
 		t.Errorf("expected 1 updated, got %d", checkResult.Updated)
-	}
-
-	// Verify alert for mid-season return: 3 new episodes in S02
-	var alertMsg string
-	err = db.QueryRow(`SELECT message FROM system_alerts WHERE type = 'new_seasons' AND dismissed = 0`).Scan(&alertMsg)
-	if err != nil {
-		t.Fatalf("expected alert to be created, got error: %v", err)
-	}
-	if alertMsg != "Hiatus Show — S02: 3 new episodes" {
-		t.Errorf("expected alert 'Hiatus Show — S02: 3 new episodes', got %q", alertMsg)
 	}
 
 	// Verify aired_episodes was updated in DB
@@ -950,15 +930,15 @@ func TestCheckForTVDBUpdates_UnchangedEpisodes(t *testing.T) {
 	seriesID, _ := result.LastInsertId()
 
 	_, err = db.Exec(`
-		INSERT INTO seasons (series_id, season_number, is_watched, is_owned, aired_episodes, created_at, updated_at)
-		VALUES (?, 1, 1, 1, 10, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+		INSERT INTO seasons (series_id, season_number, downloaded, aired_episodes, created_at, updated_at)
+		VALUES (?, 1, 1, 10, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
 	`, seriesID)
 	if err != nil {
 		t.Fatalf("failed to seed S1: %v", err)
 	}
 	_, err = db.Exec(`
-		INSERT INTO seasons (series_id, season_number, is_watched, is_owned, aired_episodes, created_at, updated_at)
-		VALUES (?, 2, 1, 1, 5, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+		INSERT INTO seasons (series_id, season_number, downloaded, aired_episodes, created_at, updated_at)
+		VALUES (?, 2, 1, 5, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
 	`, seriesID)
 	if err != nil {
 		t.Fatalf("failed to seed S2: %v", err)
@@ -1035,15 +1015,15 @@ func TestCheckForTVDBUpdates_ResetStaleAiredEpisodes(t *testing.T) {
 	seriesID, _ := result.LastInsertId()
 
 	_, err = db.Exec(`
-		INSERT INTO seasons (series_id, season_number, is_watched, is_owned, aired_episodes, created_at, updated_at)
-		VALUES (?, 1, 1, 1, 10, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+		INSERT INTO seasons (series_id, season_number, downloaded, aired_episodes, created_at, updated_at)
+		VALUES (?, 1, 1, 10, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
 	`, seriesID)
 	if err != nil {
 		t.Fatalf("failed to seed S1: %v", err)
 	}
 	_, err = db.Exec(`
-		INSERT INTO seasons (series_id, season_number, is_watched, is_owned, aired_episodes, created_at, updated_at)
-		VALUES (?, 2, 0, 0, 5, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+		INSERT INTO seasons (series_id, season_number, downloaded, aired_episodes, created_at, updated_at)
+		VALUES (?, 2, 0, 5, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
 	`, seriesID)
 	if err != nil {
 		t.Fatalf("failed to seed S2: %v", err)

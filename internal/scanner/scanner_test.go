@@ -44,13 +44,13 @@ func seedTestSeries(t *testing.T, db *database.DB, title string) int64 {
 	return id
 }
 
-// seedTestSeason inserts a season with explicit is_owned.
-func seedTestSeason(t *testing.T, db *database.DB, seriesID int64, seasonNum int, folderPath string, isWatched, isOwned bool) int64 {
+// seedTestSeason inserts a season with explicit downloaded.
+func seedTestSeason(t *testing.T, db *database.DB, seriesID int64, seasonNum int, folderPath string, downloaded bool) int64 {
 	t.Helper()
 	result, err := db.Exec(`
-		INSERT INTO seasons (series_id, season_number, folder_path, is_watched, is_owned, discovered_at, created_at, updated_at)
-		VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
-	`, seriesID, seasonNum, folderPath, isWatched, isOwned)
+		INSERT INTO seasons (series_id, season_number, folder_path, downloaded, discovered_at, created_at, updated_at)
+		VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+	`, seriesID, seasonNum, folderPath, downloaded)
 	if err != nil {
 		t.Fatalf("failed to seed season: %v", err)
 	}
@@ -94,7 +94,7 @@ func TestCleanupRemovedSeasons_FolderExists_KeepOwned(t *testing.T) {
 	seasonDir := filepath.Join(t.TempDir(), "Season 1")
 	createVideoFile(t, seasonDir, "episode.mkv")
 
-	_ = seedTestSeason(t, db, seriesID, 1, seasonDir, true, true)
+	_ = seedTestSeason(t, db, seriesID, 1, seasonDir, true)
 	seedTestMediaFile(t, db, seriesID, 1, filepath.Join(seasonDir, "episode.mkv"))
 
 	// Run cleanup
@@ -107,7 +107,7 @@ func TestCleanupRemovedSeasons_FolderExists_KeepOwned(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to get season: %v", err)
 	}
-	if !season.IsOwned {
+	if !season.Downloaded {
 		t.Error("expected season to remain owned when folder exists with video files")
 	}
 	if season.FolderPath == nil || *season.FolderPath != seasonDir {
@@ -132,7 +132,7 @@ func TestCleanupRemovedSeasons_FolderGone_ClearOwned(t *testing.T) {
 
 	// Use a folder path that doesn't exist
 	missingDir := filepath.Join(t.TempDir(), "nonexistent", "Season 1")
-	_ = seedTestSeason(t, db, seriesID, 1, missingDir, true, true)
+	_ = seedTestSeason(t, db, seriesID, 1, missingDir, true)
 	seedTestMediaFile(t, db, seriesID, 1, filepath.Join(missingDir, "episode.mkv"))
 
 	// Run cleanup
@@ -140,22 +140,17 @@ func TestCleanupRemovedSeasons_FolderGone_ClearOwned(t *testing.T) {
 		t.Fatalf("cleanupRemovedSeasons failed: %v", err)
 	}
 
-	// Season should no longer be owned
+	// Season should still be marked as downloaded, but folder_path cleared
 	season, err := db.GetSeasonBySeriesAndNumber(seriesID, 1)
 	if err != nil {
 		t.Fatalf("failed to get season: %v", err)
 	}
-	if season.IsOwned {
-		t.Error("expected season to be not owned when folder is gone")
+	if !season.Downloaded {
+		t.Error("expected downloaded to remain true")
 	}
 	if season.FolderPath != nil {
 		t.Errorf("expected folder_path to be NULL, got %v", *season.FolderPath)
 	}
-	// is_watched should be preserved
-	if !season.IsWatched {
-		t.Error("expected is_watched to remain true")
-	}
-
 	// Media files should be deleted
 	files, err := db.GetMediaFilesBySeason(seriesID, 1)
 	if err != nil {
@@ -178,7 +173,7 @@ func TestCleanupRemovedSeasons_FolderEmpty_ClearOwned(t *testing.T) {
 		t.Fatalf("failed to create empty dir: %v", err)
 	}
 
-	_ = seedTestSeason(t, db, seriesID, 1, emptyDir, true, true)
+	_ = seedTestSeason(t, db, seriesID, 1, emptyDir, true)
 	seedTestMediaFile(t, db, seriesID, 1, filepath.Join(emptyDir, "episode.mkv"))
 
 	// Run cleanup
@@ -186,13 +181,13 @@ func TestCleanupRemovedSeasons_FolderEmpty_ClearOwned(t *testing.T) {
 		t.Fatalf("cleanupRemovedSeasons failed: %v", err)
 	}
 
-	// Season should no longer be owned
+	// Season should still be downloaded, but folder_path cleared
 	season, err := db.GetSeasonBySeriesAndNumber(seriesID, 1)
 	if err != nil {
 		t.Fatalf("failed to get season: %v", err)
 	}
-	if season.IsOwned {
-		t.Error("expected season to be not owned when folder is empty")
+	if !season.Downloaded {
+		t.Error("expected downloaded to remain true")
 	}
 	if season.FolderPath != nil {
 		t.Errorf("expected folder_path to be NULL, got %v", *season.FolderPath)
@@ -215,7 +210,7 @@ func TestCleanupRemovedSeasons_NonOwnedSeason_NotTouched(t *testing.T) {
 	seriesID := seedTestSeries(t, db, "Another Show")
 
 	// A non-owned season (from TVDB sync) should not be affected
-	seedTestSeason(t, db, seriesID, 2, "", false, false)
+	seedTestSeason(t, db, seriesID, 2, "", false)
 
 	if err := sc.cleanupRemovedSeasons(); err != nil {
 		t.Fatalf("cleanupRemovedSeasons failed: %v", err)
@@ -225,7 +220,7 @@ func TestCleanupRemovedSeasons_NonOwnedSeason_NotTouched(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to get season: %v", err)
 	}
-	if season.IsOwned {
+	if season.Downloaded {
 		t.Error("non-owned season should remain not owned")
 	}
 }
@@ -246,8 +241,8 @@ func TestCleanupRemovedSeasons_PreservesVoiceActorID(t *testing.T) {
 	// Create owned season with voice actor, folder gone
 	missingDir := filepath.Join(t.TempDir(), "nonexistent")
 	_, err = db.Exec(`
-		INSERT INTO seasons (series_id, season_number, folder_path, voice_actor_id, is_watched, is_owned, discovered_at, created_at, updated_at)
-		VALUES (?, 3, ?, ?, 1, 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+		INSERT INTO seasons (series_id, season_number, folder_path, voice_actor_id, downloaded, discovered_at, created_at, updated_at)
+		VALUES (?, 3, ?, ?, 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
 	`, seriesID, missingDir, voiceID)
 	if err != nil {
 		t.Fatalf("failed to seed season with voice: %v", err)

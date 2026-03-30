@@ -45,7 +45,17 @@
       "WebSearch",
       "WebFetch(domain:raw.githubusercontent.com)",
       "Bash(git commit:*)",
-      "Bash(cat:*)"
+      "Bash(cat:*)",
+      "Bash(git add:*)",
+      "Bash(git merge:*)",
+      "Bash(git branch:*)",
+      "Bash(git checkout:*)",
+      "Bash(docker stop:*)",
+      "Bash(docker start:*)",
+      "Bash(printf:*)",
+      "Bash(ffmpeg:*)",
+      "Bash(grep:*)",
+      "Bash(docker port:*)"
     ],
     "deny": [],
     "ask": []

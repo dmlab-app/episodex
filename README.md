@@ -1,6 +1,6 @@
 # EpisodeX
 
-Local web service for tracking watched TV series with automatic media folder scanning.
+Local web service for tracking TV series with automatic media folder scanning.
 
 ## Features
 

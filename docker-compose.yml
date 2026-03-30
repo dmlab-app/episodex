@@ -12,7 +12,7 @@ services:
       BACKUP_PATH: /app/data/backups
     volumes:
       - ./data:/app/data
-      - ${MEDIA_PATH_HOST}:/media:ro
+      - ${MEDIA_PATH_HOST}:/media
     labels:
       - "reproxy.server=episodex.loc"
       - "reproxy.route=/"

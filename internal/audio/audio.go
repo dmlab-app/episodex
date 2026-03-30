@@ -14,9 +14,10 @@ import (
 
 // AudioCutter handles audio track operations on MKV files
 type AudioCutter struct { //nolint:revive // name is used across the codebase
-	mkvmergePath string
-	ffmpegPath   string
-	tempDir      string
+	mkvmergePath    string
+	mkvpropeditPath string
+	ffmpegPath      string
+	tempDir         string
 }
 
 // New creates a new AudioCutter
@@ -25,9 +26,10 @@ func New() *AudioCutter {
 	_ = os.MkdirAll(tempDir, 0o750)
 
 	return &AudioCutter{
-		mkvmergePath: "mkvmerge", // Assumes mkvmerge is in PATH
-		ffmpegPath:   "ffmpeg",   // Assumes ffmpeg is in PATH
-		tempDir:      tempDir,
+		mkvmergePath:    "mkvmerge",    // Assumes mkvmerge is in PATH
+		mkvpropeditPath: "mkvpropedit", // Assumes mkvpropedit is in PATH
+		ffmpegPath:      "ffmpeg",      // Assumes ffmpeg is in PATH
+		tempDir:         tempDir,
 	}
 }
 
@@ -322,6 +324,57 @@ func (ac *AudioCutter) CleanupOldPreviews() error {
 		if info.ModTime().Before(time.Now().Add(-24 * time.Hour)) {
 			os.Remove(file) //nolint:errcheck // removal failure is non-critical
 		}
+	}
+
+	return nil
+}
+
+// SetDefaultAudioTrack sets the specified audio track as default using mkvpropedit.
+// It clears the default flag on all tracks and sets it on the target audio track.
+func (ac *AudioCutter) SetDefaultAudioTrack(filePath string, trackID int) error {
+	if _, err := os.Stat(filePath); os.IsNotExist(err) {
+		return fmt.Errorf("file does not exist: %s", filePath)
+	}
+
+	// Get all tracks to know which ones exist
+	cmd := exec.Command(ac.mkvmergePath, "-J", filePath) //nolint:gosec // controlled input
+	output, err := cmd.Output()
+	if err != nil {
+		return fmt.Errorf("failed to run mkvmerge: %w", err)
+	}
+
+	var info MKVInfo
+	if err := json.Unmarshal(output, &info); err != nil {
+		return fmt.Errorf("failed to parse mkvmerge output: %w", err)
+	}
+
+	// Verify target track exists and is audio
+	trackFound := false
+	for _, track := range info.Tracks {
+		if track.ID == trackID && track.Type == "audio" {
+			trackFound = true
+			break
+		}
+	}
+	if !trackFound {
+		return fmt.Errorf("audio track ID %d does not exist in file", trackID)
+	}
+
+	// Build mkvpropedit arguments:
+	// Clear default on all tracks, then set default on target
+	args := []string{filePath}
+	for _, track := range info.Tracks {
+		// mkvpropedit uses 1-based track numbers; mkvmerge -J gives 0-based IDs
+		trackNum := track.ID + 1
+		args = append(args, "--edit", fmt.Sprintf("track:%d", trackNum), "--set", "flag-default=0")
+	}
+	// Set default on target track
+	targetNum := trackID + 1
+	args = append(args, "--edit", fmt.Sprintf("track:%d", targetNum), "--set", "flag-default=1")
+
+	editCmd := exec.Command(ac.mkvpropeditPath, args...) //nolint:gosec // controlled input
+	if out, err := editCmd.CombinedOutput(); err != nil {
+		return fmt.Errorf("mkvpropedit failed: %w, output: %s", err, string(out))
 	}
 
 	return nil

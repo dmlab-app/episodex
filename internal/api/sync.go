@@ -37,15 +37,13 @@ func CheckForTVDBUpdates(db *database.DB, tvdbClient *tvdb.Client, autoSync bool
 	var result TVDBCheckResult
 
 	type seriesRow struct {
-		id, tvdbID, airedSeasons, maxWatched int
-		title                                string
-		updatedAt                            time.Time
+		id, tvdbID, airedSeasons int
+		title                    string
+		updatedAt                time.Time
 	}
 
 	rows, err := db.Query(`
-		SELECT s.id, s.tvdb_id, s.title, s.aired_seasons,
-			COALESCE((SELECT MAX(sn.season_number) FROM seasons sn WHERE sn.series_id = s.id AND sn.is_watched = 1 AND sn.season_number > 0), 0),
-			s.updated_at
+		SELECT s.id, s.tvdb_id, s.title, s.aired_seasons, s.updated_at
 		FROM series s
 		WHERE s.tvdb_id IS NOT NULL
 	`)
@@ -57,7 +55,7 @@ func CheckForTVDBUpdates(db *database.DB, tvdbClient *tvdb.Client, autoSync bool
 	var seriesList []seriesRow
 	for rows.Next() {
 		var s seriesRow
-		if err := rows.Scan(&s.id, &s.tvdbID, &s.title, &s.airedSeasons, &s.maxWatched, &s.updatedAt); err != nil {
+		if err := rows.Scan(&s.id, &s.tvdbID, &s.title, &s.airedSeasons, &s.updatedAt); err != nil {
 			slog.Error("Failed to scan series check row", "error", err)
 			continue
 		}
@@ -107,24 +105,6 @@ func CheckForTVDBUpdates(db *database.DB, tvdbClient *tvdb.Client, autoSync bool
 			oldCount := oldAiredPerSeason[sn]
 			if newCount > oldCount {
 				hasChanges = true
-				// Only alert for seasons beyond the user's max watched.
-				if sn > s.maxWatched && s.maxWatched > 0 {
-					var message string
-					if oldCount == 0 {
-						message = fmt.Sprintf("%s — new season S%02d", s.title, sn)
-					} else {
-						message = fmt.Sprintf("%s — S%02d: %d new episodes", s.title, sn, newCount-oldCount)
-					}
-					if _, err = db.Exec(`
-						INSERT INTO system_alerts (type, message, created_at, dismissed)
-						SELECT ?, ?, CURRENT_TIMESTAMP, 0
-						WHERE NOT EXISTS (
-							SELECT 1 FROM system_alerts WHERE type = ? AND message = ? AND dismissed = 0
-						)
-					`, "new_seasons", message, "new_seasons", message); err != nil {
-						slog.Error("Failed to create alert", "series_id", s.id, "error", err)
-					}
-				}
 			}
 		}
 

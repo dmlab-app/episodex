@@ -154,37 +154,38 @@ func (s *Scanner) Scan() error {
 	return nil
 }
 
-// cleanupRemovedSeasons checks all seasons with is_owned=1 and clears those
-// whose folder_path no longer exists or no longer contains video files.
+// cleanupRemovedSeasons checks seasons with folder_path set and clears those
+// whose folder no longer exists or no longer contains video files.
+// Note: downloaded flag is never cleared — it records that the season was downloaded at least once.
 func (s *Scanner) cleanupRemovedSeasons() error {
 	rows, err := s.db.Query(`
 		SELECT id, series_id, season_number, folder_path
 		FROM seasons
-		WHERE is_owned = 1 AND folder_path IS NOT NULL AND folder_path != ''
+		WHERE folder_path IS NOT NULL AND folder_path != ''
 	`)
 	if err != nil {
-		return fmt.Errorf("failed to query owned seasons: %w", err)
+		return fmt.Errorf("failed to query seasons with folders: %w", err)
 	}
 
-	type ownedSeason struct {
+	type seasonWithFolder struct {
 		id           int64
 		seriesID     int64
 		seasonNumber int
 		folderPath   string
 	}
 
-	var toCheck []ownedSeason
+	var toCheck []seasonWithFolder
 	for rows.Next() {
-		var sn ownedSeason
+		var sn seasonWithFolder
 		if err := rows.Scan(&sn.id, &sn.seriesID, &sn.seasonNumber, &sn.folderPath); err != nil {
 			rows.Close() //nolint:errcheck
-			return fmt.Errorf("failed to scan owned season row: %w", err)
+			return fmt.Errorf("failed to scan season row: %w", err)
 		}
 		toCheck = append(toCheck, sn)
 	}
 	rows.Close() //nolint:errcheck
 	if err := rows.Err(); err != nil {
-		return fmt.Errorf("error iterating owned seasons: %w", err)
+		return fmt.Errorf("error iterating seasons: %w", err)
 	}
 
 	for _, sn := range toCheck {
@@ -193,15 +194,15 @@ func (s *Scanner) cleanupRemovedSeasons() error {
 			continue
 		}
 
-		slog.Info("Season folder missing or empty, clearing is_owned",
+		slog.Info("Season folder missing or empty, clearing folder_path",
 			"series_id", sn.seriesID, "season", sn.seasonNumber, "path", sn.folderPath)
 
-		// Clear is_owned and folder_path
+		// Clear folder_path only — downloaded stays true
 		if _, err := s.db.Exec(`
-			UPDATE seasons SET is_owned = 0, folder_path = NULL, updated_at = CURRENT_TIMESTAMP
+			UPDATE seasons SET folder_path = NULL, updated_at = CURRENT_TIMESTAMP
 			WHERE id = ?
 		`, sn.id); err != nil {
-			slog.Error("Failed to clear is_owned", "season_id", sn.id, "error", err)
+			slog.Error("Failed to clear folder_path", "season_id", sn.id, "error", err)
 			continue
 		}
 
@@ -555,12 +556,11 @@ func (s *Scanner) processSeriesInfo(info SeriesInfo) error {
 
 	// Upsert the season — avoids race condition with concurrent TVDB sync
 	result, err := s.db.Exec(`
-		INSERT INTO seasons (series_id, season_number, folder_path, is_watched, is_owned, discovered_at, created_at, updated_at)
-		VALUES (?, ?, ?, 1, 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+		INSERT INTO seasons (series_id, season_number, folder_path, downloaded, discovered_at, created_at, updated_at)
+		VALUES (?, ?, ?, 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
 		ON CONFLICT(series_id, season_number) DO UPDATE SET
 			folder_path = excluded.folder_path,
-			is_watched = 1,
-			is_owned = 1,
+			downloaded = 1,
 			updated_at = CURRENT_TIMESTAMP
 	`, seriesID, info.Season, info.Path)
 	if err != nil {

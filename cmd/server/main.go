@@ -119,6 +119,19 @@ func main() {
 	sch.StartAsync()
 	defer sch.Stop()
 
+	// Run TVDB check on startup (in background, non-blocking)
+	if tvdbClient != nil {
+		go func() {
+			slog.Info("Running startup TVDB check")
+			result := api.CheckForTVDBUpdates(db, tvdbClient, true)
+			if result.Skipped {
+				slog.Info("Startup TVDB check skipped: another sync is in progress")
+			} else {
+				slog.Info("Startup TVDB check completed", "checked", result.Checked, "updated", result.Updated)
+			}
+		}()
+	}
+
 	// Initialize HTTP server
 	apiServer := api.NewServer(db, mediaScanner, tvdbClient, cfg.MediaPath)
 	httpServer := &http.Server{

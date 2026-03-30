@@ -58,41 +58,41 @@ func seedSeries(t *testing.T, db *database.DB, title string, totalSeasons int) i
 }
 
 // seedSeason inserts a season into the seasons table.
-func seedSeason(t *testing.T, db *database.DB, seriesID int64, seasonNum int, folderPath string, isWatched bool, voiceActorID *int) {
-	t.Helper()
-	// Default: is_owned follows is_watched for backward-compatible tests
-	isOwned := isWatched
-	_, err := db.Exec(`
-		INSERT INTO seasons (series_id, season_number, folder_path, is_watched, is_owned, voice_actor_id, discovered_at, created_at, updated_at)
-		VALUES (?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
-	`, seriesID, seasonNum, folderPath, isWatched, isOwned, voiceActorID)
-	if err != nil {
-		t.Fatalf("failed to seed season: %v", err)
-	}
-}
-
-// seedSeasonWithOwned inserts a season with explicit is_watched and is_owned values.
-func seedSeasonWithOwned(t *testing.T, db *database.DB, seriesID int64, seasonNum int, folderPath string, isWatched, isOwned bool) {
+func seedSeason(t *testing.T, db *database.DB, seriesID int64, seasonNum int, folderPath string, downloaded bool, voiceActorID *int) {
 	t.Helper()
 	_, err := db.Exec(`
-		INSERT INTO seasons (series_id, season_number, folder_path, is_watched, is_owned, discovered_at, created_at, updated_at)
+		INSERT INTO seasons (series_id, season_number, folder_path, downloaded, voice_actor_id, discovered_at, created_at, updated_at)
 		VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
-	`, seriesID, seasonNum, folderPath, isWatched, isOwned)
+	`, seriesID, seasonNum, folderPath, downloaded, voiceActorID)
 	if err != nil {
 		t.Fatalf("failed to seed season: %v", err)
 	}
 }
 
 // seedSeasonWithEpisodes inserts a season with aired_episodes set.
-func seedSeasonWithEpisodes(t *testing.T, db *database.DB, seriesID int64, seasonNum int, folderPath string, isWatched bool, airedEpisodes int) {
+// When downloaded=true, also seeds media_files so file count matches aired_episodes.
+func seedSeasonWithEpisodes(t *testing.T, db *database.DB, seriesID int64, seasonNum int, folderPath string, downloaded bool, airedEpisodes int) {
 	t.Helper()
-	isOwned := isWatched
 	_, err := db.Exec(`
-		INSERT INTO seasons (series_id, season_number, folder_path, is_watched, is_owned, aired_episodes, discovered_at, created_at, updated_at)
-		VALUES (?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
-	`, seriesID, seasonNum, folderPath, isWatched, isOwned, airedEpisodes)
+		INSERT INTO seasons (series_id, season_number, folder_path, downloaded, aired_episodes, discovered_at, created_at, updated_at)
+		VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+	`, seriesID, seasonNum, folderPath, downloaded, airedEpisodes)
 	if err != nil {
 		t.Fatalf("failed to seed season with episodes: %v", err)
+	}
+	if downloaded {
+		for i := 1; i <= airedEpisodes; i++ {
+			_, err := db.Exec(`
+				INSERT INTO media_files (series_id, season_number, file_path, file_name, file_size, file_hash)
+				VALUES (?, ?, ?, ?, 100, ?)
+			`, seriesID, seasonNum,
+				fmt.Sprintf("/media/s%02d/e%02d.mkv", seasonNum, i),
+				fmt.Sprintf("e%02d.mkv", i),
+				fmt.Sprintf("hash_%d_%d_%d", seriesID, seasonNum, i))
+			if err != nil {
+				t.Fatalf("failed to seed media file: %v", err)
+			}
+		}
 	}
 }
 
@@ -144,17 +144,17 @@ func TestHandleListSeries_ReturnsCorrectSeasonCounts(t *testing.T) {
 	// Results are ordered by created_at DESC, so Better Call Saul comes first
 	for _, s := range result {
 		title := s["title"].(string)
-		watchedSeasons := int(s["watched_seasons"].(float64))
+		downloadedSeasons := int(s["downloaded_seasons"].(float64))
 
 		switch title {
 		case "Breaking Bad":
-			if watchedSeasons != 3 {
-				t.Errorf("Breaking Bad: expected 3 watched seasons, got %d", watchedSeasons)
+			if downloadedSeasons != 3 {
+				t.Errorf("Breaking Bad: expected 3 owned seasons, got %d", downloadedSeasons)
 			}
 		case "Better Call Saul":
-			// Only 1 is owned (is_watched=1)
-			if watchedSeasons != 1 {
-				t.Errorf("Better Call Saul: expected 1 watched season, got %d", watchedSeasons)
+			// Only 1 is owned (downloaded=1)
+			if downloadedSeasons != 1 {
+				t.Errorf("Better Call Saul: expected 1 owned season, got %d", downloadedSeasons)
 			}
 		default:
 			t.Errorf("unexpected series: %s", title)
@@ -207,8 +207,8 @@ func TestHandleGetSeries_ReturnsSeasonsWithVoiceActors(t *testing.T) {
 	if s1["voice_actor_name"] != "LostFilm" {
 		t.Errorf("season 1: expected voice_actor_name 'LostFilm', got %v", s1["voice_actor_name"])
 	}
-	if s1["watched"] != true {
-		t.Errorf("season 1: expected watched=true, got %v", s1["watched"])
+	if s1["downloaded"] != true {
+		t.Errorf("season 1: expected downloaded=true, got %v", s1["downloaded"])
 	}
 
 	// Check season 2 has no voice actor
@@ -262,11 +262,11 @@ func TestHandleListSeasons_OwnedVsLocked(t *testing.T) {
 
 	// Season 1: owned with voice actor
 	s1 := seasons[0]
-	if s1["watched"] != true {
-		t.Errorf("season 1: expected watched=true, got %v", s1["watched"])
+	if s1["downloaded"] != true {
+		t.Errorf("season 1: expected downloaded=true, got %v", s1["downloaded"])
 	}
-	if s1["owned"] != true {
-		t.Errorf("season 1: expected owned=true, got %v", s1["owned"])
+	if s1["downloaded"] != true {
+		t.Errorf("season 1: expected downloaded=true, got %v", s1["downloaded"])
 	}
 	if s1["voice_actor_name"] != "Amedia" {
 		t.Errorf("season 1: expected voice_actor_name 'Amedia', got %v", s1["voice_actor_name"])
@@ -274,29 +274,29 @@ func TestHandleListSeasons_OwnedVsLocked(t *testing.T) {
 
 	// Season 2: locked (not owned)
 	s2 := seasons[1]
-	if s2["watched"] != false {
-		t.Errorf("season 2: expected watched=false, got %v", s2["watched"])
+	if s2["downloaded"] != false {
+		t.Errorf("season 2: expected downloaded=false, got %v", s2["downloaded"])
 	}
-	if s2["owned"] != false {
-		t.Errorf("season 2: expected owned=false, got %v", s2["owned"])
+	if s2["downloaded"] != false {
+		t.Errorf("season 2: expected downloaded=false, got %v", s2["downloaded"])
 	}
 
 	// Season 3: owned without voice actor
 	s3 := seasons[2]
-	if s3["watched"] != true {
-		t.Errorf("season 3: expected watched=true, got %v", s3["watched"])
+	if s3["downloaded"] != true {
+		t.Errorf("season 3: expected downloaded=true, got %v", s3["downloaded"])
 	}
-	if s3["owned"] != true {
-		t.Errorf("season 3: expected owned=true, got %v", s3["owned"])
+	if s3["downloaded"] != true {
+		t.Errorf("season 3: expected downloaded=true, got %v", s3["downloaded"])
 	}
 
 	// Season 4: locked
 	s4 := seasons[3]
-	if s4["watched"] != false {
-		t.Errorf("season 4: expected watched=false, got %v", s4["watched"])
+	if s4["downloaded"] != false {
+		t.Errorf("season 4: expected downloaded=false, got %v", s4["downloaded"])
 	}
-	if s4["owned"] != false {
-		t.Errorf("season 4: expected owned=false, got %v", s4["owned"])
+	if s4["downloaded"] != false {
+		t.Errorf("season 4: expected downloaded=false, got %v", s4["downloaded"])
 	}
 }
 
@@ -773,7 +773,7 @@ func TestHandleGetUpdates_DeletedOldSeasons_NotShownAsNew(t *testing.T) {
 	srv, db := setupTestServer(t)
 
 	// Series with 5 aired seasons. User has only season 3 and 5 (deleted 1,2,4).
-	// Max watched = 5, no unwatched seasons beyond 5. No update should show.
+	// Max owned = 5, no unowned seasons beyond 5. No update should show.
 	id := seedSeriesWithAired(t, db, "Gaps Show", 5, 5)
 	seedSeasonWithEpisodes(t, db, id, 3, "/media/gs/s03", true, 10)
 	seedSeasonWithEpisodes(t, db, id, 5, "/media/gs/s05", true, 10)
@@ -792,7 +792,7 @@ func TestHandleGetUpdates_DeletedOldSeasons_NotShownAsNew(t *testing.T) {
 	}
 
 	if len(updates) != 0 {
-		t.Errorf("expected 0 updates when max watched season covers aired, got %d", len(updates))
+		t.Errorf("expected 0 updates when max owned season covers aired, got %d", len(updates))
 	}
 }
 
@@ -831,7 +831,7 @@ func TestHandleGetUpdates_GapsInSeasons_OnlyShowsNewerThanMax(t *testing.T) {
 	if !ok {
 		t.Fatalf("expected new_seasons to be an array, got %T", updates[0]["new_seasons"])
 	}
-	// Seasons 4, 5, 6, 7 are newer than max watched (3) and have aired episodes
+	// Seasons 4, 5, 6, 7 are newer than max owned (3) and have aired episodes
 	if len(newSeasons) != 4 {
 		t.Fatalf("expected 4 new seasons, got %d: %v", len(newSeasons), newSeasons)
 	}
@@ -879,7 +879,7 @@ func TestHandleGetUpdates_ScannerCreatedNoNonOwnedRows(t *testing.T) {
 
 	// Simulates scanner-created series: aired_seasons is set high but only owned
 	// season rows exist (no non-owned rows from TVDB sync). Since there are no
-	// unwatched seasons with aired_episodes > 0 beyond max watched, no update shows.
+	// unowned seasons with aired_episodes > 0 beyond max owned, no update shows.
 	id := seedSeriesWithAired(t, db, "Scanner Show", 5, 5)
 	seedSeasonWithEpisodes(t, db, id, 1, "/media/ss/s01", true, 10)
 	seedSeasonWithEpisodes(t, db, id, 2, "/media/ss/s02", true, 10)
@@ -899,17 +899,17 @@ func TestHandleGetUpdates_ScannerCreatedNoNonOwnedRows(t *testing.T) {
 		t.Fatalf("failed to decode response: %v", err)
 	}
 
-	// With episode-based logic, no unwatched seasons with aired_episodes > 0 exist,
+	// With episode-based logic, no unowned seasons with aired_episodes > 0 exist,
 	// so the series should NOT appear in updates.
 	if len(updates) != 0 {
-		t.Errorf("expected 0 updates (no unwatched aired seasons), got %d", len(updates))
+		t.Errorf("expected 0 updates (no unowned aired seasons), got %d", len(updates))
 	}
 }
 
 func TestHandleGetUpdates_UnairedSeason_NotInUpdates(t *testing.T) {
 	srv, db := setupTestServer(t)
 
-	// Series where user watched S1, S2 exists with aired_episodes=0 (unaired).
+	// Series where user owns S1, S2 exists with aired_episodes=0 (unaired).
 	// Should NOT appear in updates because the new season has no aired episodes.
 	id := seedSeriesWithAired(t, db, "Unaired Show", 2, 1)
 	seedSeasonWithEpisodes(t, db, id, 1, "/media/us/s01", true, 8)
@@ -933,15 +933,15 @@ func TestHandleGetUpdates_UnairedSeason_NotInUpdates(t *testing.T) {
 	}
 }
 
-func TestHandleGetSeries_IsOwnedField(t *testing.T) {
+func TestHandleGetSeries_DownloadedField(t *testing.T) {
 	srv, db := setupTestServer(t)
 
 	seriesID := seedSeries(t, db, "Breaking Bad", 5)
 
-	// Season 1: was watched, currently owned (files present)
-	seedSeasonWithOwned(t, db, seriesID, 1, "/media/bb/s01", true, true)
-	// Season 2: was watched, no longer owned (files removed)
-	seedSeasonWithOwned(t, db, seriesID, 2, "", true, false)
+	// Season 1: owned (files present)
+	seedSeason(t, db, seriesID, 1, "/media/bb/s01", true, nil)
+	// Season 2: not owned (files removed)
+	seedSeason(t, db, seriesID, 2, "", false, nil)
 
 	req := httptest.NewRequest(http.MethodGet, fmt.Sprintf("/api/series/%d", seriesID), http.NoBody)
 	w := httptest.NewRecorder()
@@ -961,36 +961,30 @@ func TestHandleGetSeries_IsOwnedField(t *testing.T) {
 		t.Fatalf("expected 2 seasons, got %v", result["seasons"])
 	}
 
-	// Season 1: watched=true, owned=true
+	// Season 1: owned=true
 	s1 := seasons[0].(map[string]interface{})
-	if s1["watched"] != true {
-		t.Errorf("season 1: expected watched=true, got %v", s1["watched"])
-	}
-	if s1["owned"] != true {
-		t.Errorf("season 1: expected owned=true, got %v", s1["owned"])
+	if s1["downloaded"] != true {
+		t.Errorf("season 1: expected downloaded=true, got %v", s1["downloaded"])
 	}
 
-	// Season 2: watched=true, owned=false
+	// Season 2: owned=false
 	s2 := seasons[1].(map[string]interface{})
-	if s2["watched"] != true {
-		t.Errorf("season 2: expected watched=true, got %v", s2["watched"])
-	}
-	if s2["owned"] != false {
-		t.Errorf("season 2: expected owned=false, got %v", s2["owned"])
+	if s2["downloaded"] != false {
+		t.Errorf("season 2: expected downloaded=false, got %v", s2["downloaded"])
 	}
 }
 
-func TestHandleListSeasons_IsOwnedField(t *testing.T) {
+func TestHandleListSeasons_DownloadedField(t *testing.T) {
 	srv, db := setupTestServer(t)
 
 	seriesID := seedSeries(t, db, "Breaking Bad", 4)
 
-	// Season 1: watched + owned
-	seedSeasonWithOwned(t, db, seriesID, 1, "/media/bb/s01", true, true)
-	// Season 2: watched but not owned (files removed)
-	seedSeasonWithOwned(t, db, seriesID, 2, "", true, false)
-	// Season 3: not watched, not owned (from TVDB sync)
-	seedSeasonWithOwned(t, db, seriesID, 3, "", false, false)
+	// Season 1: owned
+	seedSeason(t, db, seriesID, 1, "/media/bb/s01", true, nil)
+	// Season 2: not owned (files removed)
+	seedSeason(t, db, seriesID, 2, "", false, nil)
+	// Season 3: not owned (from TVDB sync)
+	seedSeason(t, db, seriesID, 3, "", false, nil)
 
 	req := httptest.NewRequest(http.MethodGet, fmt.Sprintf("/api/series/%d/seasons", seriesID), http.NoBody)
 	w := httptest.NewRecorder()
@@ -1010,33 +1004,33 @@ func TestHandleListSeasons_IsOwnedField(t *testing.T) {
 		t.Fatalf("expected 4 seasons, got %d", len(seasons))
 	}
 
-	// Season 1: watched=true, owned=true
-	if seasons[0]["watched"] != true || seasons[0]["owned"] != true {
-		t.Errorf("season 1: expected watched=true owned=true, got watched=%v owned=%v", seasons[0]["watched"], seasons[0]["owned"])
+	// Season 1: owned=true
+	if seasons[0]["downloaded"] != true {
+		t.Errorf("season 1: expected downloaded=true, got %v", seasons[0]["downloaded"])
 	}
 
-	// Season 2: watched=true, owned=false
-	if seasons[1]["watched"] != true || seasons[1]["owned"] != false {
-		t.Errorf("season 2: expected watched=true owned=false, got watched=%v owned=%v", seasons[1]["watched"], seasons[1]["owned"])
+	// Season 2: owned=false
+	if seasons[1]["downloaded"] != false {
+		t.Errorf("season 2: expected downloaded=false, got %v", seasons[1]["downloaded"])
 	}
 
-	// Season 3: watched=false, owned=false
-	if seasons[2]["watched"] != false || seasons[2]["owned"] != false {
-		t.Errorf("season 3: expected watched=false owned=false, got watched=%v owned=%v", seasons[2]["watched"], seasons[2]["owned"])
+	// Season 3: owned=false
+	if seasons[2]["downloaded"] != false {
+		t.Errorf("season 3: expected downloaded=false, got %v", seasons[2]["downloaded"])
 	}
 
-	// Season 4: locked placeholder, watched=false, owned=false
-	if seasons[3]["watched"] != false || seasons[3]["owned"] != false {
-		t.Errorf("season 4 (locked): expected watched=false owned=false, got watched=%v owned=%v", seasons[3]["watched"], seasons[3]["owned"])
+	// Season 4: locked placeholder, owned=false
+	if seasons[3]["downloaded"] != false {
+		t.Errorf("season 4 (locked): expected downloaded=false, got %v", seasons[3]["downloaded"])
 	}
 }
 
-func TestHandleGetSeason_IsOwnedField(t *testing.T) {
+func TestHandleGetSeason_DownloadedField(t *testing.T) {
 	srv, db := setupTestServer(t)
 
 	seriesID := seedSeries(t, db, "Breaking Bad", 5)
-	seedSeasonWithOwned(t, db, seriesID, 1, "/media/bb/s01", true, true)
-	seedSeasonWithOwned(t, db, seriesID, 2, "", true, false)
+	seedSeason(t, db, seriesID, 1, "/media/bb/s01", true, nil)
+	seedSeason(t, db, seriesID, 2, "", false, nil)
 
 	// Test season 1: owned
 	req := httptest.NewRequest(http.MethodGet, fmt.Sprintf("/api/series/%d/seasons/1", seriesID), http.NoBody)
@@ -1051,14 +1045,11 @@ func TestHandleGetSeason_IsOwnedField(t *testing.T) {
 	if err := json.NewDecoder(w.Body).Decode(&s1); err != nil {
 		t.Fatalf("failed to decode response: %v", err)
 	}
-	if s1["owned"] != true {
-		t.Errorf("season 1: expected owned=true, got %v", s1["owned"])
-	}
-	if s1["watched"] != true {
-		t.Errorf("season 1: expected watched=true, got %v", s1["watched"])
+	if s1["downloaded"] != true {
+		t.Errorf("season 1: expected downloaded=true, got %v", s1["downloaded"])
 	}
 
-	// Test season 2: not owned but watched
+	// Test season 2: not owned
 	req2 := httptest.NewRequest(http.MethodGet, fmt.Sprintf("/api/series/%d/seasons/2", seriesID), http.NoBody)
 	w2 := httptest.NewRecorder()
 	srv.router.ServeHTTP(w2, req2)
@@ -1071,11 +1062,8 @@ func TestHandleGetSeason_IsOwnedField(t *testing.T) {
 	if err := json.NewDecoder(w2.Body).Decode(&s2); err != nil {
 		t.Fatalf("failed to decode response: %v", err)
 	}
-	if s2["owned"] != false {
-		t.Errorf("season 2: expected owned=false, got %v", s2["owned"])
-	}
-	if s2["watched"] != true {
-		t.Errorf("season 2: expected watched=true, got %v", s2["watched"])
+	if s2["downloaded"] != false {
+		t.Errorf("season 2: expected downloaded=false, got %v", s2["downloaded"])
 	}
 }
 

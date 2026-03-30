@@ -77,8 +77,9 @@ func (s *Server) setupRoutes() {
 	// Health check
 	s.router.Get("/api/health", s.handleHealth)
 
-	// SSE endpoint without timeout — audio processing can take minutes
+	// SSE endpoints without timeout — audio processing can take minutes
 	s.router.Post("/api/series/{id}/seasons/{num}/audio/process", s.handleProcessAudioStream)
+	s.router.Post("/api/series/{id}/seasons/{num}/audio/set-default", s.handleSetDefaultTrackStream)
 
 	s.router.Route("/api", func(r chi.Router) {
 		// Apply timeout to all API routes (SSE is registered above, outside this group)
@@ -185,7 +186,7 @@ func (s *Server) handleHealth(w http.ResponseWriter, _ *http.Request) {
 func (s *Server) handleListSeries(w http.ResponseWriter, _ *http.Request) {
 	query := `
 		SELECT s.id, s.tvdb_id, s.title, s.original_title, s.poster_url, s.status, s.total_seasons, s.created_at,
-			(SELECT COUNT(*) FROM seasons sn WHERE sn.series_id = s.id AND sn.is_watched = 1) as watched_seasons
+			(SELECT COUNT(*) FROM seasons sn WHERE sn.series_id = s.id AND sn.downloaded = 1) as downloaded_seasons
 		FROM series s
 		ORDER BY s.created_at DESC
 	`
@@ -203,10 +204,10 @@ func (s *Server) handleListSeries(w http.ResponseWriter, _ *http.Request) {
 		var tvdbID *int
 		var title string
 		var originalTitle, posterURL, status *string
-		var totalSeasons, watchedSeasons int
+		var totalSeasons, downloadedSeasons int
 		var createdAt time.Time
 
-		if err := rows.Scan(&id, &tvdbID, &title, &originalTitle, &posterURL, &status, &totalSeasons, &createdAt, &watchedSeasons); err != nil {
+		if err := rows.Scan(&id, &tvdbID, &title, &originalTitle, &posterURL, &status, &totalSeasons, &createdAt, &downloadedSeasons); err != nil {
 			slog.Error("Failed to scan series row", "error", err)
 			continue
 		}
@@ -215,7 +216,7 @@ func (s *Server) handleListSeries(w http.ResponseWriter, _ *http.Request) {
 			"id":              id,
 			"title":           title,
 			"total_seasons":   totalSeasons,
-			"watched_seasons": watchedSeasons,
+			"downloaded_seasons": downloadedSeasons,
 			"created_at":      createdAt,
 		}
 
@@ -421,7 +422,7 @@ func (s *Server) handleGetSeries(w http.ResponseWriter, r *http.Request) {
 
 	// Get seasons from seasons table with voice actor JOIN
 	seasonsQuery := `
-		SELECT sn.season_number, sn.folder_path, sn.is_watched, sn.is_owned, sn.voice_actor_id, va.name, sn.discovered_at
+		SELECT sn.season_number, sn.folder_path, sn.downloaded, sn.voice_actor_id, va.name, sn.discovered_at
 		FROM seasons sn
 		LEFT JOIN voice_actors va ON sn.voice_actor_id = va.id
 		WHERE sn.series_id = ?
@@ -439,19 +440,19 @@ func (s *Server) handleGetSeries(w http.ResponseWriter, r *http.Request) {
 	for rows.Next() {
 		var seasonNum int
 		var folderPath, voiceActorName *string
-		var isWatched, isOwned bool
+		var downloaded bool
 		var voiceActorID *int
 		var discoveredAt *time.Time
 
-		if err := rows.Scan(&seasonNum, &folderPath, &isWatched, &isOwned, &voiceActorID, &voiceActorName, &discoveredAt); err != nil {
+		if err := rows.Scan(&seasonNum, &folderPath, &downloaded, &voiceActorID, &voiceActorName, &discoveredAt); err != nil {
 			slog.Error("Failed to scan season row", "error", err)
 			continue
 		}
 
 		season := map[string]interface{}{
 			"season_number": seasonNum,
-			"watched":       isWatched,
-			"owned":         isOwned,
+			"downloaded":    downloaded,
+			"on_disk":       folderPath != nil,
 		}
 
 		if folderPath != nil {
@@ -519,7 +520,7 @@ func (s *Server) handleGetSeries(w http.ResponseWriter, r *http.Request) {
 		"id":              seriesInfo.ID,
 		"title":           seriesInfo.Title,
 		"total_seasons":   seriesInfo.TotalSeasons,
-		"watched_seasons": countWatchedSeasons(seasons),
+		"downloaded_seasons": countDownloadedSeasons(seasons),
 		"seasons":         seasons,
 		"characters":      characters,
 		"created_at":      seriesInfo.CreatedAt,
@@ -743,8 +744,7 @@ func (s *Server) handleMatchSeries(w http.ResponseWriter, r *http.Request) {
 		_, err = tx.Exec(`
 			UPDATE seasons
 			SET folder_path = COALESCE((SELECT src.folder_path FROM seasons src WHERE src.series_id = ? AND src.season_number = seasons.season_number), folder_path),
-				is_watched = MAX(is_watched, COALESCE((SELECT src.is_watched FROM seasons src WHERE src.series_id = ? AND src.season_number = seasons.season_number), 0)),
-				is_owned = MAX(is_owned, COALESCE((SELECT src.is_owned FROM seasons src WHERE src.series_id = ? AND src.season_number = seasons.season_number), 0)),
+				downloaded = MAX(downloaded, COALESCE((SELECT src.downloaded FROM seasons src WHERE src.series_id = ? AND src.season_number = seasons.season_number), 0)),
 				aired_episodes = MAX(aired_episodes, COALESCE((SELECT src.aired_episodes FROM seasons src WHERE src.series_id = ? AND src.season_number = seasons.season_number), 0)),
 				voice_actor_id = COALESCE(voice_actor_id, (SELECT src.voice_actor_id FROM seasons src WHERE src.series_id = ? AND src.season_number = seasons.season_number)),
 				discovered_at = COALESCE(discovered_at, (SELECT src.discovered_at FROM seasons src WHERE src.series_id = ? AND src.season_number = seasons.season_number)),
@@ -754,7 +754,7 @@ func (s *Server) handleMatchSeries(w http.ResponseWriter, r *http.Request) {
 			WHERE series_id = ? AND season_number IN (
 				SELECT season_number FROM seasons WHERE series_id = ?
 			)
-		`, id, id, id, id, id, id, id, id, id, existingSeriesID, id)
+		`, id, id, id, id, id, id, id, id, existingSeriesID, id)
 		if err != nil {
 			slog.Error("Failed to update overlapping seasons", "error", err)
 			s.respondError(w, http.StatusInternalServerError, "failed to merge seasons")
@@ -992,11 +992,11 @@ func isValidHash(h string) bool {
 	return true
 }
 
-// countWatchedSeasons counts seasons where watched == true
-func countWatchedSeasons(seasons []map[string]interface{}) int {
+// countDownloadedSeasons counts seasons where downloaded == true
+func countDownloadedSeasons(seasons []map[string]interface{}) int {
 	count := 0
 	for _, s := range seasons {
-		if watched, ok := s["watched"].(bool); ok && watched {
+		if dl, ok := s["downloaded"].(bool); ok && dl {
 			count++
 		}
 	}
@@ -1031,24 +1031,34 @@ func (s *Server) handleTriggerScan(w http.ResponseWriter, _ *http.Request) {
 
 // Updates handlers
 func (s *Server) handleGetUpdates(w http.ResponseWriter, _ *http.Request) {
-	// Episode-based updates: a series appears if it has seasons with
-	// season_number > max_watched AND aired_episodes > 0.
-	// Requires at least one watched season (season_number > 0).
+	// A series appears in updates if it has at least one downloaded season AND either:
+	// 1. A new season exists beyond max_downloaded with aired_episodes > 0
+	// 2. A downloaded season has aired_episodes > number of files on disk
 	query := `
 		SELECT s.id, s.tvdb_id, s.title, s.original_title, s.poster_url, s.status,
 			s.aired_seasons,
-			(SELECT MAX(sn.season_number) FROM seasons sn WHERE sn.series_id = s.id AND sn.is_watched = 1 AND sn.season_number > 0) as max_watched
+			(SELECT MAX(sn.season_number) FROM seasons sn WHERE sn.series_id = s.id AND sn.downloaded = 1 AND sn.season_number > 0) as max_downloaded
 		FROM series s
-		WHERE (SELECT COUNT(*) FROM seasons sn WHERE sn.series_id = s.id AND sn.is_watched = 1 AND sn.season_number > 0) > 0
-		AND EXISTS (
-			SELECT 1 FROM seasons sn
-			WHERE sn.series_id = s.id
-			AND sn.season_number > COALESCE(
-				(SELECT MAX(sn2.season_number) FROM seasons sn2 WHERE sn2.series_id = s.id AND sn2.is_watched = 1 AND sn2.season_number > 0),
-				0
+		WHERE s.status != 'Ended'
+		AND (SELECT COUNT(*) FROM seasons sn WHERE sn.series_id = s.id AND sn.downloaded = 1 AND sn.season_number > 0) > 0
+		AND (
+			EXISTS (
+				SELECT 1 FROM seasons sn
+				WHERE sn.series_id = s.id
+				AND sn.season_number > COALESCE(
+					(SELECT MAX(sn2.season_number) FROM seasons sn2 WHERE sn2.series_id = s.id AND sn2.downloaded = 1 AND sn2.season_number > 0),
+					0
+				)
+				AND sn.aired_episodes > 0
+				AND sn.downloaded = 0
 			)
-			AND sn.aired_episodes > 0
-			AND sn.is_watched = 0
+			OR EXISTS (
+				SELECT 1 FROM seasons sn
+				WHERE sn.series_id = s.id AND sn.downloaded = 1 AND sn.season_number > 0
+				AND sn.aired_episodes > (
+					SELECT COUNT(*) FROM media_files mf WHERE mf.series_id = s.id AND mf.season_number = sn.season_number
+				)
+			)
 		)
 		ORDER BY s.updated_at DESC
 	`
@@ -1069,12 +1079,12 @@ func (s *Server) handleGetUpdates(w http.ResponseWriter, _ *http.Request) {
 		posterURL     *string
 		status        *string
 		airedSeasons  int
-		maxWatched    *int
+		maxDownloaded *int
 	}
 	var collected []updateRow
 	for rows.Next() {
 		var r updateRow
-		if err := rows.Scan(&r.id, &r.tvdbID, &r.title, &r.originalTitle, &r.posterURL, &r.status, &r.airedSeasons, &r.maxWatched); err != nil {
+		if err := rows.Scan(&r.id, &r.tvdbID, &r.title, &r.originalTitle, &r.posterURL, &r.status, &r.airedSeasons, &r.maxDownloaded); err != nil {
 			slog.Error("Failed to scan updates row", "error", err)
 			continue
 		}
@@ -1089,24 +1099,24 @@ func (s *Server) handleGetUpdates(w http.ResponseWriter, _ *http.Request) {
 
 	updates := make([]map[string]interface{}, 0, len(collected))
 	for _, r := range collected {
-		maxWatchedNum := 0
-		if r.maxWatched != nil {
-			maxWatchedNum = *r.maxWatched
+		maxDownloadedNum := 0
+		if r.maxDownloaded != nil {
+			maxDownloadedNum = *r.maxDownloaded
 		}
 
-		// Query aired seasons beyond max watched directly from the DB.
-		newSeasons, err := s.queryAiredSeasonsAfter(r.id, maxWatchedNum)
+		// Query seasons with available episodes.
+		newSeasons, err := s.queryAvailableUpdates(r.id, maxDownloadedNum)
 		if err != nil {
-			slog.Warn("Failed to query new aired seasons", "series_id", r.id, "error", err)
+			slog.Warn("Failed to query available updates", "series_id", r.id, "error", err)
 			newSeasons = []seasonUpdate{}
 		}
 
 		update := map[string]interface{}{
-			"id":            r.id,
-			"title":         r.title,
-			"aired_seasons": r.airedSeasons,
-			"max_watched":   maxWatchedNum,
-			"new_seasons":   newSeasons,
+			"id":             r.id,
+			"title":          r.title,
+			"aired_seasons":  r.airedSeasons,
+			"max_downloaded": maxDownloadedNum,
+			"new_seasons":    newSeasons,
 		}
 
 		if r.tvdbID != nil {
@@ -1130,20 +1140,32 @@ func (s *Server) handleGetUpdates(w http.ResponseWriter, _ *http.Request) {
 	s.respondJSON(w, http.StatusOK, updates)
 }
 
-// seasonUpdate represents a new season with episode count for the Updates response.
+// seasonUpdate represents a season with new episodes for the Updates response.
 type seasonUpdate struct {
-	SeasonNumber  int `json:"season_number"`
-	AiredEpisodes int `json:"aired_episodes"`
+	SeasonNumber    int `json:"season_number"`
+	AiredEpisodes   int `json:"aired_episodes"`
+	MissingEpisodes int `json:"missing_episodes"`
 }
 
-// queryAiredSeasonsAfter returns seasons with aired_episodes > 0 that are
-// beyond maxWatched, ordered by season_number.
-func (s *Server) queryAiredSeasonsAfter(seriesID, maxWatched int) ([]seasonUpdate, error) {
+// queryAvailableUpdates returns seasons that have new episodes to download:
+// 1. New seasons beyond max_downloaded with aired episodes
+// 2. Downloaded seasons where aired_episodes > files on disk
+func (s *Server) queryAvailableUpdates(seriesID, maxDownloaded int) ([]seasonUpdate, error) {
 	rows, err := s.db.Query(`
-		SELECT season_number, aired_episodes FROM seasons
-		WHERE series_id = ? AND season_number > ? AND aired_episodes > 0 AND is_watched = 0
-		ORDER BY season_number
-	`, seriesID, maxWatched)
+		SELECT sn.season_number, sn.aired_episodes,
+			sn.aired_episodes - (SELECT COUNT(*) FROM media_files mf WHERE mf.series_id = sn.series_id AND mf.season_number = sn.season_number) as missing
+		FROM seasons sn
+		WHERE sn.series_id = ?
+		AND sn.season_number > 0
+		AND sn.aired_episodes > 0
+		AND (
+			(sn.season_number > ? AND sn.downloaded = 0)
+			OR (sn.downloaded = 1 AND sn.aired_episodes > (
+				SELECT COUNT(*) FROM media_files mf WHERE mf.series_id = sn.series_id AND mf.season_number = sn.season_number
+			))
+		)
+		ORDER BY sn.season_number
+	`, seriesID, maxDownloaded)
 	if err != nil {
 		return nil, err
 	}
@@ -1152,7 +1174,7 @@ func (s *Server) queryAiredSeasonsAfter(seriesID, maxWatched int) ([]seasonUpdat
 	var result []seasonUpdate
 	for rows.Next() {
 		var su seasonUpdate
-		if err := rows.Scan(&su.SeasonNumber, &su.AiredEpisodes); err != nil {
+		if err := rows.Scan(&su.SeasonNumber, &su.AiredEpisodes, &su.MissingEpisodes); err != nil {
 			slog.Warn("Failed to scan season update row", "series_id", seriesID, "error", err)
 			continue
 		}
@@ -1215,7 +1237,7 @@ func (s *Server) handleListSeasons(w http.ResponseWriter, r *http.Request) {
 
 	// Get owned seasons from seasons table with voice actor JOIN (includes cached poster_url)
 	query := `
-		SELECT sn.season_number, sn.folder_path, sn.is_watched, sn.is_owned, sn.voice_actor_id, va.name, sn.discovered_at, sn.poster_url
+		SELECT sn.season_number, sn.folder_path, sn.downloaded, sn.voice_actor_id, va.name, sn.discovered_at, sn.poster_url
 		FROM seasons sn
 		LEFT JOIN voice_actors va ON sn.voice_actor_id = va.id
 		WHERE sn.series_id = ?
@@ -1230,23 +1252,23 @@ func (s *Server) handleListSeasons(w http.ResponseWriter, r *http.Request) {
 	defer rows.Close() //nolint:errcheck
 
 	// Build map of owned seasons
-	ownedSeasons := make(map[int]map[string]interface{})
+	downloadedSeasons := make(map[int]map[string]interface{})
 	for rows.Next() {
 		var seasonNum int
 		var folderPath, voiceActorName, seasonPosterURL *string
-		var isWatched, isOwned bool
+		var downloaded bool
 		var voiceActorID *int
 		var discoveredAt *time.Time
 
-		if err := rows.Scan(&seasonNum, &folderPath, &isWatched, &isOwned, &voiceActorID, &voiceActorName, &discoveredAt, &seasonPosterURL); err != nil {
+		if err := rows.Scan(&seasonNum, &folderPath, &downloaded, &voiceActorID, &voiceActorName, &discoveredAt, &seasonPosterURL); err != nil {
 			slog.Error("Failed to scan season detail row", "error", err)
 			continue
 		}
 
 		season := map[string]interface{}{
 			"season_number": seasonNum,
-			"watched":       isWatched,
-			"owned":         isOwned,
+			"downloaded":    downloaded,
+			"on_disk":       folderPath != nil,
 		}
 
 		if folderPath != nil {
@@ -1269,7 +1291,7 @@ func (s *Server) handleListSeasons(w http.ResponseWriter, r *http.Request) {
 			season["image"] = *seriesPosterURL
 		}
 
-		ownedSeasons[seasonNum] = season
+		downloadedSeasons[seasonNum] = season
 	}
 
 	if err := rows.Err(); err != nil {
@@ -1281,22 +1303,22 @@ func (s *Server) handleListSeasons(w http.ResponseWriter, r *http.Request) {
 	seasons := []map[string]interface{}{}
 	maxSeasons := totalSeasons
 	// Ensure maxSeasons includes all owned season numbers (they may exceed totalSeasons)
-	for num := range ownedSeasons {
+	for num := range downloadedSeasons {
 		if num > maxSeasons {
 			maxSeasons = num
 		}
 	}
 
 	for i := 1; i <= maxSeasons; i++ {
-		if season, exists := ownedSeasons[i]; exists {
+		if season, exists := downloadedSeasons[i]; exists {
 			// Owned season
 			seasons = append(seasons, season)
 		} else {
 			// Missing season - locked
 			lockedSeason := map[string]interface{}{
 				"season_number": i,
-				"watched":       false,
-				"owned":         false,
+				"downloaded":    false,
+				"on_disk":       false,
 			}
 
 			if seriesPosterURL != nil {
@@ -1451,16 +1473,16 @@ func (s *Server) handleGetSeason(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var folderPath *string
-	var isWatched, isOwned bool
+	var downloaded bool
 	var voiceActorID *int
 	var voiceActorName *string
 	var discoveredAt *time.Time
 	err = s.db.QueryRow(`
-		SELECT sn.folder_path, sn.is_watched, sn.is_owned, sn.voice_actor_id, va.name, sn.discovered_at
+		SELECT sn.folder_path, sn.downloaded, sn.voice_actor_id, va.name, sn.discovered_at
 		FROM seasons sn
 		LEFT JOIN voice_actors va ON sn.voice_actor_id = va.id
 		WHERE sn.series_id = ? AND sn.season_number = ?
-	`, sid, snum).Scan(&folderPath, &isWatched, &isOwned, &voiceActorID, &voiceActorName, &discoveredAt)
+	`, sid, snum).Scan(&folderPath, &downloaded, &voiceActorID, &voiceActorName, &discoveredAt)
 
 	if err == sql.ErrNoRows {
 		s.respondError(w, http.StatusNotFound, "season not found")
@@ -1475,8 +1497,8 @@ func (s *Server) handleGetSeason(w http.ResponseWriter, r *http.Request) {
 	response := map[string]interface{}{
 		"season_number": snum,
 		"folder_path":   folderPath,
-		"watched":       isWatched,
-		"owned":         isOwned,
+		"downloaded":    downloaded,
+		"on_disk":       folderPath != nil,
 	}
 
 	if voiceActorID != nil {
@@ -1506,7 +1528,8 @@ func (s *Server) handleUpdateSeason(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var req struct {
-		VoiceActorID *int `json:"voice_actor_id"`
+		VoiceActorID *int    `json:"voice_actor_id"`
+		VoiceName    *string `json:"voice_name"`
 	}
 
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -1527,6 +1550,25 @@ func (s *Server) handleUpdateSeason(w http.ResponseWriter, r *http.Request) {
 	if !exists {
 		s.respondError(w, http.StatusNotFound, "season not found")
 		return
+	}
+
+	// Resolve voice_actor_id from voice_name if provided
+	if req.VoiceName != nil && *req.VoiceName != "" {
+		name := strings.TrimSpace(*req.VoiceName)
+		var id int
+		err := s.db.QueryRow(`SELECT id FROM voice_actors WHERE name = ?`, name).Scan(&id)
+		if err != nil {
+			// Not found — create
+			result, err := s.db.Exec(`INSERT INTO voice_actors (name) VALUES (?)`, name)
+			if err != nil {
+				s.respondError(w, http.StatusInternalServerError, "failed to create voice actor")
+				return
+			}
+			newID, _ := result.LastInsertId()
+			id = int(newID)
+			slog.Info("Created voice actor from track name", "name", name, "id", id)
+		}
+		req.VoiceActorID = &id
 	}
 
 	// Treat voice_actor_id <= 0 as "clear"
@@ -1853,6 +1895,149 @@ func (s *Server) handleProcessAudioStream(w http.ResponseWriter, r *http.Request
 		"success": successCount,
 		"errors":  errorCount,
 		"skipped": skippedCount,
+	}
+	fmt.Fprintf(w, "data: %s\n\n", mustJSON(completeEvent)) //nolint:errcheck
+	flusher.Flush()
+}
+
+// handleSetDefaultTrackStream sets the default audio track on all MKV files with SSE progress.
+// This endpoint is registered outside the /api group to bypass timeout middleware.
+func (s *Server) handleSetDefaultTrackStream(w http.ResponseWriter, r *http.Request) {
+	r.Body = http.MaxBytesReader(w, r.Body, 1<<20) // 1MB limit
+
+	seriesID := chi.URLParam(r, "id")
+	seasonNum := chi.URLParam(r, "num")
+
+	var req struct {
+		TrackID int `json:"track_id"`
+	}
+
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		s.respondError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+
+	if req.TrackID <= 0 {
+		s.respondError(w, http.StatusBadRequest, "track_id is required")
+		return
+	}
+
+	sid, err := strconv.ParseInt(seriesID, 10, 64)
+	if err != nil {
+		s.respondError(w, http.StatusBadRequest, "invalid series ID")
+		return
+	}
+	snum, err := strconv.ParseInt(seasonNum, 10, 64)
+	if err != nil {
+		s.respondError(w, http.StatusBadRequest, "invalid season number")
+		return
+	}
+	_ = snum // used only for route validation
+
+	var folderPath *string
+	err = s.db.QueryRow(`
+		SELECT folder_path FROM seasons
+		WHERE series_id = ? AND season_number = ?
+	`, sid, snum).Scan(&folderPath)
+
+	if err != nil || folderPath == nil {
+		s.respondError(w, http.StatusNotFound, "season not found or no folder path")
+		return
+	}
+
+	flusher, ok := w.(http.Flusher)
+	if !ok {
+		s.respondError(w, http.StatusInternalServerError, "streaming unsupported")
+		return
+	}
+
+	results, err := s.audioCutter.ScanFolderAudioTracks(*folderPath)
+	if err != nil {
+		slog.Error("Failed to scan folder", "folder", *folderPath, "error", err)
+		s.respondError(w, http.StatusInternalServerError, "failed to scan folder")
+		return
+	}
+
+	// Set SSE headers after all validation
+	w.Header().Set("Content-Type", "text/event-stream")
+	w.Header().Set("Cache-Control", "no-cache")
+	w.Header().Set("Connection", "keep-alive")
+	w.Header().Set("X-Accel-Buffering", "no")
+
+	rc := http.NewResponseController(w)
+	if err := rc.SetWriteDeadline(time.Time{}); err != nil {
+		slog.Warn("Failed to disable write deadline for SSE", "error", err)
+	}
+
+	files := make([]string, 0, len(results))
+	for filePath := range results {
+		files = append(files, filePath)
+	}
+	sort.Strings(files)
+
+	// Send start event
+	startEvent := map[string]interface{}{
+		"type":  "start",
+		"total": len(files),
+	}
+	fmt.Fprintf(w, "data: %s\n\n", mustJSON(startEvent)) //nolint:errcheck
+	flusher.Flush()
+
+	successCount := 0
+	errorCount := 0
+
+	for idx, filePath := range files {
+		select {
+		case <-r.Context().Done():
+			slog.Info("Client disconnected, stopping set-default processing")
+			return
+		default:
+		}
+
+		// Send progress event
+		progressEvent := map[string]interface{}{
+			"type":    "progress",
+			"file":    filepath.Base(filePath),
+			"current": idx + 1,
+			"total":   len(files),
+		}
+		fmt.Fprintf(w, "data: %s\n\n", mustJSON(progressEvent)) //nolint:errcheck
+		flusher.Flush()
+
+		err := s.audioCutter.SetDefaultAudioTrack(filePath, req.TrackID)
+		if err != nil {
+			errorCount++
+			slog.Error("Failed to set default track", "file", filePath, "error", err)
+			event := map[string]interface{}{
+				"type":    "file_done",
+				"file":    filepath.Base(filePath),
+				"status":  "error",
+				"message": "failed to set default",
+				"current": idx + 1,
+				"total":   len(files),
+			}
+			fmt.Fprintf(w, "data: %s\n\n", mustJSON(event)) //nolint:errcheck
+			flusher.Flush()
+			continue
+		}
+
+		successCount++
+		event := map[string]interface{}{
+			"type":    "file_done",
+			"file":    filepath.Base(filePath),
+			"status":  "success",
+			"current": idx + 1,
+			"total":   len(files),
+		}
+		fmt.Fprintf(w, "data: %s\n\n", mustJSON(event)) //nolint:errcheck
+		flusher.Flush()
+	}
+
+	completeEvent := map[string]interface{}{
+		"type":    "complete",
+		"success": successCount,
+		"errors":  errorCount,
+		"skipped": 0,
 	}
 	fmt.Fprintf(w, "data: %s\n\n", mustJSON(completeEvent)) //nolint:errcheck
 	flusher.Flush()
