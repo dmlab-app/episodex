@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"log/slog"
 	"path/filepath"
+	"time"
 
 	ptn "github.com/middelink/go-parse-torrent-name"
 
@@ -118,34 +119,35 @@ func (c *Checker) checkSeason(season *database.Season) CheckResult {
 	slog.Info("Tracker check: new episodes available",
 		"season_id", season.ID, "tracker", trackerEps, "disk", diskEps)
 
-	if err := c.redownload(season, client); err != nil {
+	redownloaded, err := c.redownload(season, client)
+	if err != nil {
 		result.Error = fmt.Errorf("redownload: %w", err)
 		slog.Error("Tracker check: redownload failed", "season_id", season.ID, "error", err)
 		return result
 	}
 
-	result.Redownloaded = true
+	result.Redownloaded = redownloaded
 	return result
 }
 
-func (c *Checker) redownload(season *database.Season, client Client) error {
+func (c *Checker) redownload(season *database.Season, client Client) (bool, error) {
 	trackerURL := *season.TrackerURL
 
 	// Download new .torrent file
 	torrentData, err := client.DownloadTorrent(trackerURL)
 	if err != nil {
-		return fmt.Errorf("download torrent: %w", err)
+		return false, fmt.Errorf("download torrent: %w", err)
 	}
 
 	// Compute new hash and skip redownload if torrent hasn't changed
 	newHash, err := qbittorrent.ComputeInfoHash(torrentData)
 	if err != nil {
-		return fmt.Errorf("compute info hash: %w", err)
+		return false, fmt.Errorf("compute info hash: %w", err)
 	}
 	if season.TorrentHash != nil && *season.TorrentHash == newHash {
 		slog.Debug("Tracker check: torrent unchanged, skipping redownload",
 			"season_id", season.ID, "hash", newHash)
-		return nil
+		return false, nil
 	}
 
 	// Get category from existing torrent in qBit (if available)
@@ -171,23 +173,39 @@ func (c *Checker) redownload(season *database.Season, client Client) error {
 
 	// Add new torrent to qBit
 	if _, err := c.qbit.AddTorrent(torrentData, category, savePath); err != nil {
-		return fmt.Errorf("add torrent: %w", err)
+		return false, fmt.Errorf("add torrent: %w", err)
 	}
 
-	// Get file list from new torrent and skip already-processed files
-	if err := c.skipProcessedFiles(newHash, season); err != nil {
+	// Wait for qBittorrent to index the torrent before setting file priorities
+	if err := c.skipProcessedFilesWithRetry(newHash, season); err != nil {
 		slog.Warn("Tracker check: failed to set file priorities", "error", err)
 	}
 
 	// Update torrent_hash in DB
 	if err := c.db.UpdateTorrentHash(season.ID, newHash); err != nil {
-		return fmt.Errorf("update torrent hash: %w", err)
+		return false, fmt.Errorf("update torrent hash: %w", err)
 	}
 
 	slog.Info("Tracker check: redownload complete",
 		"season_id", season.ID, "new_hash", newHash)
 
-	return nil
+	return true, nil
+}
+
+func (c *Checker) skipProcessedFilesWithRetry(hash string, season *database.Season) error {
+	var lastErr error
+	for attempt := 0; attempt < 3; attempt++ {
+		if attempt > 0 {
+			time.Sleep(2 * time.Second)
+		}
+		lastErr = c.skipProcessedFiles(hash, season)
+		if lastErr == nil {
+			return nil
+		}
+		slog.Debug("Tracker check: waiting for qBittorrent to index torrent",
+			"hash", hash, "attempt", attempt+1, "error", lastErr)
+	}
+	return lastErr
 }
 
 func (c *Checker) skipProcessedFiles(hash string, season *database.Season) error {
