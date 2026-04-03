@@ -184,6 +184,42 @@ func (db *DB) DeleteProcessedFilesBySeason(seriesID int64, seasonNumber int) err
 	return nil
 }
 
+// IsFileProcessed returns true if the file path exists in processed_files.
+func (db *DB) IsFileProcessed(filePath string) (bool, error) {
+	var exists bool
+	err := db.QueryRow(`SELECT COUNT(*) > 0 FROM processed_files WHERE file_path = ?`, filePath).Scan(&exists)
+	if err != nil {
+		return false, fmt.Errorf("failed to check processed file: %w", err)
+	}
+	return exists, nil
+}
+
+// GetProcessedFilePathsBySeason returns all processed file paths for a season.
+func (db *DB) GetProcessedFilePathsBySeason(seriesID int64, seasonNumber int) ([]string, error) {
+	rows, err := db.Query(`
+		SELECT file_path FROM processed_files
+		WHERE series_id = ? AND season_number = ?
+		ORDER BY file_path
+	`, seriesID, seasonNumber)
+	if err != nil {
+		return nil, fmt.Errorf("failed to query processed file paths: %w", err)
+	}
+	defer rows.Close() //nolint:errcheck
+
+	var paths []string
+	for rows.Next() {
+		var path string
+		if err := rows.Scan(&path); err != nil {
+			return nil, fmt.Errorf("failed to scan processed file path: %w", err)
+		}
+		paths = append(paths, path)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("failed to iterate processed file paths: %w", err)
+	}
+	return paths, nil
+}
+
 // InvalidateCachedData invalidates all cached data related to changed media files
 // This includes audio track information and processed file records
 func (db *DB) InvalidateCachedData(filePath string) error {

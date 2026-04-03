@@ -16,6 +16,8 @@ import (
 	"github.com/episodex/episodex/internal/qbittorrent"
 	"github.com/episodex/episodex/internal/scanner"
 	"github.com/episodex/episodex/internal/scheduler"
+	"github.com/episodex/episodex/internal/tracker"
+	"github.com/episodex/episodex/internal/tracker/kinozal"
 	"github.com/episodex/episodex/internal/tvdb"
 )
 
@@ -142,6 +144,39 @@ func main() {
 		} else {
 			slog.Info("qBittorrent client initialized successfully")
 		}
+	}
+
+	// Initialize tracker registry and checker
+	trackerRegistry := tracker.NewRegistry()
+	if cfg.KinozalUser != "" {
+		kzClient := kinozal.NewClient(cfg.KinozalUser, cfg.KinozalPassword)
+		if err := kzClient.Login(); err != nil {
+			slog.Warn("Failed to login to Kinozal, will retry on demand", "error", err)
+		} else {
+			slog.Info("Kinozal client initialized successfully")
+		}
+		trackerRegistry.Register(kzClient)
+	}
+
+	if qbitClient != nil && len(trackerRegistry.Clients()) > 0 {
+		trackerChecker := tracker.NewChecker(db, trackerRegistry, qbitClient)
+		sch.AddTask(scheduler.Task{
+			Name:     "tracker_check",
+			Schedule: &scheduler.IntervalSchedule{Interval: time.Duration(cfg.TrackerCheckIntervalHours) * time.Hour},
+			Handler: func(_ context.Context) error {
+				results := trackerChecker.Check()
+				redownloaded := 0
+				for _, r := range results {
+					if r.Redownloaded {
+						redownloaded++
+					}
+				}
+				if redownloaded > 0 {
+					slog.Info("Tracker check completed", "checked", len(results), "redownloaded", redownloaded)
+				}
+				return nil
+			},
+		})
 	}
 
 	// Initialize HTTP server

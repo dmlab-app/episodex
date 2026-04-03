@@ -41,6 +41,9 @@ type Config struct {
 	// Kinozal settings
 	KinozalUser     string
 	KinozalPassword string
+
+	// Tracker check settings
+	TrackerCheckIntervalHours int
 }
 
 // Load loads configuration from environment variables
@@ -62,8 +65,9 @@ func Load() (*Config, error) {
 		QbitURL:           getEnv("QBIT_URL", ""),
 		QbitUser:          getEnv("QBIT_USER", ""),
 		QbitPassword:      getEnv("QBIT_PASSWORD", ""),
-		KinozalUser:       getEnv("KINOZAL_USER", ""),
-		KinozalPassword:   getEnv("KINOZAL_PASSWORD", ""),
+		KinozalUser:               getEnv("KINOZAL_USER", ""),
+		KinozalPassword:           getEnv("KINOZAL_PASSWORD", ""),
+		TrackerCheckIntervalHours: getEnvAsInt("TRACKER_CHECK_INTERVAL_HOURS", 6),
 	}
 
 	// Validate required fields
@@ -98,6 +102,10 @@ func (c *Config) Validate() error {
 
 	if c.ScanIntervalHours < 1 {
 		return fmt.Errorf("SCAN_INTERVAL_HOURS must be at least 1")
+	}
+
+	if c.TrackerCheckIntervalHours < 1 {
+		return fmt.Errorf("TRACKER_CHECK_INTERVAL_HOURS must be at least 1")
 	}
 
 	if c.KinozalUser != "" && c.KinozalPassword == "" {

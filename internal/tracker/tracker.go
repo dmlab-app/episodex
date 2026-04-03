@@ -28,6 +28,11 @@ func (r *Registry) Register(client TrackerClient) {
 	r.clients = append(r.clients, client)
 }
 
+// Clients returns the list of registered clients.
+func (r *Registry) Clients() []TrackerClient {
+	return r.clients
+}
+
 // GetClient returns the TrackerClient that can handle the given URL.
 // Returns an error if no client can handle the URL.
 func (r *Registry) GetClient(trackerURL string) (TrackerClient, error) {

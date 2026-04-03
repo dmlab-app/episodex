@@ -91,13 +91,13 @@ type TrackerClient interface {
 - [x] run tests — must pass before next task
 
 ### Task 7: Scheduled check — compare episodes and trigger redownload
-- [ ] write check logic using `TrackerClient` interface (not Kinozal-specific):
+- [x] write check logic using `TrackerClient` interface (not Kinozal-specific):
   - for each season with `tracker_url`:
     - get client from registry via `CanHandle`
     - call `GetEpisodeCount` to get available episodes on tracker
     - compare with max episode number on disk (ptn lib)
     - if tracker has more → trigger redownload
-- [ ] write redownload logic:
+- [x] write redownload logic:
   - download .torrent from tracker via `DownloadTorrent`
   - delete old torrent from qBit (by `torrent_hash`)
   - add new torrent to qBit with same category
@@ -106,10 +106,10 @@ type TrackerClient interface {
   - files already in `processed_files` → set priority 0 (skip download)
   - only new episodes download
   - update `torrent_hash` in seasons table
-- [ ] write tests for the comparison and trigger logic (mock tracker + qbit)
-- [ ] wire into scheduler as periodic task
-- [ ] add config: `TRACKER_CHECK_INTERVAL_HOURS` (default: 6)
-- [ ] run tests — must pass before next task
+- [x] write tests for the comparison and trigger logic (mock tracker + qbit)
+- [x] wire into scheduler as periodic task
+- [x] add config: `TRACKER_CHECK_INTERVAL_HOURS` (default: 6)
+- [x] run tests — must pass before next task
 
 ### Task 8: Post-download audio processing
 - [ ] write logic: after torrent completes, process only new files

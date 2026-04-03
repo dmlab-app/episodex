@@ -187,6 +187,48 @@ func (db *DB) GetSeasonBySeriesAndNumber(seriesID int64, seasonNumber int) (*Sea
 	return &season, nil
 }
 
+// GetSeasonsWithTrackerURL returns all seasons that have a tracker_url set.
+func (db *DB) GetSeasonsWithTrackerURL() ([]Season, error) {
+	rows, err := db.Query(`
+		SELECT id, series_id, tvdb_season_id, season_number, name,
+			poster_url, folder_path,
+			voice_actor_id, downloaded, aired_episodes, tracker_url, torrent_hash, discovered_at
+		FROM seasons
+		WHERE tracker_url IS NOT NULL AND tracker_url != ''
+		ORDER BY series_id, season_number
+	`)
+	if err != nil {
+		return nil, fmt.Errorf("failed to query seasons with tracker URL: %w", err)
+	}
+	defer rows.Close() //nolint:errcheck
+
+	var seasons []Season
+	for rows.Next() {
+		var s Season
+		if err := rows.Scan(
+			&s.ID, &s.SeriesID, &s.TVDBSeasonID, &s.SeasonNumber,
+			&s.Name, &s.PosterURL, &s.FolderPath,
+			&s.VoiceActorID, &s.Downloaded, &s.AiredEpisodes, &s.TrackerURL, &s.TorrentHash, &s.DiscoveredAt,
+		); err != nil {
+			return nil, fmt.Errorf("failed to scan season with tracker URL: %w", err)
+		}
+		seasons = append(seasons, s)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("failed to iterate seasons with tracker URL: %w", err)
+	}
+	return seasons, nil
+}
+
+// UpdateTorrentHash updates the torrent_hash for a season.
+func (db *DB) UpdateTorrentHash(seasonID int64, hash string) error {
+	_, err := db.Exec(`UPDATE seasons SET torrent_hash = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?`, hash, seasonID)
+	if err != nil {
+		return fmt.Errorf("failed to update torrent hash: %w", err)
+	}
+	return nil
+}
+
 // SyncSeriesAndChildren updates the series row and writes all child records
 // (seasons, characters) within a single transaction. The tvdb_id
 // guard prevents stale metadata from being written if the series was rematched
