@@ -76,10 +76,10 @@ type TrackerClient interface {
 - [x] run tests — must pass before next task
 
 ### Task 5: Kinozal client — download .torrent file
-- [ ] write tests for `DownloadTorrent(trackerURL string)` — returns torrent file bytes
-- [ ] write tests for auth failure and retry
-- [ ] implement: parse ID from URL, GET `/download.php?id=XXXXX` with session cookie
-- [ ] run tests — must pass before next task
+- [x] write tests for `DownloadTorrent(trackerURL string)` — returns torrent file bytes
+- [x] write tests for auth failure and retry
+- [x] implement: parse ID from URL, GET `/download.php?id=XXXXX` with session cookie
+- [x] run tests — must pass before next task
 
 ### Task 6: qBittorrent client — add torrent and set file priorities
 - [ ] write tests for `AddTorrent(torrentData []byte, category string, savePath string)` — returns torrent hash

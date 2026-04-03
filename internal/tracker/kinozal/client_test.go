@@ -283,6 +283,125 @@ func TestParseEpisodeCount(t *testing.T) {
 	}
 }
 
+func TestParseIDFromURL(t *testing.T) {
+	tests := []struct {
+		url     string
+		want    string
+		wantErr bool
+	}{
+		{"https://kinozal.tv/details.php?id=2107649", "2107649", false},
+		{"http://kinozal.tv/details.php?id=123", "123", false},
+		{"https://kinozal.tv/details.php?id=999&s=foo", "999", false},
+		{"https://kinozal.tv/details.php", "", true},
+		{"https://kinozal.tv/details.php?id=", "", true},
+		{"not a url", "", true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.url, func(t *testing.T) {
+			got, err := parseIDFromURL(tt.url)
+			if (err != nil) != tt.wantErr {
+				t.Errorf("parseIDFromURL(%q) error = %v, wantErr %v", tt.url, err, tt.wantErr)
+				return
+			}
+			if got != tt.want {
+				t.Errorf("parseIDFromURL(%q) = %q, want %q", tt.url, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestDownloadTorrent(t *testing.T) {
+	torrentData := []byte("d8:announce35:http://tracker.example.com/announcee")
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/takelogin.php" {
+			http.SetCookie(w, &http.Cookie{Name: "uid", Value: "sess"})
+			w.WriteHeader(http.StatusOK)
+			return
+		}
+		if r.URL.Path == "/download.php" {
+			if r.URL.Query().Get("id") != "2107649" {
+				w.WriteHeader(http.StatusNotFound)
+				return
+			}
+			w.Header().Set("Content-Type", "application/x-bittorrent")
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write(torrentData)
+			return
+		}
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	defer server.Close()
+
+	c := NewClientWithBaseURL(server.URL, "u", "p")
+	_ = c.Login()
+
+	got, err := c.DownloadTorrent(server.URL + "/details.php?id=2107649")
+	if err != nil {
+		t.Fatalf("DownloadTorrent() error: %v", err)
+	}
+	if string(got) != string(torrentData) {
+		t.Errorf("DownloadTorrent() returned %q, want %q", got, torrentData)
+	}
+}
+
+func TestDownloadTorrentReloginOn403(t *testing.T) {
+	var downloadCount atomic.Int32
+	torrentData := []byte("torrent-bytes-here")
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/takelogin.php" {
+			http.SetCookie(w, &http.Cookie{Name: "uid", Value: "new-sess"})
+			w.WriteHeader(http.StatusOK)
+			return
+		}
+		if r.URL.Path == "/download.php" {
+			count := downloadCount.Add(1)
+			if count == 1 {
+				w.WriteHeader(http.StatusForbidden)
+				return
+			}
+			w.Header().Set("Content-Type", "application/x-bittorrent")
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write(torrentData)
+			return
+		}
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	defer server.Close()
+
+	c := NewClientWithBaseURL(server.URL, "u", "p")
+	got, err := c.DownloadTorrent(server.URL + "/details.php?id=123")
+	if err != nil {
+		t.Fatalf("DownloadTorrent() error: %v", err)
+	}
+	if string(got) != string(torrentData) {
+		t.Errorf("DownloadTorrent() returned %q, want %q", got, torrentData)
+	}
+}
+
+func TestDownloadTorrentAuthFailure(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusForbidden)
+	}))
+	defer server.Close()
+
+	c := NewClientWithBaseURL(server.URL, "u", "p")
+	_, err := c.DownloadTorrent(server.URL + "/details.php?id=123")
+	if err == nil {
+		t.Fatal("expected error when auth fails")
+	}
+}
+
+func TestDownloadTorrentInvalidURL(t *testing.T) {
+	c := NewClient("u", "p")
+	_, err := c.DownloadTorrent("https://kinozal.tv/details.php")
+	if err == nil {
+		t.Fatal("expected error for URL without id parameter")
+	}
+}
+
 func TestDoRequestSendsCookie(t *testing.T) {
 	var receivedCookie string
 

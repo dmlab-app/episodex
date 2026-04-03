@@ -156,7 +156,41 @@ func (c *Client) GetEpisodeCount(trackerURL string) (int, error) {
 	return parseEpisodeCount(string(m[1])), nil
 }
 
+// parseIDFromURL extracts the torrent ID from a Kinozal URL like /details.php?id=2107649.
+func parseIDFromURL(trackerURL string) (string, error) {
+	u, err := url.Parse(trackerURL)
+	if err != nil {
+		return "", fmt.Errorf("invalid tracker URL: %w", err)
+	}
+	id := u.Query().Get("id")
+	if id == "" {
+		return "", fmt.Errorf("no id parameter in tracker URL: %s", trackerURL)
+	}
+	return id, nil
+}
+
 // DownloadTorrent downloads the .torrent file by tracker URL, returns raw bytes.
-func (c *Client) DownloadTorrent(_ string) ([]byte, error) {
-	return nil, fmt.Errorf("not implemented")
+func (c *Client) DownloadTorrent(trackerURL string) ([]byte, error) {
+	id, err := parseIDFromURL(trackerURL)
+	if err != nil {
+		return nil, err
+	}
+
+	downloadURL := c.baseURL + "/download.php?id=" + id
+	resp, err := c.doRequest(downloadURL)
+	if err != nil {
+		return nil, fmt.Errorf("kinozal download failed: %w", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("kinozal download failed: status %d", resp.StatusCode)
+	}
+
+	data, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("kinozal read torrent failed: %w", err)
+	}
+
+	return data, nil
 }
