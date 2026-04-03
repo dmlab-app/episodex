@@ -66,14 +66,14 @@ type TrackerClient interface {
 - [x] run tests — must pass before next task
 
 ### Task 4: Kinozal client — parse episode count from torrent page
-- [ ] write tests for `GetEpisodeCount(trackerURL string)` — parses title, extracts episode count
-- [ ] write tests for various title formats:
+- [x] write tests for `GetEpisodeCount(trackerURL string)` — parses title, extracts episode count
+- [x] write tests for various title formats:
   - `"Сериал (1 сезон: 1-8 серии из 8)"` → 8
   - `"Сериал (2 сезон: 1-17 серии из 18)"` → 17
   - `"Сериал (1 сезон: 1-6 серий из 10)"` → 6
   - title without episode info → 0
-- [ ] implement: fetch page, parse title tag, extract max episode number with regexp
-- [ ] run tests — must pass before next task
+- [x] implement: fetch page, parse title tag, extract max episode number with regexp
+- [x] run tests — must pass before next task
 
 ### Task 5: Kinozal client — download .torrent file
 - [ ] write tests for `DownloadTorrent(trackerURL string)` — returns torrent file bytes

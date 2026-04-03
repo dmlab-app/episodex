@@ -3,8 +3,11 @@ package kinozal
 
 import (
 	"fmt"
+	"io"
 	"net/http"
 	"net/url"
+	"regexp"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -113,9 +116,44 @@ func (c *Client) rawRequest(reqURL string) (*http.Response, error) {
 	return c.client.Do(req)
 }
 
+var (
+	titleRe   = regexp.MustCompile(`(?i)<title>([^<]+)</title>`)
+	episodeRe = regexp.MustCompile(`(\d+)-(\d+)\s+сери[ийя]`)
+)
+
+// parseEpisodeCount extracts the max episode number from a Kinozal torrent page title.
+// Title format: "Сериал (N сезон: 1-X серии из Y)" → returns X.
+func parseEpisodeCount(title string) int {
+	m := episodeRe.FindStringSubmatch(title)
+	if m == nil {
+		return 0
+	}
+	n, err := strconv.Atoi(m[2])
+	if err != nil {
+		return 0
+	}
+	return n
+}
+
 // GetEpisodeCount fetches the torrent page and returns the number of episodes available.
-func (c *Client) GetEpisodeCount(_ string) (int, error) {
-	return 0, fmt.Errorf("not implemented")
+func (c *Client) GetEpisodeCount(trackerURL string) (int, error) {
+	resp, err := c.doRequest(trackerURL)
+	if err != nil {
+		return 0, fmt.Errorf("kinozal fetch page failed: %w", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return 0, fmt.Errorf("kinozal read body failed: %w", err)
+	}
+
+	m := titleRe.FindSubmatch(body)
+	if m == nil {
+		return 0, nil
+	}
+
+	return parseEpisodeCount(string(m[1])), nil
 }
 
 // DownloadTorrent downloads the .torrent file by tracker URL, returns raw bytes.

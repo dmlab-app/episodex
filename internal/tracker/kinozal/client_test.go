@@ -1,6 +1,7 @@
 package kinozal
 
 import (
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"sync/atomic"
@@ -167,6 +168,118 @@ func TestAutoReloginFailure(t *testing.T) {
 	_, err := c.doRequest(server.URL + "/some-page")
 	if err == nil {
 		t.Fatal("expected error when re-login fails")
+	}
+}
+
+func TestGetEpisodeCount(t *testing.T) {
+	tests := []struct {
+		name  string
+		title string
+		want  int
+	}{
+		{
+			name:  "standard format 8 of 8",
+			title: "Сериал (1 сезон: 1-8 серии из 8)",
+			want:  8,
+		},
+		{
+			name:  "standard format 17 of 18",
+			title: "Сериал (2 сезон: 1-17 серии из 18)",
+			want:  17,
+		},
+		{
+			name:  "серий form 6 of 10",
+			title: "Сериал (1 сезон: 1-6 серий из 10)",
+			want:  6,
+		},
+		{
+			name:  "no episode info",
+			title: "Какой-то фильм (2024)",
+			want:  0,
+		},
+		{
+			name:  "серия singular",
+			title: "Сериал (1 сезон: 1 серия из 10)",
+			want:  0, // pattern expects N-M format
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.URL.Path == "/takelogin.php" {
+					http.SetCookie(w, &http.Cookie{Name: "uid", Value: "sess"})
+					w.WriteHeader(http.StatusOK)
+					return
+				}
+				w.WriteHeader(http.StatusOK)
+				fmt.Fprintf(w, `<html><head><title>%s</title></head><body></body></html>`, tt.title)
+			}))
+			defer server.Close()
+
+			c := NewClientWithBaseURL(server.URL, "u", "p")
+			_ = c.Login()
+
+			got, err := c.GetEpisodeCount(server.URL + "/details.php?id=123")
+			if err != nil {
+				t.Fatalf("GetEpisodeCount() error: %v", err)
+			}
+			if got != tt.want {
+				t.Errorf("GetEpisodeCount() = %d, want %d", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestGetEpisodeCountReloginOn403(t *testing.T) {
+	var requestCount atomic.Int32
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/takelogin.php" {
+			http.SetCookie(w, &http.Cookie{Name: "uid", Value: "sess"})
+			w.WriteHeader(http.StatusOK)
+			return
+		}
+		count := requestCount.Add(1)
+		if count == 1 {
+			w.WriteHeader(http.StatusForbidden)
+			return
+		}
+		w.WriteHeader(http.StatusOK)
+		fmt.Fprint(w, `<html><head><title>Сериал (1 сезон: 1-10 серии из 12)</title></head></html>`)
+	}))
+	defer server.Close()
+
+	c := NewClientWithBaseURL(server.URL, "u", "p")
+	got, err := c.GetEpisodeCount(server.URL + "/details.php?id=123")
+	if err != nil {
+		t.Fatalf("GetEpisodeCount() error: %v", err)
+	}
+	if got != 10 {
+		t.Errorf("GetEpisodeCount() = %d, want 10", got)
+	}
+}
+
+func TestParseEpisodeCount(t *testing.T) {
+	tests := []struct {
+		title string
+		want  int
+	}{
+		{"Сериал (1 сезон: 1-8 серии из 8)", 8},
+		{"Сериал (2 сезон: 1-17 серии из 18)", 17},
+		{"Сериал (1 сезон: 1-6 серий из 10)", 6},
+		{"Фильм (2024)", 0},
+		{"Сериал / Serial (3 сезон: 1-22 серии из 22) / Season 3", 22},
+		{"", 0},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.title, func(t *testing.T) {
+			got := parseEpisodeCount(tt.title)
+			if got != tt.want {
+				t.Errorf("parseEpisodeCount(%q) = %d, want %d", tt.title, got, tt.want)
+			}
+		})
 	}
 }
 
