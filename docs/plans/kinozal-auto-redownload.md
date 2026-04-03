@@ -137,8 +137,8 @@ type TrackerClient interface {
 - [x] run linter — all issues must be fixed
 
 ### Task 11: [Final] Update documentation
-- [ ] add KINOZAL_USER, KINOZAL_PASSWORD, TRACKER_CHECK_INTERVAL_HOURS to .env.example
-- [ ] update README.md
+- [x] add KINOZAL_USER, KINOZAL_PASSWORD, TRACKER_CHECK_INTERVAL_HOURS to .env.example
+- [x] update README.md
 
 ## Technical Details
 

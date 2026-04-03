@@ -11,6 +11,7 @@ Local web service for tracking TV series with automatic media folder scanning.
 - AudioCutter for audio track management (mkvmerge/ffmpeg)
 - Automatic database backups
 - qBittorrent integration (tracker links on season pages)
+- Kinozal tracker integration — auto-redownload updated torrents with new episodes
 - Plex-inspired dark theme web interface
 
 ## Quick Start
@@ -68,7 +69,8 @@ episodex/
 │   ├── tvdb/           # TVDB API client
 │   ├── hash/           # File hashing utilities
 │   ├── audio/          # AudioCutter (mkvmerge/ffmpeg)
-│   └── qbittorrent/    # qBittorrent Web API client
+│   ├── qbittorrent/    # qBittorrent Web API client
+│   └── tracker/        # Tracker integration (Kinozal, etc.)
 ├── web/
 │   ├── static/         # CSS, JS
 │   └── templates/      # HTML templates
@@ -106,6 +108,9 @@ All settings are configured via environment variables (`.env` file):
 - `QBIT_URL` - qBittorrent Web UI URL (optional, enables qBittorrent integration)
 - `QBIT_USER` - qBittorrent username (required when QBIT_URL is set)
 - `QBIT_PASSWORD` - qBittorrent password (required when QBIT_URL is set)
+- `KINOZAL_USER` - Kinozal username (optional, enables tracker auto-redownload)
+- `KINOZAL_PASSWORD` - Kinozal password (required when KINOZAL_USER is set)
+- `TRACKER_CHECK_INTERVAL_HOURS` - how often to check trackers for new episodes (default 6)
 
 ## API Endpoints
 
@@ -169,6 +174,8 @@ Scheduler automatically runs:
 
 - Media folder scanning (every hour)
 - TVDB updates check (daily)
+- Tracker check for new episodes (every 6 hours, configurable)
+- Post-download audio processing for completed torrents
 - Database backup (daily at 3:00)
 - Old backup rotation
 
@@ -214,6 +221,7 @@ All core features implemented:
 - [x] AudioCutter (mkvmerge/ffmpeg)
 - [x] Plex-inspired dark theme UI
 - [x] qBittorrent integration (tracker links)
+- [x] Kinozal tracker auto-redownload
 - [x] Linting and tests
 
 ## License
