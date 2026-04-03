@@ -177,27 +177,11 @@ func (c *Client) DeleteTorrent(hash string) error {
 	form.Set("hashes", hash)
 	form.Set("deleteFiles", "false")
 
-	req, err := http.NewRequest(http.MethodPost, c.baseURL+"/api/v2/torrents/delete", strings.NewReader(form.Encode()))
+	resp, err := c.doPostRequest("/api/v2/torrents/delete", "application/x-www-form-urlencoded", []byte(form.Encode()))
 	if err != nil {
 		return fmt.Errorf("delete torrent: %w", err)
 	}
-	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	if c.cookie != nil {
-		req.AddCookie(c.cookie)
-	}
-
-	resp, err := c.client.Do(req)
-	if err != nil {
-		return fmt.Errorf("delete torrent: %w", err)
-	}
-	defer resp.Body.Close() //nolint:errcheck
-
-	if resp.StatusCode == http.StatusForbidden {
-		if loginErr := c.Login(); loginErr != nil {
-			return fmt.Errorf("delete torrent: re-login failed: %w", loginErr)
-		}
-		return c.DeleteTorrent(hash)
-	}
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
 		return fmt.Errorf("delete torrent: status %d", resp.StatusCode)

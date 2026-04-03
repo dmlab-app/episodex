@@ -11,41 +11,61 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"golang.org/x/text/encoding/charmap"
 )
 
 // Client is a Kinozal tracker client that handles authentication and torrent operations.
 type Client struct {
-	baseURL  string
-	user     string
-	password string
-	mu       sync.Mutex
-	cookie   *http.Cookie
-	client   *http.Client
+	baseURL     string
+	downloadURL string
+	user        string
+	password    string
+	mu          sync.Mutex
+	cookies     []*http.Cookie
+	client      *http.Client
 }
 
 // NewClient creates a new Kinozal client.
 func NewClient(user, password string) *Client {
 	return &Client{
-		baseURL:  "https://kinozal.tv",
-		user:     user,
-		password: password,
-		client:   &http.Client{Timeout: 30 * time.Second},
+		baseURL:     "https://kinozal.tv",
+		downloadURL: "https://dl.kinozal.tv",
+		user:        user,
+		password:    password,
+		client: &http.Client{
+			Timeout: 30 * time.Second,
+			CheckRedirect: func(_ *http.Request, _ []*http.Request) error {
+				return http.ErrUseLastResponse
+			},
+		},
 	}
 }
 
 // NewClientWithBaseURL creates a new Kinozal client with a custom base URL (for testing).
 func NewClientWithBaseURL(baseURL, user, password string) *Client {
 	return &Client{
-		baseURL:  strings.TrimRight(baseURL, "/"),
-		user:     user,
-		password: password,
-		client:   &http.Client{Timeout: 30 * time.Second},
+		baseURL:     strings.TrimRight(baseURL, "/"),
+		downloadURL: strings.TrimRight(baseURL, "/"),
+		user:        user,
+		password:    password,
+		client: &http.Client{
+			Timeout: 30 * time.Second,
+			CheckRedirect: func(_ *http.Request, _ []*http.Request) error {
+				return http.ErrUseLastResponse
+			},
+		},
 	}
 }
 
 // CanHandle returns true if the URL is a kinozal.tv URL.
 func (c *Client) CanHandle(trackerURL string) bool {
-	return strings.Contains(trackerURL, "kinozal.tv")
+	u, err := url.Parse(trackerURL)
+	if err != nil {
+		return false
+	}
+	host := u.Hostname()
+	return host == "kinozal.tv" || host == "www.kinozal.tv"
 }
 
 // Login authenticates with Kinozal and stores the session cookie.
@@ -74,14 +94,20 @@ func (c *Client) login() error {
 		return fmt.Errorf("kinozal login failed: status %d", resp.StatusCode)
 	}
 
-	for _, cookie := range resp.Cookies() {
+	cookies := resp.Cookies()
+	hasUID := false
+	for _, cookie := range cookies {
 		if cookie.Name == "uid" {
-			c.cookie = cookie
-			return nil
+			hasUID = true
+			break
 		}
 	}
+	if !hasUID {
+		return fmt.Errorf("kinozal login failed: no uid cookie in response")
+	}
 
-	return fmt.Errorf("kinozal login failed: no uid cookie in response")
+	c.cookies = cookies
+	return nil
 }
 
 // doRequest performs an authenticated GET request with automatic re-login on 403.
@@ -110,8 +136,8 @@ func (c *Client) rawRequest(reqURL string) (*http.Response, error) {
 	if err != nil {
 		return nil, err
 	}
-	if c.cookie != nil {
-		req.AddCookie(c.cookie)
+	for _, cookie := range c.cookies {
+		req.AddCookie(cookie)
 	}
 	return c.client.Do(req)
 }
@@ -143,7 +169,9 @@ func (c *Client) GetEpisodeCount(trackerURL string) (int, error) {
 	}
 	defer func() { _ = resp.Body.Close() }()
 
-	body, err := io.ReadAll(resp.Body)
+	// Kinozal pages are served in Windows-1251 encoding; decode to UTF-8
+	reader := charmap.Windows1251.NewDecoder().Reader(resp.Body)
+	body, err := io.ReadAll(reader)
 	if err != nil {
 		return 0, fmt.Errorf("kinozal read body failed: %w", err)
 	}
@@ -176,7 +204,7 @@ func (c *Client) DownloadTorrent(trackerURL string) ([]byte, error) {
 		return nil, err
 	}
 
-	downloadURL := c.baseURL + "/download.php?id=" + id
+	downloadURL := c.downloadURL + "/download.php?id=" + id
 	resp, err := c.doRequest(downloadURL)
 	if err != nil {
 		return nil, fmt.Errorf("kinozal download failed: %w", err)

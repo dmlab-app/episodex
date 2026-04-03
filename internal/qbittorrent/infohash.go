@@ -64,6 +64,9 @@ func readBencodeString(data []byte, pos int) (s string, nextPos int, err error) 
 	if err != nil {
 		return "", 0, errors.New("invalid bencode string length")
 	}
+	if length < 0 {
+		return "", 0, errors.New("invalid bencode string: negative length")
+	}
 
 	start := colonPos + 1
 	end := start + length

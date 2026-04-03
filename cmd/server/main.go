@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/episodex/episodex/internal/api"
+	"github.com/episodex/episodex/internal/audio"
 	"github.com/episodex/episodex/internal/config"
 	"github.com/episodex/episodex/internal/database"
 	"github.com/episodex/episodex/internal/qbittorrent"
@@ -118,23 +119,6 @@ func main() {
 		},
 	})
 
-	// Start scheduler
-	sch.StartAsync()
-	defer sch.Stop()
-
-	// Run TVDB check on startup (in background, non-blocking)
-	if tvdbClient != nil {
-		go func() {
-			slog.Info("Running startup TVDB check")
-			result := api.CheckForTVDBUpdates(db, tvdbClient, true)
-			if result.Skipped {
-				slog.Info("Startup TVDB check skipped: another sync is in progress")
-			} else {
-				slog.Info("Startup TVDB check completed", "checked", result.Checked, "updated", result.Updated)
-			}
-		}()
-	}
-
 	// Initialize qBittorrent client (optional)
 	var qbitClient *qbittorrent.Client
 	if cfg.QbitURL != "" {
@@ -177,6 +161,41 @@ func main() {
 				return nil
 			},
 		})
+
+		audioCutter := audio.New()
+		postProcessor := tracker.NewPostDownloadProcessor(db, qbitClient, audioCutter)
+		sch.AddTask(scheduler.Task{
+			Name:     "post_download_processing",
+			Schedule: &scheduler.IntervalSchedule{Interval: time.Duration(cfg.TrackerCheckIntervalHours) * time.Hour},
+			Handler: func(_ context.Context) error {
+				results := postProcessor.ProcessCompleted()
+				processed := 0
+				for _, r := range results {
+					processed += r.Processed
+				}
+				if processed > 0 {
+					slog.Info("Post-download processing completed", "processed", processed)
+				}
+				return nil
+			},
+		})
+	}
+
+	// Start scheduler
+	sch.StartAsync()
+	defer sch.Stop()
+
+	// Run TVDB check on startup (in background, non-blocking)
+	if tvdbClient != nil {
+		go func() {
+			slog.Info("Running startup TVDB check")
+			result := api.CheckForTVDBUpdates(db, tvdbClient, true)
+			if result.Skipped {
+				slog.Info("Startup TVDB check skipped: another sync is in progress")
+			} else {
+				slog.Info("Startup TVDB check completed", "checked", result.Checked, "updated", result.Updated)
+			}
+		}()
 	}
 
 	// Initialize HTTP server

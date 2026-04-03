@@ -1,6 +1,7 @@
 package tracker
 
 import (
+	"strings"
 	"testing"
 )
 
@@ -10,24 +11,15 @@ type mockClient struct {
 }
 
 func (m *mockClient) CanHandle(trackerURL string) bool {
-	return len(trackerURL) >= len(m.domain) && contains(trackerURL, m.domain)
+	return strings.Contains(trackerURL, m.domain)
 }
 
-func (m *mockClient) GetEpisodeCount(trackerURL string) (int, error) {
+func (m *mockClient) GetEpisodeCount(_ string) (int, error) {
 	return 0, nil
 }
 
-func (m *mockClient) DownloadTorrent(trackerURL string) ([]byte, error) {
+func (m *mockClient) DownloadTorrent(_ string) ([]byte, error) {
 	return nil, nil
-}
-
-func contains(s, substr string) bool {
-	for i := 0; i <= len(s)-len(substr); i++ {
-		if s[i:i+len(substr)] == substr {
-			return true
-		}
-	}
-	return false
 }
 
 func TestRegistryGetClient(t *testing.T) {

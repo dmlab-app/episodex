@@ -7,6 +7,8 @@ import (
 	"net/http/httptest"
 	"sync/atomic"
 	"testing"
+
+	"golang.org/x/text/encoding/charmap"
 )
 
 func TestCanHandle(t *testing.T) {
@@ -21,6 +23,8 @@ func TestCanHandle(t *testing.T) {
 		{"https://www.kinozal.tv/details.php?id=789", true},
 		{"https://rutracker.org/forum/viewtopic.php?t=123", false},
 		{"https://example.com", false},
+		{"https://evil.com/kinozal.tv/phish", false},
+		{"https://not-kinozal.tv.example.com/page", false},
 		{"", false},
 	}
 
@@ -64,11 +68,17 @@ func TestLoginSuccess(t *testing.T) {
 	if err := c.Login(); err != nil {
 		t.Fatalf("Login() returned error: %v", err)
 	}
-	if c.cookie == nil {
-		t.Fatal("expected cookie to be set after login")
+	if len(c.cookies) == 0 {
+		t.Fatal("expected cookies to be set after login")
 	}
-	if c.cookie.Value != "12345" {
-		t.Errorf("cookie value = %q, want %q", c.cookie.Value, "12345")
+	found := false
+	for _, cookie := range c.cookies {
+		if cookie.Name == "uid" && cookie.Value == "12345" {
+			found = true
+		}
+	}
+	if !found {
+		t.Error("expected uid cookie with value 12345")
 	}
 }
 
@@ -105,16 +115,19 @@ func TestLoginRedirect(t *testing.T) {
 	}))
 	defer server.Close()
 
-	// Disable redirect following so we can capture the 302 + cookie
+	// CheckRedirect is now set by default in NewClient/NewClientWithBaseURL
 	c := NewClientWithBaseURL(server.URL, "user", "pass")
-	c.client.CheckRedirect = func(req *http.Request, via []*http.Request) error {
-		return http.ErrUseLastResponse
-	}
 
 	if err := c.Login(); err != nil {
 		t.Fatalf("Login() returned error: %v", err)
 	}
-	if c.cookie == nil || c.cookie.Value != "99999" {
+	found := false
+	for _, cookie := range c.cookies {
+		if cookie.Name == "uid" && cookie.Value == "99999" {
+			found = true
+		}
+	}
+	if !found {
 		t.Fatal("expected uid cookie from redirect response")
 	}
 }
@@ -214,8 +227,11 @@ func TestGetEpisodeCount(t *testing.T) {
 					w.WriteHeader(http.StatusOK)
 					return
 				}
+				// Serve as Windows-1251 to match real Kinozal behavior
+				page := fmt.Sprintf(`<html><head><title>%s</title></head><body></body></html>`, tt.title)
+				encoded, _ := charmap.Windows1251.NewEncoder().Bytes([]byte(page))
 				w.WriteHeader(http.StatusOK)
-				fmt.Fprintf(w, `<html><head><title>%s</title></head><body></body></html>`, tt.title)
+				_, _ = w.Write(encoded)
 			}))
 			defer server.Close()
 
@@ -247,8 +263,11 @@ func TestGetEpisodeCountReloginOn403(t *testing.T) {
 			w.WriteHeader(http.StatusForbidden)
 			return
 		}
+		// Serve as Windows-1251 to match real Kinozal behavior
+		page := `<html><head><title>Сериал (1 сезон: 1-10 серии из 12)</title></head></html>`
+		encoded, _ := charmap.Windows1251.NewEncoder().Bytes([]byte(page))
 		w.WriteHeader(http.StatusOK)
-		fmt.Fprint(w, `<html><head><title>Сериал (1 сезон: 1-10 серии из 12)</title></head></html>`)
+		_, _ = w.Write(encoded)
 	}))
 	defer server.Close()
 
