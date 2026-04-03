@@ -261,3 +261,33 @@ func (db *DB) CheckFileChanged(filePath, currentHash string) (bool, error) {
 
 	return changed, nil
 }
+
+// InsertProcessedFile adds a file to the processed_files table.
+func (db *DB) InsertProcessedFile(filePath string, seriesID int64, seasonNumber, trackKept int) error {
+	_, err := db.Exec(`
+		INSERT OR IGNORE INTO processed_files (file_path, series_id, season_number, track_kept, processed_at)
+		VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP)
+	`, filePath, seriesID, seasonNumber, trackKept)
+	if err != nil {
+		return fmt.Errorf("failed to insert processed file: %w", err)
+	}
+	return nil
+}
+
+// GetTrackKeptForSeason returns the track_kept value from the most recent processed file
+// for a given season. Returns 0, false if no processed files exist.
+func (db *DB) GetTrackKeptForSeason(seriesID int64, seasonNumber int) (trackKept int, found bool, err error) {
+	err = db.QueryRow(`
+		SELECT track_kept FROM processed_files
+		WHERE series_id = ? AND season_number = ? AND track_kept IS NOT NULL
+		ORDER BY processed_at DESC
+		LIMIT 1
+	`, seriesID, seasonNumber).Scan(&trackKept)
+	if err == sql.ErrNoRows {
+		return 0, false, nil
+	}
+	if err != nil {
+		return 0, false, fmt.Errorf("failed to get track kept for season: %w", err)
+	}
+	return trackKept, true, nil
+}

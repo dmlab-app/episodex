@@ -25,6 +25,7 @@ type Torrent struct {
 	SavePath string `json:"save_path"`
 	Hash     string `json:"hash"`
 	Category string `json:"category"`
+	State    string `json:"state"`
 }
 
 // Properties represents torrent properties from qBittorrent.

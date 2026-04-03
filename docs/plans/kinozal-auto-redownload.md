@@ -112,14 +112,14 @@ type TrackerClient interface {
 - [x] run tests — must pass before next task
 
 ### Task 8: Post-download audio processing
-- [ ] write logic: after torrent completes, process only new files
+- [x] write logic: after torrent completes, process only new files
   - periodically check if torrent is completed (qBit API: torrent state = "uploading" or "stalledUP")
   - get `voice_actor_id` from season → determine which track to keep
   - run AudioCutter only on files NOT in `processed_files`
   - mark new files in `processed_files`
-- [ ] write tests for post-download processing logic
-- [ ] add to scheduler or as part of tracker check cycle
-- [ ] run tests — must pass before next task
+- [x] write tests for post-download processing logic
+- [x] add to scheduler or as part of tracker check cycle
+- [x] run tests — must pass before next task
 
 ### Task 9: Wire into main.go
 - [ ] create tracker registry
