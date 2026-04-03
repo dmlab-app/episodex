@@ -58,12 +58,12 @@ type TrackerClient interface {
 - [x] run tests — must pass before next task
 
 ### Task 3: Kinozal client — authentication
-- [ ] create `internal/tracker/kinozal/client.go` implementing `TrackerClient`
-- [ ] write tests for `Login()` — success returns session cookie, failure returns error
-- [ ] write tests for automatic re-login on auth failure
-- [ ] implement `Login()` — POST to `/takelogin.php` with `username` + `password` form data
-- [ ] implement `CanHandle()` — returns true for URLs containing `kinozal.tv`
-- [ ] run tests — must pass before next task
+- [x] create `internal/tracker/kinozal/client.go` implementing `TrackerClient`
+- [x] write tests for `Login()` — success returns session cookie, failure returns error
+- [x] write tests for automatic re-login on auth failure
+- [x] implement `Login()` — POST to `/takelogin.php` with `username` + `password` form data
+- [x] implement `CanHandle()` — returns true for URLs containing `kinozal.tv`
+- [x] run tests — must pass before next task
 
 ### Task 4: Kinozal client — parse episode count from torrent page
 - [ ] write tests for `GetEpisodeCount(trackerURL string)` — parses title, extracts episode count
