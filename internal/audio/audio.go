@@ -5,12 +5,34 @@ import (
 	"crypto/sha256"
 	"encoding/json"
 	"fmt"
+	"io"
+	"log/slog"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
 	"time"
 )
+
+// copyFile copies src to dst, preserving permissions.
+func copyFile(src, dst string) error {
+	in, err := os.Open(src)
+	if err != nil {
+		return err
+	}
+	defer in.Close() //nolint:errcheck
+
+	out, err := os.Create(dst)
+	if err != nil {
+		return err
+	}
+	defer out.Close() //nolint:errcheck
+
+	if _, err := io.Copy(out, in); err != nil {
+		return err
+	}
+	return out.Close()
+}
 
 // AudioCutter handles audio track operations on MKV files
 type AudioCutter struct { //nolint:revive // name is used across the codebase
@@ -216,10 +238,15 @@ func (ac *AudioCutter) RemoveAudioTracks(filePath string, keepTrackID int, keepO
 		return fmt.Errorf("mkvmerge failed: %w, output: %s", err, string(output))
 	}
 
-	// Replace original file atomically — Rename overwrites the destination on UNIX,
-	// so there's no window where the original is deleted but the temp isn't yet in place.
+	// Replace original file. If rename fails, save with [processed] suffix.
 	if err := os.Rename(tempFile, filePath); err != nil {
-		return fmt.Errorf("failed to replace original file: %w", err)
+		ext := filepath.Ext(filePath)
+		base := strings.TrimSuffix(filePath, ext)
+		processedPath := base + " [processed]" + ext
+		if renameErr := os.Rename(tempFile, processedPath); renameErr != nil {
+			return fmt.Errorf("failed to save processed file: %w", renameErr)
+		}
+		slog.Warn("Could not replace original, saved as processed", "path", processedPath)
 	}
 
 	return nil

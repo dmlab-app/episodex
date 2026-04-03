@@ -87,8 +87,8 @@ func seedSeasonWithEpisodes(t *testing.T, db *database.DB, seriesID int64, seaso
 				INSERT INTO media_files (series_id, season_number, file_path, file_name, file_size, file_hash)
 				VALUES (?, ?, ?, ?, 100, ?)
 			`, seriesID, seasonNum,
-				fmt.Sprintf("/media/s%02d/e%02d.mkv", seasonNum, i),
-				fmt.Sprintf("e%02d.mkv", i),
+				fmt.Sprintf("/media/s%02d/Show.S%02dE%02d.mkv", seasonNum, seasonNum, i),
+				fmt.Sprintf("Show.S%02dE%02d.mkv", seasonNum, i),
 				fmt.Sprintf("hash_%d_%d_%d", seriesID, seasonNum, i))
 			if err != nil {
 				t.Fatalf("failed to seed media file: %v", err)

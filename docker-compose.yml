@@ -7,12 +7,12 @@ services:
       - .env
     environment:
       # Container paths
-      MEDIA_PATH: /media
+      MEDIA_PATH: /plex/TV Show
       DB_PATH: /app/data/episodex.db
       BACKUP_PATH: /app/data/backups
     volumes:
       - ./data:/app/data
-      - ${MEDIA_PATH_HOST}:/media
+      - plex_nfs:/plex
     labels:
       - "reproxy.server=episodex.loc"
       - "reproxy.route=/"
@@ -27,6 +27,14 @@ services:
       timeout: 3s
       retries: 3
       start_period: 5s
+
+volumes:
+  plex_nfs:
+    driver: local
+    driver_opts:
+      type: nfs
+      o: addr=10.0.1.200,nfsvers=4,rw,soft,timeo=50
+      device: ":/mnt/zpool/Plex"
 
 networks:
   gateway:

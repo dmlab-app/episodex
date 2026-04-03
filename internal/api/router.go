@@ -4,7 +4,6 @@ package api
 import (
 	"database/sql"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -21,6 +20,8 @@ import (
 	"github.com/go-chi/cors"
 
 	"github.com/episodex/episodex/internal/audio"
+	ptn "github.com/middelink/go-parse-torrent-name"
+
 	"github.com/episodex/episodex/internal/database"
 	"github.com/episodex/episodex/internal/qbittorrent"
 	"github.com/episodex/episodex/internal/scanner"
@@ -970,14 +971,9 @@ func (s *Server) handleDismissAlert(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// handleGetSeasonTracker returns the tracker URL for a season by matching its
-// folder_path against torrents in qBittorrent and extracting the comment field.
+// handleGetSeasonTracker returns the tracker URL for a season.
+// First checks the database cache; if empty, queries qBittorrent and saves.
 func (s *Server) handleGetSeasonTracker(w http.ResponseWriter, r *http.Request) {
-	if s.qbitClient == nil {
-		s.respondJSON(w, http.StatusOK, map[string]interface{}{"tracker_url": nil})
-		return
-	}
-
 	id, err := strconv.ParseInt(chi.URLParam(r, "id"), 10, 64)
 	if err != nil {
 		s.respondError(w, http.StatusBadRequest, "invalid series ID")
@@ -1001,48 +997,72 @@ func (s *Server) handleGetSeasonTracker(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	if season.FolderPath == nil || *season.FolderPath == "" {
+	// Return cached tracker_url if available
+	if season.TrackerURL != nil && *season.TrackerURL != "" {
+		s.respondJSON(w, http.StatusOK, map[string]interface{}{"tracker_url": *season.TrackerURL})
+		return
+	}
+
+	// No cache — try to resolve from qBittorrent
+	if s.qbitClient == nil || season.FolderPath == nil || *season.FolderPath == "" {
 		s.respondJSON(w, http.StatusOK, map[string]interface{}{"tracker_url": nil})
 		return
 	}
 
+	trackerURL, torrentHash := s.resolveTrackerFromQbit(*season.FolderPath)
+
+	// Save to database if found
+	if trackerURL != "" || torrentHash != "" {
+		if _, err := s.db.Exec(`
+			UPDATE seasons SET tracker_url = ?, torrent_hash = ?, updated_at = CURRENT_TIMESTAMP
+			WHERE series_id = ? AND season_number = ?
+		`, nilIfEmpty(trackerURL), nilIfEmpty(torrentHash), id, num); err != nil {
+			slog.Error("Failed to save tracker info", "series_id", id, "season", num, "error", err)
+		}
+	}
+
+	if trackerURL == "" {
+		s.respondJSON(w, http.StatusOK, map[string]interface{}{"tracker_url": nil})
+		return
+	}
+	s.respondJSON(w, http.StatusOK, map[string]interface{}{"tracker_url": trackerURL})
+}
+
+// resolveTrackerFromQbit finds a torrent matching the folder and returns (trackerURL, hash).
+func (s *Server) resolveTrackerFromQbit(folderPath string) (string, string) {
 	torrents, err := s.qbitClient.ListTorrents()
 	if err != nil {
 		slog.Error("Failed to list torrents", "error", err)
-		s.respondError(w, http.StatusInternalServerError, "failed to list torrents")
-		return
+		return "", ""
 	}
 
-	matched := qbittorrent.FindTorrentByFolder(torrents, *season.FolderPath)
+	matched := qbittorrent.FindTorrentByFolder(torrents, folderPath)
 	if matched == nil {
-		s.respondJSON(w, http.StatusOK, map[string]interface{}{"tracker_url": nil})
-		return
+		return "", ""
 	}
 
 	props, err := s.qbitClient.GetTorrentProperties(matched.Hash)
 	if err != nil {
-		if errors.Is(err, qbittorrent.ErrTorrentNotFound) {
-			s.respondJSON(w, http.StatusOK, map[string]interface{}{"tracker_url": nil})
-			return
-		}
 		slog.Error("Failed to get torrent properties", "hash", matched.Hash, "error", err)
-		s.respondError(w, http.StatusInternalServerError, "failed to get torrent properties")
-		return
+		return "", matched.Hash
 	}
 
-	if props.Comment == "" {
-		s.respondJSON(w, http.StatusOK, map[string]interface{}{"tracker_url": nil})
-		return
+	// Validate comment is a valid HTTP(S) URL
+	if props.Comment != "" {
+		parsed, parseErr := url.Parse(props.Comment)
+		if parseErr == nil && (parsed.Scheme == "http" || parsed.Scheme == "https") {
+			return props.Comment, matched.Hash
+		}
 	}
 
-	// Validate that comment is a valid HTTP(S) URL to prevent javascript: XSS
-	parsed, err := url.Parse(props.Comment)
-	if err != nil || (parsed.Scheme != "http" && parsed.Scheme != "https") {
-		s.respondJSON(w, http.StatusOK, map[string]interface{}{"tracker_url": nil})
-		return
-	}
+	return "", matched.Hash
+}
 
-	s.respondJSON(w, http.StatusOK, map[string]interface{}{"tracker_url": props.Comment})
+func nilIfEmpty(s string) *string {
+	if s == "" {
+		return nil
+	}
+	return &s
 }
 
 // Helper methods for JSON responses
@@ -1112,9 +1132,9 @@ func (s *Server) handleTriggerScan(w http.ResponseWriter, _ *http.Request) {
 
 // Updates handlers
 func (s *Server) handleGetUpdates(w http.ResponseWriter, _ *http.Request) {
-	// A series appears in updates if it has at least one downloaded season AND either:
-	// 1. A new season exists beyond max_downloaded with aired_episodes > 0
-	// 2. A downloaded season has aired_episodes > number of files on disk
+	// Get all non-ended series that have at least one downloaded season.
+	// For each, check if there are new episodes by comparing aired_episodes
+	// with the max episode number parsed from file names on disk.
 	query := `
 		SELECT s.id, s.tvdb_id, s.title, s.original_title, s.poster_url, s.status,
 			s.aired_seasons,
@@ -1122,25 +1142,6 @@ func (s *Server) handleGetUpdates(w http.ResponseWriter, _ *http.Request) {
 		FROM series s
 		WHERE s.status != 'Ended'
 		AND (SELECT COUNT(*) FROM seasons sn WHERE sn.series_id = s.id AND sn.downloaded = 1 AND sn.season_number > 0) > 0
-		AND (
-			EXISTS (
-				SELECT 1 FROM seasons sn
-				WHERE sn.series_id = s.id
-				AND sn.season_number > COALESCE(
-					(SELECT MAX(sn2.season_number) FROM seasons sn2 WHERE sn2.series_id = s.id AND sn2.downloaded = 1 AND sn2.season_number > 0),
-					0
-				)
-				AND sn.aired_episodes > 0
-				AND sn.downloaded = 0
-			)
-			OR EXISTS (
-				SELECT 1 FROM seasons sn
-				WHERE sn.series_id = s.id AND sn.downloaded = 1 AND sn.season_number > 0
-				AND sn.aired_episodes > (
-					SELECT COUNT(*) FROM media_files mf WHERE mf.series_id = s.id AND mf.season_number = sn.season_number
-				)
-			)
-		)
 		ORDER BY s.updated_at DESC
 	`
 
@@ -1150,8 +1151,6 @@ func (s *Server) handleGetUpdates(w http.ResponseWriter, _ *http.Request) {
 		return
 	}
 
-	// Collect all rows first, then close rows before doing secondary queries.
-	// SQLite with MaxOpenConns(1) would deadlock if we query inside the loop.
 	type updateRow struct {
 		id            int
 		tvdbID        *int
@@ -1178,18 +1177,16 @@ func (s *Server) handleGetUpdates(w http.ResponseWriter, _ *http.Request) {
 	}
 	rows.Close() //nolint:errcheck
 
-	updates := make([]map[string]interface{}, 0, len(collected))
+	updates := make([]map[string]interface{}, 0)
 	for _, r := range collected {
 		maxDownloadedNum := 0
 		if r.maxDownloaded != nil {
 			maxDownloadedNum = *r.maxDownloaded
 		}
 
-		// Query seasons with available episodes.
-		newSeasons, err := s.queryAvailableUpdates(r.id, maxDownloadedNum)
-		if err != nil {
-			slog.Warn("Failed to query available updates", "series_id", r.id, "error", err)
-			newSeasons = []seasonUpdate{}
+		newSeasons := s.findNewEpisodes(r.id, maxDownloadedNum)
+		if len(newSeasons) == 0 {
+			continue
 		}
 
 		update := map[string]interface{}{
@@ -1223,51 +1220,93 @@ func (s *Server) handleGetUpdates(w http.ResponseWriter, _ *http.Request) {
 
 // seasonUpdate represents a season with new episodes for the Updates response.
 type seasonUpdate struct {
-	SeasonNumber    int `json:"season_number"`
-	AiredEpisodes   int `json:"aired_episodes"`
-	MissingEpisodes int `json:"missing_episodes"`
+	SeasonNumber  int `json:"season_number"`
+	AiredEpisodes int `json:"aired_episodes"`
+	NewEpisodes   int `json:"new_episodes"`
 }
 
-// queryAvailableUpdates returns seasons that have new episodes to download:
-// 1. New seasons beyond max_downloaded with aired episodes
-// 2. Downloaded seasons where aired_episodes > files on disk
-func (s *Server) queryAvailableUpdates(seriesID, maxDownloaded int) ([]seasonUpdate, error) {
+// findNewEpisodes checks each downloaded season: if aired_episodes > max episode
+// number on disk, there are new episodes. Also includes undownloaded seasons
+// beyond max_downloaded that have aired episodes.
+func (s *Server) findNewEpisodes(seriesID, maxDownloaded int) []seasonUpdate {
+	// Get downloaded seasons with aired_episodes > 0
 	rows, err := s.db.Query(`
-		SELECT sn.season_number, sn.aired_episodes,
-			sn.aired_episodes - (SELECT COUNT(*) FROM media_files mf WHERE mf.series_id = sn.series_id AND mf.season_number = sn.season_number) as missing
+		SELECT sn.season_number, sn.aired_episodes, sn.downloaded
 		FROM seasons sn
-		WHERE sn.series_id = ?
-		AND sn.season_number > 0
-		AND sn.aired_episodes > 0
-		AND (
-			(sn.season_number > ? AND sn.downloaded = 0)
-			OR (sn.downloaded = 1 AND sn.aired_episodes > (
-				SELECT COUNT(*) FROM media_files mf WHERE mf.series_id = sn.series_id AND mf.season_number = sn.season_number
-			))
-		)
+		WHERE sn.series_id = ? AND sn.season_number > 0 AND sn.aired_episodes > 0
 		ORDER BY sn.season_number
-	`, seriesID, maxDownloaded)
+	`, seriesID)
 	if err != nil {
-		return nil, err
+		slog.Warn("Failed to query seasons for updates", "series_id", seriesID, "error", err)
+		return nil
 	}
 	defer rows.Close() //nolint:errcheck
 
-	var result []seasonUpdate
+	type seasonInfo struct {
+		number        int
+		airedEpisodes int
+		downloaded    bool
+	}
+	var seasons []seasonInfo
 	for rows.Next() {
-		var su seasonUpdate
-		if err := rows.Scan(&su.SeasonNumber, &su.AiredEpisodes, &su.MissingEpisodes); err != nil {
-			slog.Warn("Failed to scan season update row", "series_id", seriesID, "error", err)
+		var si seasonInfo
+		if err := rows.Scan(&si.number, &si.airedEpisodes, &si.downloaded); err != nil {
 			continue
 		}
-		result = append(result, su)
+		seasons = append(seasons, si)
 	}
-	if err := rows.Err(); err != nil {
-		return nil, err
+	rows.Close() //nolint:errcheck
+
+	var result []seasonUpdate
+	for _, si := range seasons {
+		if si.downloaded {
+			// Get max episode number from file names on disk
+			maxEp := s.getMaxEpisodeOnDisk(seriesID, si.number)
+			if si.airedEpisodes > maxEp {
+				result = append(result, seasonUpdate{
+					SeasonNumber:  si.number,
+					AiredEpisodes: si.airedEpisodes,
+					NewEpisodes:   si.airedEpisodes - maxEp,
+				})
+			}
+		} else if si.number > maxDownloaded {
+			// New season beyond what user has
+			result = append(result, seasonUpdate{
+				SeasonNumber:  si.number,
+				AiredEpisodes: si.airedEpisodes,
+				NewEpisodes:   si.airedEpisodes,
+			})
+		}
 	}
-	if result == nil {
-		result = []seasonUpdate{}
+	return result
+}
+
+// getMaxEpisodeOnDisk parses episode numbers from file names using ptn and returns the max.
+func (s *Server) getMaxEpisodeOnDisk(seriesID int, seasonNumber int) int {
+	rows, err := s.db.Query(`
+		SELECT file_name FROM media_files
+		WHERE series_id = ? AND season_number = ?
+	`, seriesID, seasonNumber)
+	if err != nil {
+		return 0
 	}
-	return result, nil
+	defer rows.Close() //nolint:errcheck
+
+	maxEp := 0
+	for rows.Next() {
+		var fileName string
+		if err := rows.Scan(&fileName); err != nil {
+			continue
+		}
+		info, err := ptn.Parse(fileName)
+		if err != nil {
+			continue
+		}
+		if info.Episode > maxEp {
+			maxEp = info.Episode
+		}
+	}
+	return maxEp
 }
 
 func (s *Server) handleCheckUpdates(w http.ResponseWriter, _ *http.Request) {
@@ -1808,6 +1847,8 @@ func (s *Server) handleProcessAudioStream(w http.ResponseWriter, r *http.Request
 	seriesID := chi.URLParam(r, "id")
 	seasonNum := chi.URLParam(r, "num")
 
+	slog.Info("Audio processing started", "series_id", seriesID, "season", seasonNum)
+
 	var req struct {
 		TrackID      int  `json:"track_id"`
 		KeepOriginal bool `json:"keep_original"`
@@ -1859,6 +1900,36 @@ func (s *Server) handleProcessAudioStream(w http.ResponseWriter, r *http.Request
 		slog.Error("Failed to scan folder", "folder", *folderPath, "error", err)
 		s.respondError(w, http.StatusInternalServerError, "failed to scan folder")
 		return
+	}
+
+	// Remove torrent from qBittorrent before processing to avoid file locks.
+	// Try cached torrent_hash first, then resolve from qBit.
+	if s.qbitClient != nil {
+		var torrentHash *string
+		s.db.QueryRow(`SELECT torrent_hash FROM seasons WHERE series_id = ? AND season_number = ?`,
+			sid, snum).Scan(&torrentHash) //nolint:errcheck
+
+		if torrentHash != nil && *torrentHash != "" {
+			if err := s.qbitClient.DeleteTorrent(*torrentHash); err != nil {
+				slog.Warn("Failed to delete torrent before audio processing", "hash", *torrentHash, "error", err)
+			} else {
+				slog.Info("Deleted torrent before audio processing", "hash", *torrentHash)
+			}
+		} else if folderPath != nil {
+			// No cached hash — try to find and delete by folder match
+			if torrents, err := s.qbitClient.ListTorrents(); err == nil {
+				if matched := qbittorrent.FindTorrentByFolder(torrents, *folderPath); matched != nil {
+					if err := s.qbitClient.DeleteTorrent(matched.Hash); err != nil {
+						slog.Warn("Failed to delete torrent before audio processing", "hash", matched.Hash, "error", err)
+					} else {
+						slog.Info("Deleted torrent before audio processing", "hash", matched.Hash)
+						// Save hash for future use
+						s.db.Exec(`UPDATE seasons SET torrent_hash = ? WHERE series_id = ? AND season_number = ?`,
+							matched.Hash, sid, snum) //nolint:errcheck
+					}
+				}
+			}
+		}
 	}
 
 	// Set SSE headers after all validation — once set, respondError cannot override Content-Type
@@ -1988,6 +2059,8 @@ func (s *Server) handleSetDefaultTrackStream(w http.ResponseWriter, r *http.Requ
 
 	seriesID := chi.URLParam(r, "id")
 	seasonNum := chi.URLParam(r, "num")
+
+	slog.Info("Set default track started", "series_id", seriesID, "season", seasonNum)
 
 	var req struct {
 		TrackID int `json:"track_id"`

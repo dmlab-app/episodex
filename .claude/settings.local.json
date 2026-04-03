@@ -55,7 +55,8 @@
       "Bash(printf:*)",
       "Bash(ffmpeg:*)",
       "Bash(grep:*)",
-      "Bash(docker port:*)"
+      "Bash(docker port:*)",
+      "Bash(docker volume:*)"
     ],
     "deny": [],
     "ask": []

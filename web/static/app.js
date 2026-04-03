@@ -715,7 +715,8 @@ async function processSeasonAudio() {
         }
 
         showToast('Processing completed!');
-        setTimeout(() => navigate(`/series/${state.currentSeriesId}`), 2000);
+        // Reload season page to show updated file statuses
+        setTimeout(() => loadSeasonDetail(state.currentSeriesId, state.currentSeasonNum), 2000);
 
     } catch (e) {
         document.getElementById('progress-container').style.display = 'none';

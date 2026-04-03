@@ -32,6 +32,8 @@ type Season struct {
 	PosterURL     *string
 	FolderPath    *string
 	VoiceActorID  *int
+	TrackerURL    *string
+	TorrentHash   *string
 	DiscoveredAt  *string
 	ID            int64
 	SeriesID      int64
@@ -169,12 +171,12 @@ func (db *DB) GetSeasonBySeriesAndNumber(seriesID int64, seasonNumber int) (*Sea
 	err := db.QueryRow(`
 		SELECT id, series_id, tvdb_season_id, season_number, name,
 			poster_url, folder_path,
-			voice_actor_id, downloaded, aired_episodes, discovered_at
+			voice_actor_id, downloaded, aired_episodes, tracker_url, torrent_hash, discovered_at
 		FROM seasons WHERE series_id = ? AND season_number = ?
 	`, seriesID, seasonNumber).Scan(
 		&season.ID, &season.SeriesID, &season.TVDBSeasonID, &season.SeasonNumber,
 		&season.Name, &season.PosterURL, &season.FolderPath,
-		&season.VoiceActorID, &season.Downloaded, &season.AiredEpisodes, &season.DiscoveredAt,
+		&season.VoiceActorID, &season.Downloaded, &season.AiredEpisodes, &season.TrackerURL, &season.TorrentHash, &season.DiscoveredAt,
 	)
 	if err == sql.ErrNoRows {
 		return nil, nil
