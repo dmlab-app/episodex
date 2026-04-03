@@ -71,6 +71,9 @@ func (db *DB) GetMediaFilesBySeason(seriesID int64, seasonNumber int) ([]MediaFi
 		}
 		files = append(files, mf)
 	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("failed to iterate media files: %w", err)
+	}
 
 	return files, nil
 }

@@ -142,6 +142,9 @@ func main() {
 		trackerRegistry.Register(kzClient)
 	}
 
+	if qbitClient == nil && len(trackerRegistry.Clients()) > 0 {
+		slog.Warn("Tracker clients configured but qBittorrent not set — tracker checker disabled")
+	}
 	if qbitClient != nil && len(trackerRegistry.Clients()) > 0 {
 		trackerChecker := tracker.NewChecker(db, trackerRegistry, qbitClient)
 		sch.AddTask(scheduler.Task{

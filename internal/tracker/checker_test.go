@@ -77,6 +77,14 @@ func (m *mockQbitClient) SetFilePriority(hash string, indexes []int, priority in
 	return m.setPriorityErr
 }
 
+// fakeTorrent builds minimal valid bencode torrent data with a unique info dictionary.
+// The name parameter makes each torrent produce a different info_hash.
+func fakeTorrent(name string) []byte {
+	// d8:announce0:4:infod4:name<len>:<name>12:piece lengthi1e6:pieces20:xxxxxxxxxxxxxxxxxxxxxee
+	info := fmt.Sprintf("d4:name%d:%s12:piece lengthi1e6:pieces20:xxxxxxxxxxxxxxxxxxxxe", len(name), name)
+	return []byte(fmt.Sprintf("d8:announce0:4:info%se", info))
+}
+
 func setupTestDB(t *testing.T) *database.DB {
 	t.Helper()
 	tmpDir := t.TempDir()
@@ -195,7 +203,7 @@ func TestChecker_NewEpisodesTriggersRedownload(t *testing.T) {
 	mock := &mockCheckerClient{
 		canHandle:    true,
 		episodeCount: 8, // 8 on tracker vs 5 on disk
-		torrentData:  []byte("fake-torrent-data"),
+		torrentData:  fakeTorrent("new"),
 	}
 	registry := NewRegistry()
 	registry.Register(mock)
@@ -246,8 +254,9 @@ func TestChecker_NewEpisodesTriggersRedownload(t *testing.T) {
 	if err != nil {
 		t.Fatalf("get season: %v", err)
 	}
-	if season.TorrentHash == nil || *season.TorrentHash != "newhash" {
-		t.Errorf("expected torrent hash=newhash, got %v", season.TorrentHash)
+	expectedHash, _ := qbittorrent.ComputeInfoHash(fakeTorrent("new"))
+	if season.TorrentHash == nil || *season.TorrentHash != expectedHash {
+		t.Errorf("expected torrent hash=%s, got %v", expectedHash, season.TorrentHash)
 	}
 	_ = seasonID
 }
@@ -270,7 +279,7 @@ func TestChecker_SkipsProcessedFiles(t *testing.T) {
 	mock := &mockCheckerClient{
 		canHandle:    true,
 		episodeCount: 5, // more than 3 on disk
-		torrentData:  []byte("fake-torrent"),
+		torrentData:  fakeTorrent("new2"),
 	}
 	registry := NewRegistry()
 	registry.Register(mock)
@@ -298,8 +307,9 @@ func TestChecker_SkipsProcessedFiles(t *testing.T) {
 		t.Fatalf("expected 1 priority call, got %d", len(qbit.priorityCalls))
 	}
 	call := qbit.priorityCalls[0]
-	if call.hash != "newhash" {
-		t.Errorf("expected hash=newhash, got %s", call.hash)
+	expectedHash, _ := qbittorrent.ComputeInfoHash(fakeTorrent("new2"))
+	if call.hash != expectedHash {
+		t.Errorf("expected hash=%s, got %s", expectedHash, call.hash)
 	}
 	if call.priority != 0 {
 		t.Errorf("expected priority=0, got %d", call.priority)
@@ -390,7 +400,7 @@ func TestChecker_NoTorrentHashInSeason(t *testing.T) {
 	mock := &mockCheckerClient{
 		canHandle:    true,
 		episodeCount: 3,
-		torrentData:  []byte("fake"),
+		torrentData:  fakeTorrent("new3"),
 	}
 	registry := NewRegistry()
 	registry.Register(mock)
@@ -444,7 +454,7 @@ func TestChecker_MultipleSeasons(t *testing.T) {
 			"https://kinozal.tv/details.php?id=100": 5, // no new eps
 			"https://kinozal.tv/details.php?id=200": 6, // 3 new eps
 		},
-		torrentData: []byte("torrent"),
+		torrentData: fakeTorrent("new4"),
 	}
 
 	registry := NewRegistry()
@@ -531,7 +541,7 @@ func TestChecker_AddTorrentError(t *testing.T) {
 	mock := &mockCheckerClient{
 		canHandle:    true,
 		episodeCount: 5,
-		torrentData:  []byte("data"),
+		torrentData:  fakeTorrent("new5"),
 	}
 	registry := NewRegistry()
 	registry.Register(mock)

@@ -80,6 +80,10 @@ func (c *Checker) checkSeason(season *database.Season) CheckResult {
 		Season:   season.SeasonNumber,
 	}
 
+	if season.TrackerURL == nil {
+		result.Error = fmt.Errorf("tracker URL is nil for season %d", season.ID)
+		return result
+	}
 	trackerURL := *season.TrackerURL
 
 	client, err := c.registry.GetClient(trackerURL)
@@ -133,6 +137,17 @@ func (c *Checker) redownload(season *database.Season, client Client) error {
 		return fmt.Errorf("download torrent: %w", err)
 	}
 
+	// Compute new hash and skip redownload if torrent hasn't changed
+	newHash, err := qbittorrent.ComputeInfoHash(torrentData)
+	if err != nil {
+		return fmt.Errorf("compute info hash: %w", err)
+	}
+	if season.TorrentHash != nil && *season.TorrentHash == newHash {
+		slog.Debug("Tracker check: torrent unchanged, skipping redownload",
+			"season_id", season.ID, "hash", newHash)
+		return nil
+	}
+
 	// Get category from existing torrent in qBit (if available)
 	var category string
 	var savePath string
@@ -155,8 +170,7 @@ func (c *Checker) redownload(season *database.Season, client Client) error {
 	}
 
 	// Add new torrent to qBit
-	newHash, err := c.qbit.AddTorrent(torrentData, category, savePath)
-	if err != nil {
+	if _, err := c.qbit.AddTorrent(torrentData, category, savePath); err != nil {
 		return fmt.Errorf("add torrent: %w", err)
 	}
 
