@@ -2,12 +2,15 @@
 package qbittorrent
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"mime/multipart"
 	"net/http"
 	"net/url"
 	"path"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -26,6 +29,14 @@ type Torrent struct {
 // Properties represents torrent properties from qBittorrent.
 type Properties struct {
 	Comment string `json:"comment"`
+}
+
+// TorrentFile represents a file within a torrent.
+type TorrentFile struct {
+	Index    int    `json:"index"`
+	Name     string `json:"name"`
+	Size     int64  `json:"size"`
+	Priority int    `json:"priority"`
 }
 
 // Client communicates with a qBittorrent instance via its Web API.
@@ -190,6 +201,132 @@ func (c *Client) DeleteTorrent(hash string) error {
 		return fmt.Errorf("delete torrent: status %d", resp.StatusCode)
 	}
 	return nil
+}
+
+// AddTorrent uploads a .torrent file to qBittorrent and returns the info_hash.
+func (c *Client) AddTorrent(torrentData []byte, category string, savePath string) (string, error) {
+	infoHash, err := ComputeInfoHash(torrentData)
+	if err != nil {
+		return "", fmt.Errorf("add torrent: %w", err)
+	}
+
+	body := &bytes.Buffer{}
+	writer := multipart.NewWriter(body)
+
+	part, err := writer.CreateFormFile("torrents", "torrent.torrent")
+	if err != nil {
+		return "", fmt.Errorf("add torrent: %w", err)
+	}
+	if _, err := part.Write(torrentData); err != nil {
+		return "", fmt.Errorf("add torrent: %w", err)
+	}
+
+	if category != "" {
+		if err := writer.WriteField("category", category); err != nil {
+			return "", fmt.Errorf("add torrent: %w", err)
+		}
+	}
+	if savePath != "" {
+		if err := writer.WriteField("savepath", savePath); err != nil {
+			return "", fmt.Errorf("add torrent: %w", err)
+		}
+	}
+
+	if err := writer.Close(); err != nil {
+		return "", fmt.Errorf("add torrent: %w", err)
+	}
+
+	resp, err := c.doPostRequest("/api/v2/torrents/add", writer.FormDataContentType(), body.Bytes())
+	if err != nil {
+		return "", fmt.Errorf("add torrent: %w", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	if resp.StatusCode != http.StatusOK {
+		return "", fmt.Errorf("add torrent: status %d", resp.StatusCode)
+	}
+
+	return infoHash, nil
+}
+
+// GetTorrentFiles returns the list of files in a torrent.
+func (c *Client) GetTorrentFiles(hash string) ([]TorrentFile, error) {
+	resp, err := c.doRequest("/api/v2/torrents/files?hash=" + url.QueryEscape(hash))
+	if err != nil {
+		return nil, fmt.Errorf("get torrent files: %w", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	if resp.StatusCode == http.StatusNotFound {
+		return nil, ErrTorrentNotFound
+	}
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("get torrent files: unexpected status %d", resp.StatusCode)
+	}
+
+	var files []TorrentFile
+	if err := json.NewDecoder(resp.Body).Decode(&files); err != nil {
+		return nil, fmt.Errorf("get torrent files: %w", err)
+	}
+	return files, nil
+}
+
+// SetFilePriority sets the download priority for specific files in a torrent.
+// Priority 0 means "do not download".
+func (c *Client) SetFilePriority(hash string, fileIndexes []int, priority int) error {
+	indexStrs := make([]string, len(fileIndexes))
+	for i, idx := range fileIndexes {
+		indexStrs[i] = strconv.Itoa(idx)
+	}
+
+	form := url.Values{}
+	form.Set("hash", hash)
+	form.Set("id", strings.Join(indexStrs, "|"))
+	form.Set("priority", strconv.Itoa(priority))
+
+	resp, err := c.doPostRequest("/api/v2/torrents/filePrio", "application/x-www-form-urlencoded", []byte(form.Encode()))
+	if err != nil {
+		return fmt.Errorf("set file priority: %w", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("set file priority: status %d", resp.StatusCode)
+	}
+	return nil
+}
+
+// doPostRequest performs an authenticated POST request with automatic re-login on 403.
+func (c *Client) doPostRequest(reqPath string, contentType string, body []byte) (*http.Response, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	resp, err := c.rawPostRequest(reqPath, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+
+	if resp.StatusCode == http.StatusForbidden {
+		_ = resp.Body.Close()
+		if err := c.login(); err != nil {
+			return nil, fmt.Errorf("re-login failed: %w", err)
+		}
+		return c.rawPostRequest(reqPath, contentType, body)
+	}
+
+	return resp, nil
+}
+
+func (c *Client) rawPostRequest(reqPath string, contentType string, body []byte) (*http.Response, error) {
+	req, err := http.NewRequest(http.MethodPost, c.baseURL+reqPath, bytes.NewReader(body))
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Content-Type", contentType)
+	if c.cookie != nil {
+		req.AddCookie(c.cookie)
+	}
+	return c.client.Do(req)
 }
 
 func (c *Client) rawRequest(reqPath string) (*http.Response, error) {

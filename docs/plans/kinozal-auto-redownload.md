@@ -82,13 +82,13 @@ type TrackerClient interface {
 - [x] run tests — must pass before next task
 
 ### Task 6: qBittorrent client — add torrent and set file priorities
-- [ ] write tests for `AddTorrent(torrentData []byte, category string, savePath string)` — returns torrent hash
-- [ ] write tests for `GetTorrentFiles(hash string)` — returns list of files with index and name
-- [ ] write tests for `SetFilePriority(hash string, fileIndexes []int, priority int)` — priority 0 = don't download
-- [ ] implement: POST to `/api/v2/torrents/add` with multipart form data
-- [ ] implement: GET `/api/v2/torrents/files?hash=...`
-- [ ] implement: POST `/api/v2/torrents/filePrio` with hash, file indexes, priority
-- [ ] run tests — must pass before next task
+- [x] write tests for `AddTorrent(torrentData []byte, category string, savePath string)` — returns torrent hash
+- [x] write tests for `GetTorrentFiles(hash string)` — returns list of files with index and name
+- [x] write tests for `SetFilePriority(hash string, fileIndexes []int, priority int)` — priority 0 = don't download
+- [x] implement: POST to `/api/v2/torrents/add` with multipart form data
+- [x] implement: GET `/api/v2/torrents/files?hash=...`
+- [x] implement: POST `/api/v2/torrents/filePrio` with hash, file indexes, priority
+- [x] run tests — must pass before next task
 
 ### Task 7: Scheduled check — compare episodes and trigger redownload
 - [ ] write check logic using `TrackerClient` interface (not Kinozal-specific):

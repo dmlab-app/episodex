@@ -1,8 +1,10 @@
 package qbittorrent
 
 import (
+	"io"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync/atomic"
 	"testing"
 )
@@ -301,6 +303,301 @@ func TestGetTorrentProperties_ServerError(t *testing.T) {
 	_, err := c.GetTorrentProperties("abc123")
 	if err == nil {
 		t.Fatal("expected error on server error")
+	}
+}
+
+// validTorrentData returns a minimal valid bencoded torrent file for testing.
+// The info dict is d4:name4:test12:piece lengthi16384e6:pieces0:e
+// SHA1 of the info dict = known hash.
+func validTorrentData() []byte {
+	return []byte("d4:infod4:name4:test12:piece lengthi16384e6:pieces0:ee")
+}
+
+func TestAddTorrent_Success(t *testing.T) {
+	torrentData := validTorrentData()
+	expectedHash, err := ComputeInfoHash(torrentData)
+	if err != nil {
+		t.Fatalf("failed to compute expected hash: %v", err)
+	}
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/api/v2/auth/login" {
+			http.SetCookie(w, &http.Cookie{Name: "SID", Value: "sess"})
+			w.Write([]byte("Ok."))
+			return
+		}
+		if r.URL.Path != "/api/v2/torrents/add" {
+			t.Errorf("unexpected path: %s", r.URL.Path)
+			return
+		}
+		if r.Method != http.MethodPost {
+			t.Errorf("expected POST, got %s", r.Method)
+			return
+		}
+		ct := r.Header.Get("Content-Type")
+		if !strings.HasPrefix(ct, "multipart/form-data") {
+			t.Errorf("expected multipart/form-data, got %s", ct)
+			return
+		}
+		if err := r.ParseMultipartForm(10 << 20); err != nil {
+			t.Fatalf("failed to parse multipart: %v", err)
+		}
+		file, _, err := r.FormFile("torrents")
+		if err != nil {
+			t.Fatalf("expected torrents file field: %v", err)
+		}
+		defer file.Close()
+		data, _ := io.ReadAll(file)
+		if string(data) != string(torrentData) {
+			t.Error("torrent data mismatch")
+		}
+		if r.FormValue("category") != "tv" {
+			t.Errorf("expected category=tv, got %s", r.FormValue("category"))
+		}
+		if r.FormValue("savepath") != "/downloads/shows" {
+			t.Errorf("expected savepath=/downloads/shows, got %s", r.FormValue("savepath"))
+		}
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte("Ok."))
+	}))
+	defer srv.Close()
+
+	c := NewClient(srv.URL, "admin", "secret")
+	c.cookie = &http.Cookie{Name: "SID", Value: "sess"}
+
+	hash, err := c.AddTorrent(torrentData, "tv", "/downloads/shows")
+	if err != nil {
+		t.Fatalf("expected no error, got %v", err)
+	}
+	if hash != expectedHash {
+		t.Errorf("expected hash %s, got %s", expectedHash, hash)
+	}
+}
+
+func TestAddTorrent_ServerError(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/api/v2/auth/login" {
+			http.SetCookie(w, &http.Cookie{Name: "SID", Value: "sess"})
+			w.Write([]byte("Ok."))
+			return
+		}
+		w.WriteHeader(http.StatusInternalServerError)
+	}))
+	defer srv.Close()
+
+	c := NewClient(srv.URL, "admin", "secret")
+	c.cookie = &http.Cookie{Name: "SID", Value: "sess"}
+
+	_, err := c.AddTorrent(validTorrentData(), "tv", "/downloads")
+	if err == nil {
+		t.Fatal("expected error on server error")
+	}
+}
+
+func TestAddTorrent_InvalidTorrentData(t *testing.T) {
+	c := NewClient("http://localhost", "admin", "secret")
+	_, err := c.AddTorrent([]byte("not a torrent"), "", "")
+	if err == nil {
+		t.Fatal("expected error for invalid torrent data")
+	}
+}
+
+func TestAddTorrent_ReloginOn403(t *testing.T) {
+	var reqCount atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/api/v2/auth/login" {
+			http.SetCookie(w, &http.Cookie{Name: "SID", Value: "new-sess"})
+			w.Write([]byte("Ok."))
+			return
+		}
+		count := reqCount.Add(1)
+		if count == 1 {
+			w.WriteHeader(http.StatusForbidden)
+			return
+		}
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte("Ok."))
+	}))
+	defer srv.Close()
+
+	c := NewClient(srv.URL, "admin", "secret")
+	c.cookie = &http.Cookie{Name: "SID", Value: "expired"}
+
+	hash, err := c.AddTorrent(validTorrentData(), "", "")
+	if err != nil {
+		t.Fatalf("expected success after relogin, got %v", err)
+	}
+	if hash == "" {
+		t.Error("expected non-empty hash")
+	}
+}
+
+func TestGetTorrentFiles_Success(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/api/v2/auth/login" {
+			http.SetCookie(w, &http.Cookie{Name: "SID", Value: "sess"})
+			w.Write([]byte("Ok."))
+			return
+		}
+		if r.URL.Path != "/api/v2/torrents/files" {
+			t.Errorf("unexpected path: %s", r.URL.Path)
+			return
+		}
+		if r.URL.Query().Get("hash") != "abc123" {
+			t.Errorf("expected hash=abc123, got %s", r.URL.Query().Get("hash"))
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte(`[
+			{"index":0,"name":"Show.S01E01.mkv","size":1073741824,"priority":1},
+			{"index":1,"name":"Show.S01E02.mkv","size":1073741824,"priority":1},
+			{"index":2,"name":"Show.S01E03.mkv","size":1073741824,"priority":1}
+		]`))
+	}))
+	defer srv.Close()
+
+	c := NewClient(srv.URL, "admin", "secret")
+	c.cookie = &http.Cookie{Name: "SID", Value: "sess"}
+
+	files, err := c.GetTorrentFiles("abc123")
+	if err != nil {
+		t.Fatalf("expected no error, got %v", err)
+	}
+	if len(files) != 3 {
+		t.Fatalf("expected 3 files, got %d", len(files))
+	}
+	if files[0].Name != "Show.S01E01.mkv" {
+		t.Errorf("expected name Show.S01E01.mkv, got %s", files[0].Name)
+	}
+	if files[0].Index != 0 {
+		t.Errorf("expected index 0, got %d", files[0].Index)
+	}
+	if files[2].Index != 2 {
+		t.Errorf("expected index 2, got %d", files[2].Index)
+	}
+}
+
+func TestGetTorrentFiles_NotFound(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/api/v2/auth/login" {
+			http.SetCookie(w, &http.Cookie{Name: "SID", Value: "sess"})
+			w.Write([]byte("Ok."))
+			return
+		}
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	defer srv.Close()
+
+	c := NewClient(srv.URL, "admin", "secret")
+	c.cookie = &http.Cookie{Name: "SID", Value: "sess"}
+
+	_, err := c.GetTorrentFiles("nonexistent")
+	if err == nil {
+		t.Fatal("expected error for missing torrent")
+	}
+}
+
+func TestGetTorrentFiles_ServerError(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/api/v2/auth/login" {
+			http.SetCookie(w, &http.Cookie{Name: "SID", Value: "sess"})
+			w.Write([]byte("Ok."))
+			return
+		}
+		w.WriteHeader(http.StatusInternalServerError)
+	}))
+	defer srv.Close()
+
+	c := NewClient(srv.URL, "admin", "secret")
+	c.cookie = &http.Cookie{Name: "SID", Value: "sess"}
+
+	_, err := c.GetTorrentFiles("abc123")
+	if err == nil {
+		t.Fatal("expected error on server error")
+	}
+}
+
+func TestSetFilePriority_Success(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/api/v2/auth/login" {
+			http.SetCookie(w, &http.Cookie{Name: "SID", Value: "sess"})
+			w.Write([]byte("Ok."))
+			return
+		}
+		if r.URL.Path != "/api/v2/torrents/filePrio" {
+			t.Errorf("unexpected path: %s", r.URL.Path)
+			return
+		}
+		if r.Method != http.MethodPost {
+			t.Errorf("expected POST, got %s", r.Method)
+			return
+		}
+		body, _ := io.ReadAll(r.Body)
+		bodyStr := string(body)
+		if !strings.Contains(bodyStr, "hash=abc123") {
+			t.Errorf("expected hash=abc123 in body, got %s", bodyStr)
+		}
+		if !strings.Contains(bodyStr, "id=0%7C1%7C2") {
+			t.Errorf("expected id=0|1|2 in body, got %s", bodyStr)
+		}
+		if !strings.Contains(bodyStr, "priority=0") {
+			t.Errorf("expected priority=0 in body, got %s", bodyStr)
+		}
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+
+	c := NewClient(srv.URL, "admin", "secret")
+	c.cookie = &http.Cookie{Name: "SID", Value: "sess"}
+
+	err := c.SetFilePriority("abc123", []int{0, 1, 2}, 0)
+	if err != nil {
+		t.Fatalf("expected no error, got %v", err)
+	}
+}
+
+func TestSetFilePriority_ServerError(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/api/v2/auth/login" {
+			http.SetCookie(w, &http.Cookie{Name: "SID", Value: "sess"})
+			w.Write([]byte("Ok."))
+			return
+		}
+		w.WriteHeader(http.StatusInternalServerError)
+	}))
+	defer srv.Close()
+
+	c := NewClient(srv.URL, "admin", "secret")
+	c.cookie = &http.Cookie{Name: "SID", Value: "sess"}
+
+	err := c.SetFilePriority("abc123", []int{0}, 0)
+	if err == nil {
+		t.Fatal("expected error on server error")
+	}
+}
+
+func TestSetFilePriority_ReloginOn403(t *testing.T) {
+	var reqCount atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/api/v2/auth/login" {
+			http.SetCookie(w, &http.Cookie{Name: "SID", Value: "new-sess"})
+			w.Write([]byte("Ok."))
+			return
+		}
+		count := reqCount.Add(1)
+		if count == 1 {
+			w.WriteHeader(http.StatusForbidden)
+			return
+		}
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+
+	c := NewClient(srv.URL, "admin", "secret")
+	c.cookie = &http.Cookie{Name: "SID", Value: "expired"}
+
+	err := c.SetFilePriority("abc123", []int{0, 1}, 0)
+	if err != nil {
+		t.Fatalf("expected success after relogin, got %v", err)
 	}
 }
 
