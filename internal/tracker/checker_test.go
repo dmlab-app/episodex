@@ -554,3 +554,148 @@ func TestChecker_AddTorrentError(t *testing.T) {
 		t.Error("expected error from add torrent failure")
 	}
 }
+
+func TestChecker_SkipsSeasonWithNoEpisodesOnDisk(t *testing.T) {
+	db := setupTestDB(t)
+	seriesID := insertTestSeries(t, db, "Test Show")
+	insertTestSeason(t, db, seriesID, 1,
+		strPtr("https://kinozal.tv/details.php?id=123"),
+		strPtr("oldhash"),
+		strPtr("/media/TestShow/S01"))
+	// No media files on disk — diskEps = 0
+
+	mock := &mockCheckerClient{
+		canHandle:    true,
+		episodeCount: 5, // tracker has 5 episodes
+		torrentData:  fakeTorrent("new6"),
+	}
+	registry := NewRegistry()
+	registry.Register(mock)
+
+	qbit := &mockQbitClient{}
+	checker := NewChecker(db, registry, qbit)
+
+	results := checker.Check()
+	if len(results) != 1 {
+		t.Fatalf("expected 1 result, got %d", len(results))
+	}
+	if results[0].Redownloaded {
+		t.Error("should not redownload when no episodes on disk (not a mid-season update)")
+	}
+	if results[0].Error != nil {
+		t.Errorf("unexpected error: %v", results[0].Error)
+	}
+	if len(qbit.addedTorrents) != 0 {
+		t.Error("should not add torrent when no episodes on disk")
+	}
+}
+
+func TestChecker_SkipsProcessedFilesByEpisodeNumber(t *testing.T) {
+	db := setupTestDB(t)
+	seriesID := insertTestSeries(t, db, "Test Show")
+	insertTestSeason(t, db, seriesID, 1,
+		strPtr("https://kinozal.tv/details.php?id=123"),
+		strPtr("oldhash"),
+		strPtr("/media/TestShow/S01"))
+
+	for i := 1; i <= 3; i++ {
+		insertTestMediaFile(t, db, seriesID, 1, fmt.Sprintf("Test.Show.S01E%02d.mkv", i))
+	}
+	// Processed files have DIFFERENT names than torrent files (e.g. different quality tag)
+	insertTestProcessedFile(t, db, seriesID, 1, "/media/TestShow/S01/Test.Show.S01E01.720p.mkv")
+	insertTestProcessedFile(t, db, seriesID, 1, "/media/TestShow/S01/Test.Show.S01E02.720p.mkv")
+
+	mock := &mockCheckerClient{
+		canHandle:    true,
+		episodeCount: 5,
+		torrentData:  fakeTorrent("new7"),
+	}
+	registry := NewRegistry()
+	registry.Register(mock)
+
+	qbit := &mockQbitClient{
+		torrents: []qbittorrent.Torrent{{Hash: "oldhash", Category: "tv"}},
+		addHash:  "newhash",
+		files: []qbittorrent.TorrentFile{
+			{Index: 0, Name: "Test.Show.S01E01.1080p.mkv"},
+			{Index: 1, Name: "Test.Show.S01E02.1080p.mkv"},
+			{Index: 2, Name: "Test.Show.S01E03.1080p.mkv"},
+			{Index: 3, Name: "Test.Show.S01E04.1080p.mkv"},
+			{Index: 4, Name: "Test.Show.S01E05.1080p.mkv"},
+		},
+	}
+	checker := NewChecker(db, registry, qbit)
+
+	results := checker.Check()
+	if len(results) != 1 || !results[0].Redownloaded {
+		t.Fatal("expected successful redownload")
+	}
+
+	// Should skip E01 and E02 by episode number even though filenames differ
+	if len(qbit.priorityCalls) != 1 {
+		t.Fatalf("expected 1 priority call, got %d", len(qbit.priorityCalls))
+	}
+	call := qbit.priorityCalls[0]
+	if len(call.indexes) != 2 || call.indexes[0] != 0 || call.indexes[1] != 1 {
+		t.Errorf("expected indexes [0,1], got %v", call.indexes)
+	}
+}
+
+func TestChecker_PriorityFailureCleansUp(t *testing.T) {
+	db := setupTestDB(t)
+	seriesID := insertTestSeries(t, db, "Test Show")
+	insertTestSeason(t, db, seriesID, 1,
+		strPtr("https://kinozal.tv/details.php?id=123"),
+		strPtr("oldhash"),
+		strPtr("/media/TestShow/S01"))
+
+	for i := 1; i <= 3; i++ {
+		insertTestMediaFile(t, db, seriesID, 1, fmt.Sprintf("Test.Show.S01E%02d.mkv", i))
+	}
+	insertTestProcessedFile(t, db, seriesID, 1, "/media/TestShow/S01/Test.Show.S01E01.mkv")
+
+	mock := &mockCheckerClient{
+		canHandle:    true,
+		episodeCount: 5,
+		torrentData:  fakeTorrent("new8"),
+	}
+	registry := NewRegistry()
+	registry.Register(mock)
+
+	newHash, _ := qbittorrent.ComputeInfoHash(fakeTorrent("new8"))
+	qbit := &mockQbitClient{
+		torrents:       []qbittorrent.Torrent{{Hash: "oldhash", Category: "tv"}},
+		addHash:        "newhash",
+		files:          []qbittorrent.TorrentFile{{Index: 0, Name: "Test.Show.S01E01.mkv"}},
+		setPriorityErr: fmt.Errorf("qbit priority error"),
+	}
+	checker := NewChecker(db, registry, qbit)
+
+	results := checker.Check()
+	if len(results) != 1 {
+		t.Fatalf("expected 1 result, got %d", len(results))
+	}
+	if results[0].Error == nil {
+		t.Fatal("expected error when priority setting fails")
+	}
+	if results[0].Redownloaded {
+		t.Error("should not mark as redownloaded when priorities failed")
+	}
+
+	// Should have cleaned up new torrent only (old torrent preserved for retry)
+	if len(qbit.deletedHashes) != 1 {
+		t.Fatalf("expected exactly 1 delete call (new torrent cleanup), got %d: %v", len(qbit.deletedHashes), qbit.deletedHashes)
+	}
+	if qbit.deletedHashes[0] != newHash {
+		t.Errorf("expected new torrent %s to be deleted for cleanup, got %s", newHash, qbit.deletedHashes[0])
+	}
+
+	// DB hash should NOT be updated (still old)
+	season, err := db.GetSeasonBySeriesAndNumber(seriesID, 1)
+	if err != nil {
+		t.Fatalf("get season: %v", err)
+	}
+	if season.TorrentHash == nil || *season.TorrentHash != "oldhash" {
+		t.Errorf("expected torrent hash=oldhash (unchanged), got %v", season.TorrentHash)
+	}
+}

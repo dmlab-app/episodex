@@ -107,8 +107,19 @@ func (c *Checker) checkSeason(season *database.Season) CheckResult {
 		return result
 	}
 
-	diskEps := c.getMaxEpisodeOnDisk(season.SeriesID, season.SeasonNumber)
+	diskEps, err := c.getMaxEpisodeOnDisk(season.SeriesID, season.SeasonNumber)
+	if err != nil {
+		result.Error = fmt.Errorf("get disk episodes: %w", err)
+		slog.Error("Tracker check: failed to get disk episodes", "season_id", season.ID, "error", err)
+		return result
+	}
 	result.DiskEps = diskEps
+
+	if diskEps == 0 {
+		slog.Debug("Tracker check: no episodes on disk, skipping (not a mid-season update)",
+			"season_id", season.ID)
+		return result
+	}
 
 	if trackerEps <= diskEps {
 		slog.Debug("Tracker check: no new episodes",
@@ -171,21 +182,26 @@ func (c *Checker) redownload(season *database.Season, client Client) (bool, erro
 		return false, fmt.Errorf("add torrent: %w", err)
 	}
 
-	// Delete old torrent from qBit
+	// Wait for qBittorrent to index the torrent before setting file priorities
+	if err := c.skipProcessedFilesWithRetry(newHash, season); err != nil {
+		// Clean up: remove the new torrent since we couldn't set priorities correctly
+		if delErr := c.qbit.DeleteTorrent(newHash); delErr != nil {
+			slog.Warn("Tracker check: failed to clean up new torrent", "hash", newHash, "error", delErr)
+		}
+		return false, fmt.Errorf("set file priorities: %w", err)
+	}
+
+	// Update torrent_hash in DB first (before deleting old torrent, so processor can find the new hash
+	// even if old torrent deletion fails or we crash between these steps)
+	if err := c.db.UpdateTorrentHash(season.ID, newHash); err != nil {
+		return false, fmt.Errorf("update torrent hash: %w", err)
+	}
+
+	// Delete old torrent from qBit (after DB is updated, so we never lose track of the active torrent)
 	if season.TorrentHash != nil && *season.TorrentHash != "" {
 		if err := c.qbit.DeleteTorrent(*season.TorrentHash); err != nil {
 			slog.Warn("Tracker check: failed to delete old torrent", "hash", *season.TorrentHash, "error", err)
 		}
-	}
-
-	// Wait for qBittorrent to index the torrent before setting file priorities
-	if err := c.skipProcessedFilesWithRetry(newHash, season); err != nil {
-		slog.Warn("Tracker check: failed to set file priorities", "error", err)
-	}
-
-	// Update torrent_hash in DB
-	if err := c.db.UpdateTorrentHash(season.ID, newHash); err != nil {
-		return false, fmt.Errorf("update torrent hash: %w", err)
 	}
 
 	slog.Info("Tracker check: redownload complete",
@@ -228,16 +244,23 @@ func (c *Checker) skipProcessedFiles(hash string, season *database.Season) error
 		return nil
 	}
 
-	// Build a set of processed base file names for quick lookup
-	processedSet := make(map[string]bool, len(processedPaths))
+	// Build a set of processed episode numbers for matching
+	processedEpisodes := make(map[int]bool, len(processedPaths))
 	for _, p := range processedPaths {
-		processedSet[filepath.Base(p)] = true
+		info, parseErr := ptn.Parse(filepath.Base(p))
+		if parseErr != nil || info.Episode == 0 {
+			continue
+		}
+		processedEpisodes[info.Episode] = true
 	}
 
 	var skipIndexes []int
 	for i := range files {
-		baseName := filepath.Base(files[i].Name)
-		if processedSet[baseName] {
+		info, parseErr := ptn.Parse(filepath.Base(files[i].Name))
+		if parseErr != nil || info.Episode == 0 {
+			continue
+		}
+		if processedEpisodes[info.Episode] {
 			skipIndexes = append(skipIndexes, files[i].Index)
 		}
 	}
@@ -251,10 +274,10 @@ func (c *Checker) skipProcessedFiles(hash string, season *database.Season) error
 	return nil
 }
 
-func (c *Checker) getMaxEpisodeOnDisk(seriesID int64, seasonNumber int) int {
+func (c *Checker) getMaxEpisodeOnDisk(seriesID int64, seasonNumber int) (int, error) {
 	files, err := c.db.GetMediaFilesBySeason(seriesID, seasonNumber)
 	if err != nil {
-		return 0
+		return 0, fmt.Errorf("get media files: %w", err)
 	}
 
 	maxEp := 0
@@ -267,5 +290,5 @@ func (c *Checker) getMaxEpisodeOnDisk(seriesID int64, seasonNumber int) int {
 			maxEp = info.Episode
 		}
 	}
-	return maxEp
+	return maxEp, nil
 }
