@@ -169,6 +169,10 @@ func (c *Client) GetEpisodeCount(trackerURL string) (int, error) {
 	}
 	defer func() { _ = resp.Body.Close() }()
 
+	if resp.StatusCode != http.StatusOK {
+		return 0, fmt.Errorf("kinozal fetch page: status %d", resp.StatusCode)
+	}
+
 	// Kinozal pages are served in Windows-1251 encoding; decode to UTF-8
 	reader := charmap.Windows1251.NewDecoder().Reader(resp.Body)
 	body, err := io.ReadAll(reader)

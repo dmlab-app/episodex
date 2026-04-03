@@ -164,16 +164,18 @@ func (c *Checker) redownload(season *database.Season, client Client) (bool, erro
 				}
 			}
 		}
+	}
 
-		// Delete old torrent from qBit
+	// Add new torrent to qBit first (before deleting old one, so we don't lose the torrent on failure)
+	if _, err := c.qbit.AddTorrent(torrentData, category, savePath); err != nil {
+		return false, fmt.Errorf("add torrent: %w", err)
+	}
+
+	// Delete old torrent from qBit
+	if season.TorrentHash != nil && *season.TorrentHash != "" {
 		if err := c.qbit.DeleteTorrent(*season.TorrentHash); err != nil {
 			slog.Warn("Tracker check: failed to delete old torrent", "hash", *season.TorrentHash, "error", err)
 		}
-	}
-
-	// Add new torrent to qBit
-	if _, err := c.qbit.AddTorrent(torrentData, category, savePath); err != nil {
-		return false, fmt.Errorf("add torrent: %w", err)
 	}
 
 	// Wait for qBittorrent to index the torrent before setting file priorities
