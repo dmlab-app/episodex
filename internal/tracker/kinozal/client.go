@@ -1,4 +1,4 @@
-// Package kinozal implements the TrackerClient interface for kinozal.tv.
+// Package kinozal implements the tracker.Client interface for kinozal.tv.
 package kinozal
 
 import (

@@ -1,6 +1,7 @@
 package kinozal
 
 import (
+	"bytes"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -165,8 +166,9 @@ func TestAutoReloginFailure(t *testing.T) {
 	defer server.Close()
 
 	c := NewClientWithBaseURL(server.URL, "user", "pass")
-	_, err := c.doRequest(server.URL + "/some-page")
+	resp, err := c.doRequest(server.URL + "/some-page")
 	if err == nil {
+		_ = resp.Body.Close()
 		t.Fatal("expected error when re-login fails")
 	}
 }
@@ -341,7 +343,7 @@ func TestDownloadTorrent(t *testing.T) {
 	if err != nil {
 		t.Fatalf("DownloadTorrent() error: %v", err)
 	}
-	if string(got) != string(torrentData) {
+	if !bytes.Equal(got, torrentData) {
 		t.Errorf("DownloadTorrent() returned %q, want %q", got, torrentData)
 	}
 }
@@ -376,7 +378,7 @@ func TestDownloadTorrentReloginOn403(t *testing.T) {
 	if err != nil {
 		t.Fatalf("DownloadTorrent() error: %v", err)
 	}
-	if string(got) != string(torrentData) {
+	if !bytes.Equal(got, torrentData) {
 		t.Errorf("DownloadTorrent() returned %q, want %q", got, torrentData)
 	}
 }

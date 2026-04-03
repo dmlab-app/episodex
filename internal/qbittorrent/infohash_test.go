@@ -1,7 +1,7 @@
 package qbittorrent
 
 import (
-	"crypto/sha1" //nolint:gosec
+	"crypto/sha1"
 	"encoding/hex"
 	"testing"
 )
@@ -11,7 +11,7 @@ func TestComputeInfoHash_Valid(t *testing.T) {
 	infoDict := []byte("d4:name4:test12:piece lengthi16384e6:pieces0:e")
 	torrent := []byte("d4:info" + string(infoDict) + "e")
 
-	expected := sha1.Sum(infoDict) //nolint:gosec
+	expected := sha1.Sum(infoDict)
 	expectedHex := hex.EncodeToString(expected[:])
 
 	hash, err := ComputeInfoHash(torrent)
@@ -28,7 +28,7 @@ func TestComputeInfoHash_WithOtherKeys(t *testing.T) {
 	infoDict := []byte("d4:name4:teste")
 	torrent := []byte("d7:comment4:test4:info" + string(infoDict) + "8:url-list3:urle")
 
-	expected := sha1.Sum(infoDict) //nolint:gosec
+	expected := sha1.Sum(infoDict)
 	expectedHex := hex.EncodeToString(expected[:])
 
 	hash, err := ComputeInfoHash(torrent)

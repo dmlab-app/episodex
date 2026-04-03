@@ -4,7 +4,7 @@ import (
 	"testing"
 )
 
-// mockClient is a test double for TrackerClient.
+// mockClient is a test double for Client.
 type mockClient struct {
 	domain string
 }

@@ -5,7 +5,6 @@ import (
 	"crypto/sha256"
 	"encoding/json"
 	"fmt"
-	"io"
 	"log/slog"
 	"os"
 	"os/exec"
@@ -13,26 +12,6 @@ import (
 	"strings"
 	"time"
 )
-
-// copyFile copies src to dst, preserving permissions.
-func copyFile(src, dst string) error {
-	in, err := os.Open(src)
-	if err != nil {
-		return err
-	}
-	defer in.Close() //nolint:errcheck
-
-	out, err := os.Create(dst)
-	if err != nil {
-		return err
-	}
-	defer out.Close() //nolint:errcheck
-
-	if _, err := io.Copy(out, in); err != nil {
-		return err
-	}
-	return out.Close()
-}
 
 // AudioCutter handles audio track operations on MKV files
 type AudioCutter struct { //nolint:revive // name is used across the codebase

@@ -17,8 +17,8 @@ func ComputeInfoHash(data []byte) (string, error) {
 		return "", errors.New("invalid torrent file: not a bencoded dictionary")
 	}
 
-	pos := 1 // skip opening 'd'
-	for pos < len(data) && data[pos] != 'e' {
+	pos := 1                                  // skip opening 'd'
+	for pos < len(data) && data[pos] != 'e' { //nolint:gosec // pos is bounds-checked
 		// Read key (must be a string)
 		key, nextPos, err := readBencodeString(data, pos)
 		if err != nil {
@@ -48,7 +48,7 @@ func ComputeInfoHash(data []byte) (string, error) {
 }
 
 // readBencodeString reads a bencoded string at pos, returns the string and the position after it.
-func readBencodeString(data []byte, pos int) (string, int, error) {
+func readBencodeString(data []byte, pos int) (s string, nextPos int, err error) {
 	colonPos := -1
 	for i := pos; i < len(data); i++ {
 		if data[i] == ':' {

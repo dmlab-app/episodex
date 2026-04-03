@@ -18,10 +18,9 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
 	"github.com/go-chi/cors"
-
-	"github.com/episodex/episodex/internal/audio"
 	ptn "github.com/middelink/go-parse-torrent-name"
 
+	"github.com/episodex/episodex/internal/audio"
 	"github.com/episodex/episodex/internal/database"
 	"github.com/episodex/episodex/internal/qbittorrent"
 	"github.com/episodex/episodex/internal/scanner"
@@ -1029,7 +1028,7 @@ func (s *Server) handleGetSeasonTracker(w http.ResponseWriter, r *http.Request) 
 }
 
 // resolveTrackerFromQbit finds a torrent matching the folder and returns (trackerURL, hash).
-func (s *Server) resolveTrackerFromQbit(folderPath string) (string, string) {
+func (s *Server) resolveTrackerFromQbit(folderPath string) (trackerURL, hash string) {
 	torrents, err := s.qbitClient.ListTorrents()
 	if err != nil {
 		slog.Error("Failed to list torrents", "error", err)
@@ -1282,7 +1281,7 @@ func (s *Server) findNewEpisodes(seriesID, maxDownloaded int) []seasonUpdate {
 }
 
 // getMaxEpisodeOnDisk parses episode numbers from file names using ptn and returns the max.
-func (s *Server) getMaxEpisodeOnDisk(seriesID int, seasonNumber int) int {
+func (s *Server) getMaxEpisodeOnDisk(seriesID, seasonNumber int) int {
 	rows, err := s.db.Query(`
 		SELECT file_name FROM media_files
 		WHERE series_id = ? AND season_number = ?
@@ -1924,8 +1923,8 @@ func (s *Server) handleProcessAudioStream(w http.ResponseWriter, r *http.Request
 					} else {
 						slog.Info("Deleted torrent before audio processing", "hash", matched.Hash)
 						// Save hash for future use
-						s.db.Exec(`UPDATE seasons SET torrent_hash = ? WHERE series_id = ? AND season_number = ?`,
-							matched.Hash, sid, snum) //nolint:errcheck
+						_, _ = s.db.Exec(`UPDATE seasons SET torrent_hash = ? WHERE series_id = ? AND season_number = ?`,
+							matched.Hash, sid, snum)
 					}
 				}
 			}

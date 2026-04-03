@@ -373,7 +373,7 @@ func TestProcessCompleted_TorrentNotInQbit(t *testing.T) {
 }
 
 // insertTestSeasonWithVoiceActor is a test helper that creates a season with voice_actor_id.
-func insertTestSeasonWithVoiceActor(t *testing.T, db *database.DB, seriesID int64, seasonNum int, trackerURL, torrentHash, folderPath *string, voiceActorID *int) int64 {
+func insertTestSeasonWithVoiceActor(t *testing.T, db *database.DB, seriesID int64, seasonNum int, trackerURL, torrentHash, folderPath *string, voiceActorID *int) int64 { //nolint:unparam // test helper, seasonNum varies by test scenario
 	t.Helper()
 	result, err := db.Exec(`
 		INSERT INTO seasons (series_id, season_number, tracker_url, torrent_hash, folder_path, voice_actor_id)

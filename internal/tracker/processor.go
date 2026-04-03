@@ -75,8 +75,8 @@ func (p *PostDownloadProcessor) ProcessCompleted() []ProcessResult {
 	}
 
 	var results []ProcessResult
-	for _, season := range seasons {
-		result := p.processSeason(season, torrentByHash)
+	for i := range seasons {
+		result := p.processSeason(&seasons[i], torrentByHash)
 		if result != nil {
 			results = append(results, *result)
 		}
@@ -85,7 +85,7 @@ func (p *PostDownloadProcessor) ProcessCompleted() []ProcessResult {
 	return results
 }
 
-func (p *PostDownloadProcessor) processSeason(season database.Season, torrentByHash map[string]qbittorrent.Torrent) *ProcessResult {
+func (p *PostDownloadProcessor) processSeason(season *database.Season, torrentByHash map[string]qbittorrent.Torrent) *ProcessResult {
 	result := &ProcessResult{
 		SeasonID: season.ID,
 		SeriesID: season.SeriesID,

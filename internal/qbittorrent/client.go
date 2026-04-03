@@ -206,7 +206,7 @@ func (c *Client) DeleteTorrent(hash string) error {
 }
 
 // AddTorrent uploads a .torrent file to qBittorrent and returns the info_hash.
-func (c *Client) AddTorrent(torrentData []byte, category string, savePath string) (string, error) {
+func (c *Client) AddTorrent(torrentData []byte, category, savePath string) (string, error) {
 	infoHash, err := ComputeInfoHash(torrentData)
 	if err != nil {
 		return "", fmt.Errorf("add torrent: %w", err)
@@ -299,7 +299,7 @@ func (c *Client) SetFilePriority(hash string, fileIndexes []int, priority int) e
 }
 
 // doPostRequest performs an authenticated POST request with automatic re-login on 403.
-func (c *Client) doPostRequest(reqPath string, contentType string, body []byte) (*http.Response, error) {
+func (c *Client) doPostRequest(reqPath, contentType string, body []byte) (*http.Response, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
@@ -319,7 +319,7 @@ func (c *Client) doPostRequest(reqPath string, contentType string, body []byte) 
 	return resp, nil
 }
 
-func (c *Client) rawPostRequest(reqPath string, contentType string, body []byte) (*http.Response, error) {
+func (c *Client) rawPostRequest(reqPath, contentType string, body []byte) (*http.Response, error) {
 	req, err := http.NewRequest(http.MethodPost, c.baseURL+reqPath, bytes.NewReader(body))
 	if err != nil {
 		return nil, err

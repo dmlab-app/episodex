@@ -1,6 +1,7 @@
 package qbittorrent
 
 import (
+	"bytes"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -348,7 +349,7 @@ func TestAddTorrent_Success(t *testing.T) {
 		}
 		defer file.Close()
 		data, _ := io.ReadAll(file)
-		if string(data) != string(torrentData) {
+		if !bytes.Equal(data, torrentData) {
 			t.Error("torrent data mismatch")
 		}
 		if r.FormValue("category") != "tv" {

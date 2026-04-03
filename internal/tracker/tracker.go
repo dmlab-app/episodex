@@ -1,10 +1,11 @@
+// Package tracker provides a modular tracker interface for checking and downloading torrents.
 package tracker
 
 import "fmt"
 
-// TrackerClient is the interface that all tracker implementations must satisfy.
+// Client is the interface that all tracker implementations must satisfy.
 // Each tracker (Kinozal, Rutracker, etc.) implements this interface.
-type TrackerClient interface {
+type Client interface {
 	// CanHandle returns true if this client handles the given tracker URL.
 	CanHandle(trackerURL string) bool
 	// GetEpisodeCount fetches the torrent page and returns the number of episodes available.
@@ -13,9 +14,9 @@ type TrackerClient interface {
 	DownloadTorrent(trackerURL string) ([]byte, error)
 }
 
-// Registry holds multiple TrackerClient implementations and routes URLs to the right one.
+// Registry holds multiple Client implementations and routes URLs to the right one.
 type Registry struct {
-	clients []TrackerClient
+	clients []Client
 }
 
 // NewRegistry creates a new empty Registry.
@@ -23,19 +24,19 @@ func NewRegistry() *Registry {
 	return &Registry{}
 }
 
-// Register adds a TrackerClient to the registry.
-func (r *Registry) Register(client TrackerClient) {
+// Register adds a Client to the registry.
+func (r *Registry) Register(client Client) {
 	r.clients = append(r.clients, client)
 }
 
 // Clients returns the list of registered clients.
-func (r *Registry) Clients() []TrackerClient {
+func (r *Registry) Clients() []Client {
 	return r.clients
 }
 
-// GetClient returns the TrackerClient that can handle the given URL.
+// GetClient returns the Client that can handle the given URL.
 // Returns an error if no client can handle the URL.
-func (r *Registry) GetClient(trackerURL string) (TrackerClient, error) {
+func (r *Registry) GetClient(trackerURL string) (Client, error) {
 	for _, c := range r.clients {
 		if c.CanHandle(trackerURL) {
 			return c, nil

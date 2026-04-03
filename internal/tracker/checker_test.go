@@ -9,8 +9,8 @@ import (
 	"github.com/episodex/episodex/internal/qbittorrent"
 )
 
-// mockTrackerClient implements TrackerClient for testing.
-type mockTrackerClient struct {
+// mockCheckerClient implements Client for testing.
+type mockCheckerClient struct {
 	canHandle    bool
 	episodeCount int
 	episodeErr   error
@@ -18,9 +18,11 @@ type mockTrackerClient struct {
 	downloadErr  error
 }
 
-func (m *mockTrackerClient) CanHandle(_ string) bool              { return m.canHandle }
-func (m *mockTrackerClient) GetEpisodeCount(_ string) (int, error) { return m.episodeCount, m.episodeErr }
-func (m *mockTrackerClient) DownloadTorrent(_ string) ([]byte, error) {
+func (m *mockCheckerClient) CanHandle(_ string) bool { return m.canHandle }
+func (m *mockCheckerClient) GetEpisodeCount(_ string) (int, error) {
+	return m.episodeCount, m.episodeErr
+}
+func (m *mockCheckerClient) DownloadTorrent(_ string) ([]byte, error) {
 	return m.torrentData, m.downloadErr
 }
 
@@ -35,9 +37,9 @@ type mockQbitClient struct {
 	filesErr       error
 	setPriorityErr error
 
-	deletedHashes   []string
-	addedTorrents   []addTorrentCall
-	priorityCalls   []priorityCall
+	deletedHashes []string
+	addedTorrents []addTorrentCall
+	priorityCalls []priorityCall
 }
 
 type addTorrentCall struct {
@@ -61,7 +63,7 @@ func (m *mockQbitClient) DeleteTorrent(hash string) error {
 	return m.deleteErr
 }
 
-func (m *mockQbitClient) AddTorrent(data []byte, category string, savePath string) (string, error) {
+func (m *mockQbitClient) AddTorrent(data []byte, category, savePath string) (string, error) {
 	m.addedTorrents = append(m.addedTorrents, addTorrentCall{data, category, savePath})
 	return m.addHash, m.addErr
 }
@@ -83,7 +85,7 @@ func setupTestDB(t *testing.T) *database.DB {
 	if err != nil {
 		t.Fatalf("failed to create test db: %v", err)
 	}
-	t.Cleanup(func() { db.Close() }) //nolint:errcheck
+	t.Cleanup(func() { _ = db.Close() })
 	return db
 }
 
@@ -122,7 +124,7 @@ func insertTestMediaFile(t *testing.T, db *database.DB, seriesID int64, seasonNu
 	}
 }
 
-func insertTestProcessedFile(t *testing.T, db *database.DB, seriesID int64, seasonNum int, filePath string) {
+func insertTestProcessedFile(t *testing.T, db *database.DB, seriesID int64, seasonNum int, filePath string) { //nolint:unparam // test helper, seasonNum varies by test scenario
 	t.Helper()
 	_, err := db.Exec(`
 		INSERT INTO processed_files (file_path, series_id, season_number, track_kept)
@@ -156,7 +158,7 @@ func TestChecker_NoNewEpisodes(t *testing.T) {
 		insertTestMediaFile(t, db, seriesID, 1, fmt.Sprintf("Test.Show.S01E%02d.mkv", i))
 	}
 
-	mock := &mockTrackerClient{canHandle: true, episodeCount: 5}
+	mock := &mockCheckerClient{canHandle: true, episodeCount: 5}
 	registry := NewRegistry()
 	registry.Register(mock)
 
@@ -190,7 +192,7 @@ func TestChecker_NewEpisodesTriggersRedownload(t *testing.T) {
 		insertTestMediaFile(t, db, seriesID, 1, fmt.Sprintf("Test.Show.S01E%02d.mkv", i))
 	}
 
-	mock := &mockTrackerClient{
+	mock := &mockCheckerClient{
 		canHandle:    true,
 		episodeCount: 8, // 8 on tracker vs 5 on disk
 		torrentData:  []byte("fake-torrent-data"),
@@ -203,7 +205,7 @@ func TestChecker_NewEpisodesTriggersRedownload(t *testing.T) {
 			{Hash: "oldhash", Category: "tv-shows", SavePath: "/downloads/shows"},
 		},
 		addHash: "newhash",
-		files:   []qbittorrent.TorrentFile{
+		files: []qbittorrent.TorrentFile{
 			{Index: 0, Name: "Test.Show.S01E01.mkv"},
 			{Index: 1, Name: "Test.Show.S01E02.mkv"},
 			{Index: 2, Name: "Test.Show.S01E06.mkv"},
@@ -265,7 +267,7 @@ func TestChecker_SkipsProcessedFiles(t *testing.T) {
 	insertTestProcessedFile(t, db, seriesID, 1, "/media/TestShow/S01/Test.Show.S01E01.mkv")
 	insertTestProcessedFile(t, db, seriesID, 1, "/media/TestShow/S01/Test.Show.S01E02.mkv")
 
-	mock := &mockTrackerClient{
+	mock := &mockCheckerClient{
 		canHandle:    true,
 		episodeCount: 5, // more than 3 on disk
 		torrentData:  []byte("fake-torrent"),
@@ -307,12 +309,12 @@ func TestChecker_SkipsProcessedFiles(t *testing.T) {
 	}
 }
 
-func TestChecker_TrackerClientError(t *testing.T) {
+func TestChecker_ClientError(t *testing.T) {
 	db := setupTestDB(t)
 	seriesID := insertTestSeries(t, db, "Test Show")
 	insertTestSeason(t, db, seriesID, 1, strPtr("https://kinozal.tv/details.php?id=123"), nil, nil)
 
-	mock := &mockTrackerClient{
+	mock := &mockCheckerClient{
 		canHandle:  true,
 		episodeErr: fmt.Errorf("network error"),
 	}
@@ -334,7 +336,7 @@ func TestChecker_TrackerClientError(t *testing.T) {
 	}
 }
 
-func TestChecker_NoTrackerClient(t *testing.T) {
+func TestChecker_NoClient(t *testing.T) {
 	db := setupTestDB(t)
 	seriesID := insertTestSeries(t, db, "Test Show")
 	insertTestSeason(t, db, seriesID, 1, strPtr("https://unknown-tracker.com/123"), nil, nil)
@@ -357,7 +359,7 @@ func TestChecker_ZeroEpisodesOnTracker(t *testing.T) {
 	seriesID := insertTestSeries(t, db, "Test Show")
 	insertTestSeason(t, db, seriesID, 1, strPtr("https://kinozal.tv/details.php?id=123"), nil, nil)
 
-	mock := &mockTrackerClient{canHandle: true, episodeCount: 0}
+	mock := &mockCheckerClient{canHandle: true, episodeCount: 0}
 	registry := NewRegistry()
 	registry.Register(mock)
 
@@ -385,7 +387,7 @@ func TestChecker_NoTorrentHashInSeason(t *testing.T) {
 		strPtr("/media/TestShow/S01"))
 	insertTestMediaFile(t, db, seriesID, 1, "Test.Show.S01E01.mkv")
 
-	mock := &mockTrackerClient{
+	mock := &mockCheckerClient{
 		canHandle:    true,
 		episodeCount: 3,
 		torrentData:  []byte("fake"),
@@ -436,12 +438,7 @@ func TestChecker_MultipleSeasons(t *testing.T) {
 		insertTestMediaFile(t, db, seriesID, 2, fmt.Sprintf("A.S02E%02d.mkv", i))
 	}
 
-	callCount := 0
-	mock := &mockTrackerClient{
-		canHandle: true,
-	}
-	// Override with a more dynamic mock
-	dynamicMock := &dynamicTrackerClient{
+	dynamicMock := &dynamicClient{
 		canHandle: true,
 		episodeCounts: map[string]int{
 			"https://kinozal.tv/details.php?id=100": 5, // no new eps
@@ -449,8 +446,6 @@ func TestChecker_MultipleSeasons(t *testing.T) {
 		},
 		torrentData: []byte("torrent"),
 	}
-	_ = mock
-	_ = callCount
 
 	registry := NewRegistry()
 	registry.Register(dynamicMock)
@@ -480,22 +475,22 @@ func TestChecker_MultipleSeasons(t *testing.T) {
 	}
 }
 
-// dynamicTrackerClient returns different episode counts per URL.
-type dynamicTrackerClient struct {
+// dynamicClient returns different episode counts per URL.
+type dynamicClient struct {
 	canHandle     bool
 	episodeCounts map[string]int
 	torrentData   []byte
 }
 
-func (d *dynamicTrackerClient) CanHandle(_ string) bool { return d.canHandle }
-func (d *dynamicTrackerClient) GetEpisodeCount(url string) (int, error) {
+func (d *dynamicClient) CanHandle(_ string) bool { return d.canHandle }
+func (d *dynamicClient) GetEpisodeCount(url string) (int, error) {
 	count, ok := d.episodeCounts[url]
 	if !ok {
 		return 0, fmt.Errorf("unknown URL: %s", url)
 	}
 	return count, nil
 }
-func (d *dynamicTrackerClient) DownloadTorrent(_ string) ([]byte, error) {
+func (d *dynamicClient) DownloadTorrent(_ string) ([]byte, error) {
 	return d.torrentData, nil
 }
 
@@ -506,7 +501,7 @@ func TestChecker_DownloadTorrentError(t *testing.T) {
 		strPtr("https://kinozal.tv/details.php?id=123"), strPtr("oldhash"), nil)
 	insertTestMediaFile(t, db, seriesID, 1, "Test.Show.S01E01.mkv")
 
-	mock := &mockTrackerClient{
+	mock := &mockCheckerClient{
 		canHandle:    true,
 		episodeCount: 5,
 		downloadErr:  fmt.Errorf("download failed"),
@@ -533,7 +528,7 @@ func TestChecker_AddTorrentError(t *testing.T) {
 		strPtr("https://kinozal.tv/details.php?id=123"), nil, nil)
 	insertTestMediaFile(t, db, seriesID, 1, "Test.Show.S01E01.mkv")
 
-	mock := &mockTrackerClient{
+	mock := &mockCheckerClient{
 		canHandle:    true,
 		episodeCount: 5,
 		torrentData:  []byte("data"),

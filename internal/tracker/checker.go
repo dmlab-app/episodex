@@ -15,7 +15,7 @@ import (
 type QbitClient interface {
 	ListTorrents() ([]qbittorrent.Torrent, error)
 	DeleteTorrent(hash string) error
-	AddTorrent(torrentData []byte, category string, savePath string) (string, error)
+	AddTorrent(torrentData []byte, category, savePath string) (string, error)
 	GetTorrentFiles(hash string) ([]qbittorrent.TorrentFile, error)
 	SetFilePriority(hash string, fileIndexes []int, priority int) error
 }
@@ -65,15 +65,15 @@ func (c *Checker) Check() []CheckResult {
 	slog.Info("Tracker check: checking seasons", "count", len(seasons))
 
 	var results []CheckResult
-	for _, season := range seasons {
-		result := c.checkSeason(season)
+	for i := range seasons {
+		result := c.checkSeason(&seasons[i])
 		results = append(results, result)
 	}
 
 	return results
 }
 
-func (c *Checker) checkSeason(season database.Season) CheckResult {
+func (c *Checker) checkSeason(season *database.Season) CheckResult {
 	result := CheckResult{
 		SeasonID: season.ID,
 		SeriesID: season.SeriesID,
@@ -124,7 +124,7 @@ func (c *Checker) checkSeason(season database.Season) CheckResult {
 	return result
 }
 
-func (c *Checker) redownload(season database.Season, client TrackerClient) error {
+func (c *Checker) redownload(season *database.Season, client Client) error {
 	trackerURL := *season.TrackerURL
 
 	// Download new .torrent file
@@ -176,7 +176,7 @@ func (c *Checker) redownload(season database.Season, client TrackerClient) error
 	return nil
 }
 
-func (c *Checker) skipProcessedFiles(hash string, season database.Season) error {
+func (c *Checker) skipProcessedFiles(hash string, season *database.Season) error {
 	files, err := c.qbit.GetTorrentFiles(hash)
 	if err != nil {
 		return fmt.Errorf("get torrent files: %w", err)
@@ -201,10 +201,10 @@ func (c *Checker) skipProcessedFiles(hash string, season database.Season) error 
 	}
 
 	var skipIndexes []int
-	for _, f := range files {
-		baseName := filepath.Base(f.Name)
+	for i := range files {
+		baseName := filepath.Base(files[i].Name)
 		if processedSet[baseName] {
-			skipIndexes = append(skipIndexes, f.Index)
+			skipIndexes = append(skipIndexes, files[i].Index)
 		}
 	}
 
@@ -224,8 +224,8 @@ func (c *Checker) getMaxEpisodeOnDisk(seriesID int64, seasonNumber int) int {
 	}
 
 	maxEp := 0
-	for _, f := range files {
-		info, err := ptn.Parse(f.FileName)
+	for i := range files {
+		info, err := ptn.Parse(files[i].FileName)
 		if err != nil {
 			continue
 		}
