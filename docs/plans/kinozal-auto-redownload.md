@@ -122,10 +122,10 @@ type TrackerClient interface {
 - [x] run tests — must pass before next task
 
 ### Task 9: Wire into main.go
-- [ ] create tracker registry
-- [ ] initialize Kinozal client when credentials configured, register in registry
-- [ ] add scheduled task for tracker check
-- [ ] run tests — must pass before next task
+- [x] create tracker registry
+- [x] initialize Kinozal client when credentials configured, register in registry
+- [x] add scheduled task for tracker check
+- [x] run tests — must pass before next task
 
 ### Task 10: Verify acceptance criteria
 - [ ] verify Kinozal check runs on schedule
