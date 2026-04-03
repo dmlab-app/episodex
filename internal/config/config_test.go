@@ -57,6 +57,40 @@ func TestLoadQbitNotConfigured(t *testing.T) {
 	}
 }
 
+func TestLoadKinozalEnvVars(t *testing.T) {
+	t.Setenv("MEDIA_PATH", "/test/path")
+	t.Setenv("KINOZAL_USER", "myuser")
+	t.Setenv("KINOZAL_PASSWORD", "mypass")
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load() failed: %v", err)
+	}
+
+	if cfg.KinozalUser != "myuser" {
+		t.Errorf("Expected KinozalUser=myuser, got %s", cfg.KinozalUser)
+	}
+	if cfg.KinozalPassword != "mypass" {
+		t.Errorf("Expected KinozalPassword=mypass, got %s", cfg.KinozalPassword)
+	}
+}
+
+func TestLoadKinozalNotConfigured(t *testing.T) {
+	t.Setenv("MEDIA_PATH", "/test/path")
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load() failed: %v", err)
+	}
+
+	if cfg.KinozalUser != "" {
+		t.Errorf("Expected empty KinozalUser, got %s", cfg.KinozalUser)
+	}
+	if cfg.KinozalPassword != "" {
+		t.Errorf("Expected empty KinozalPassword, got %s", cfg.KinozalPassword)
+	}
+}
+
 func TestValidate(t *testing.T) {
 	tests := []struct {
 		name    string
@@ -154,6 +188,58 @@ func TestValidate(t *testing.T) {
 		},
 		{
 			name: "qbit not configured is valid",
+			config: Config{
+				DBPath:            "./test.db",
+				MediaPath:         "/media",
+				BackupRetention:   10,
+				BackupHour:        3,
+				TVDBCheckHour:     5,
+				ScanIntervalHours: 1,
+			},
+			wantErr: false,
+		},
+		{
+			name: "kinozal fully configured",
+			config: Config{
+				DBPath:            "./test.db",
+				MediaPath:         "/media",
+				BackupRetention:   10,
+				BackupHour:        3,
+				TVDBCheckHour:     5,
+				ScanIntervalHours: 1,
+				KinozalUser:       "user",
+				KinozalPassword:   "pass",
+			},
+			wantErr: false,
+		},
+		{
+			name: "kinozal user set without password",
+			config: Config{
+				DBPath:            "./test.db",
+				MediaPath:         "/media",
+				BackupRetention:   10,
+				BackupHour:        3,
+				TVDBCheckHour:     5,
+				ScanIntervalHours: 1,
+				KinozalUser:       "user",
+			},
+			wantErr: true,
+		},
+		{
+			name: "kinozal password set without user",
+			config: Config{
+				DBPath:            "./test.db",
+				MediaPath:         "/media",
+				BackupRetention:   10,
+				BackupHour:        3,
+				TVDBCheckHour:     5,
+				ScanIntervalHours: 1,
+				KinozalPassword:   "pass",
+			},
+			wantErr: true,
+		},
+		{
+			name: "kinozal not configured is valid",
 			config: Config{
 				DBPath:            "./test.db",
 				MediaPath:         "/media",

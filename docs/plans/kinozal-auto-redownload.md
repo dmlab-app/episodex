@@ -51,11 +51,11 @@ type TrackerClient interface {
 - [x] run tests — must pass before next task
 
 ### Task 2: Config — add Kinozal credentials
-- [ ] write tests for config loading with KINOZAL_USER, KINOZAL_PASSWORD env vars
-- [ ] write tests for validation: both required when either is set
-- [ ] add `KinozalUser`, `KinozalPassword` fields to Config struct
-- [ ] implement loading and validation
-- [ ] run tests — must pass before next task
+- [x] write tests for config loading with KINOZAL_USER, KINOZAL_PASSWORD env vars
+- [x] write tests for validation: both required when either is set
+- [x] add `KinozalUser`, `KinozalPassword` fields to Config struct
+- [x] implement loading and validation
+- [x] run tests — must pass before next task
 
 ### Task 3: Kinozal client — authentication
 - [ ] create `internal/tracker/kinozal/client.go` implementing `TrackerClient`
