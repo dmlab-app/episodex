@@ -44,11 +44,11 @@ type TrackerClient interface {
 ## Implementation Steps
 
 ### Task 1: TrackerClient interface and registry
-- [ ] create `internal/tracker/tracker.go` with `TrackerClient` interface (CanHandle, GetEpisodeCount, DownloadTorrent)
-- [ ] create `Registry` struct that holds multiple `TrackerClient` implementations
-- [ ] implement `Registry.GetClient(trackerURL string)` — returns the client that can handle the URL
-- [ ] write tests for registry routing
-- [ ] run tests — must pass before next task
+- [x] create `internal/tracker/tracker.go` with `TrackerClient` interface (CanHandle, GetEpisodeCount, DownloadTorrent)
+- [x] create `Registry` struct that holds multiple `TrackerClient` implementations
+- [x] implement `Registry.GetClient(trackerURL string)` — returns the client that can handle the URL
+- [x] write tests for registry routing
+- [x] run tests — must pass before next task
 
 ### Task 2: Config — add Kinozal credentials
 - [ ] write tests for config loading with KINOZAL_USER, KINOZAL_PASSWORD env vars
