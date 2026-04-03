@@ -143,22 +143,34 @@ func (c *Client) rawRequest(reqURL string) (*http.Response, error) {
 }
 
 var (
-	titleRe   = regexp.MustCompile(`(?i)<title>([^<]+)</title>`)
-	episodeRe = regexp.MustCompile(`(\d+)-(\d+)\s+сери[ийя]`)
+	titleRe         = regexp.MustCompile(`(?i)<title>([^<]+)</title>`)
+	episodeRangeRe  = regexp.MustCompile(`(\d+)-(\d+)\s+сери[ийя]`)
+	episodeSingleRe = regexp.MustCompile(`(\d+)\s+сери[ийя]`)
 )
 
 // parseEpisodeCount extracts the max episode number from a Kinozal torrent page title.
 // Title format: "Сериал (N сезон: 1-X серии из Y)" → returns X.
+// Also handles single-episode format: "Сериал (N сезон: 1 серия из Y)" → returns 1.
 func parseEpisodeCount(title string) int {
-	m := episodeRe.FindStringSubmatch(title)
-	if m == nil {
-		return 0
+	// Try range format first: "1-8 серии"
+	m := episodeRangeRe.FindStringSubmatch(title)
+	if m != nil {
+		n, err := strconv.Atoi(m[2])
+		if err != nil {
+			return 0
+		}
+		return n
 	}
-	n, err := strconv.Atoi(m[2])
-	if err != nil {
-		return 0
+	// Fallback to single-episode format: "1 серия"
+	m = episodeSingleRe.FindStringSubmatch(title)
+	if m != nil {
+		n, err := strconv.Atoi(m[1])
+		if err != nil {
+			return 0
+		}
+		return n
 	}
-	return n
+	return 0
 }
 
 // GetEpisodeCount fetches the torrent page and returns the number of episodes available.
@@ -197,6 +209,9 @@ func parseIDFromURL(trackerURL string) (string, error) {
 	id := u.Query().Get("id")
 	if id == "" {
 		return "", fmt.Errorf("no id parameter in tracker URL: %s", trackerURL)
+	}
+	if _, err := strconv.Atoi(id); err != nil {
+		return "", fmt.Errorf("invalid non-numeric id in tracker URL: %s", id)
 	}
 	return id, nil
 }

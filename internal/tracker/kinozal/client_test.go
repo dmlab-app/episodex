@@ -215,7 +215,7 @@ func TestGetEpisodeCount(t *testing.T) {
 		{
 			name:  "серия singular",
 			title: "Сериал (1 сезон: 1 серия из 10)",
-			want:  0, // pattern expects N-M format
+			want:  1,
 		},
 	}
 
@@ -291,6 +291,8 @@ func TestParseEpisodeCount(t *testing.T) {
 		{"Сериал (1 сезон: 1-6 серий из 10)", 6},
 		{"Фильм (2024)", 0},
 		{"Сериал / Serial (3 сезон: 1-22 серии из 22) / Season 3", 22},
+		{"Сериал (1 сезон: 1 серия из 10)", 1},
+		{"Сериал (1 сезон: 5 серий из 10)", 5},
 		{"", 0},
 	}
 
@@ -315,6 +317,8 @@ func TestParseIDFromURL(t *testing.T) {
 		{"https://kinozal.tv/details.php?id=999&s=foo", "999", false},
 		{"https://kinozal.tv/details.php", "", true},
 		{"https://kinozal.tv/details.php?id=", "", true},
+		{"https://kinozal.tv/details.php?id=abc", "", true},
+		{"https://kinozal.tv/details.php?id=123%26evil=inject", "", true},
 		{"not a url", "", true},
 	}
 
