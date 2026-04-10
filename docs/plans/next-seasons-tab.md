@@ -31,11 +31,11 @@ This helps the user discover what to download next without manually searching th
 - [x] run tests — must pass before next task
 
 ### Task 2: Kinozal client — find best torrent for season
-- [ ] write tests for `FindSeasonTorrent(query string, seasonNumber int)` — filters results by season, returns largest
-- [ ] write tests for season matching in title (e.g. "S05", "5 сезон", "Season 5")
-- [ ] write tests for no match found
-- [ ] implement: call Search(), filter by season number in title, sort by size desc, return first
-- [ ] run tests — must pass before next task
+- [x] write tests for `FindSeasonTorrent(query string, seasonNumber int)` — filters results by season, returns largest
+- [x] write tests for season matching in title (e.g. "S05", "5 сезон", "Season 5")
+- [x] write tests for no match found
+- [x] implement: call Search(), filter by season number in title, sort by size desc, return first
+- [x] run tests — must pass before next task
 
 ### Task 3: Database — next_season_cache table
 - [ ] add `next_season_cache` table: series_id, season_number, tracker_url, title, size, cached_at

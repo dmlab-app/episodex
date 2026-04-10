@@ -619,3 +619,142 @@ func TestSearchEmpty(t *testing.T) {
 		})
 	}
 }
+
+func TestMatchSeason(t *testing.T) {
+	tests := []struct {
+		title  string
+		season int
+		want   bool
+	}{
+		{"Звёздные врата: ЗВ-1 (5 сезон: 1-22 серии из 22) / Stargate SG-1 / WEB-DL (1080p)", 5, true},
+		{"Звёздные врата: ЗВ-1 (5 сезон: 1-22 серии из 22) / Stargate SG-1 / WEB-DL (1080p)", 4, false},
+		{"Stargate SG-1 S05 Complete BluRay 1080p", 5, true},
+		{"Stargate SG-1 S05 Complete BluRay 1080p", 3, false},
+		{"Stargate SG-1 Season 5 Complete BluRay 1080p", 5, true},
+		{"Stargate SG-1 Season 5 Complete BluRay 1080p", 6, false},
+		{"Stargate SG-1 Season5 1080p", 5, true},
+		{"Some Series s03e01-e10", 3, true},
+		{"Some Series s03e01-e10", 2, false},
+		{"Сериал (3сезон) / DVDRip", 3, true},
+		{"No season info here", 1, false},
+	}
+
+	for _, tt := range tests {
+		name := tt.title
+		if len(name) > 20 {
+			name = name[:20]
+		}
+		t.Run(fmt.Sprintf("%s_S%d", name, tt.season), func(t *testing.T) {
+			got := matchSeason(tt.title, tt.season)
+			if got != tt.want {
+				t.Errorf("matchSeason(%q, %d) = %v, want %v", tt.title, tt.season, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestParseSizeBytes(t *testing.T) {
+	tests := []struct {
+		size string
+		want float64
+	}{
+		{"45.3 ГБ", 45.3 * 1024 * 1024 * 1024},
+		{"12.1 ГБ", 12.1 * 1024 * 1024 * 1024},
+		{"500 МБ", 500 * 1024 * 1024},
+		{"1,5 ГБ", 1.5 * 1024 * 1024 * 1024},
+		{"10 GB", 10 * 1024 * 1024 * 1024},
+		{"200 MB", 200 * 1024 * 1024},
+		{"invalid", 0},
+		{"", 0},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.size, func(t *testing.T) {
+			got := parseSizeBytes(tt.size)
+			if got != tt.want {
+				t.Errorf("parseSizeBytes(%q) = %f, want %f", tt.size, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestFindSeasonTorrent(t *testing.T) {
+	results := []struct{ id, title, size string }{
+		{"1111111", "Звёздные врата: ЗВ-1 (5 сезон: 1-22 серии из 22) / Stargate SG-1 / WEB-DL (1080p)", "45.3 ГБ"},
+		{"2222222", "Звёздные врата: ЗВ-1 (5 сезон: 1-22 серии из 22) / Stargate SG-1 / DVDRip", "12.1 ГБ"},
+		{"3333333", "Звёздные врата: ЗВ-1 (4 сезон: 1-22 серии из 22) / Stargate SG-1 / DVDRip", "10.5 ГБ"},
+	}
+	page := sampleSearchHTML(results)
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/takelogin.php" {
+			http.SetCookie(w, &http.Cookie{Name: "uid", Value: "sess"})
+			w.WriteHeader(http.StatusOK)
+			return
+		}
+		encoded, _ := charmap.Windows1251.NewEncoder().Bytes([]byte(page))
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write(encoded)
+	}))
+	defer server.Close()
+
+	c := NewClientWithBaseURL(server.URL, "u", "p")
+	_ = c.Login()
+
+	// Should return the largest S05 torrent (45.3 ГБ)
+	got, err := c.FindSeasonTorrent("Звёздные врата", 5)
+	if err != nil {
+		t.Fatalf("FindSeasonTorrent() error: %v", err)
+	}
+	if got == nil {
+		t.Fatal("FindSeasonTorrent() returned nil, want result")
+	}
+	if got.DetailsURL != "/details.php?id=1111111" {
+		t.Errorf("FindSeasonTorrent() returned %q, want largest S05 torrent", got.DetailsURL)
+	}
+	if got.Size != "45.3 ГБ" {
+		t.Errorf("FindSeasonTorrent() size = %q, want %q", got.Size, "45.3 ГБ")
+	}
+
+	// Should return the S04 torrent
+	got, err = c.FindSeasonTorrent("Звёздные врата", 4)
+	if err != nil {
+		t.Fatalf("FindSeasonTorrent() S04 error: %v", err)
+	}
+	if got == nil {
+		t.Fatal("FindSeasonTorrent() S04 returned nil, want result")
+	}
+	if got.DetailsURL != "/details.php?id=3333333" {
+		t.Errorf("FindSeasonTorrent() S04 returned %q, want S04 torrent", got.DetailsURL)
+	}
+}
+
+func TestFindSeasonTorrentNoMatch(t *testing.T) {
+	results := []struct{ id, title, size string }{
+		{"1111111", "Звёздные врата: ЗВ-1 (5 сезон: 1-22 серии из 22) / Stargate SG-1 / WEB-DL (1080p)", "45.3 ГБ"},
+	}
+	page := sampleSearchHTML(results)
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/takelogin.php" {
+			http.SetCookie(w, &http.Cookie{Name: "uid", Value: "sess"})
+			w.WriteHeader(http.StatusOK)
+			return
+		}
+		encoded, _ := charmap.Windows1251.NewEncoder().Bytes([]byte(page))
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write(encoded)
+	}))
+	defer server.Close()
+
+	c := NewClientWithBaseURL(server.URL, "u", "p")
+	_ = c.Login()
+
+	got, err := c.FindSeasonTorrent("Звёздные врата", 9)
+	if err != nil {
+		t.Fatalf("FindSeasonTorrent() error: %v", err)
+	}
+	if got != nil {
+		t.Errorf("FindSeasonTorrent() returned %+v, want nil for non-matching season", got)
+	}
+}

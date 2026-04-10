@@ -155,6 +155,10 @@ var (
 	episodeSingleRe = regexp.MustCompile(`(\d+)\s+сери[ийя]`)
 	updatedAtRe     = regexp.MustCompile(`Обновлялся\s+(.+?)</`)
 	searchRowRe     = regexp.MustCompile(`(?s)<tr\s+class="bg">\s*<td\s+class="nam"><a\s+href="([^"]+)">([^<]+)</a></td>\s*<td\s+class="s">([^<]+)</td>`)
+	seasonRuRe      = regexp.MustCompile(`(\d+)\s*сезон`)
+	seasonSRe       = regexp.MustCompile(`(?i)S(\d+)`)
+	seasonEnRe      = regexp.MustCompile(`(?i)Season\s*(\d+)`)
+	sizeValueRe     = regexp.MustCompile(`([\d.,]+)\s*(ГБ|МБ|GB|MB)`)
 )
 
 // parseEpisodeCount extracts the max episode number from a Kinozal torrent page title.
@@ -204,6 +208,63 @@ func (c *Client) Search(query string) ([]SearchResult, error) {
 		return nil, fmt.Errorf("kinozal search failed: %w", err)
 	}
 	return parseSearchResults(body), nil
+}
+
+// matchSeason checks if a torrent title contains a reference to the given season number.
+func matchSeason(title string, season int) bool {
+	for _, re := range []*regexp.Regexp{seasonRuRe, seasonSRe, seasonEnRe} {
+		for _, m := range re.FindAllStringSubmatch(title, -1) {
+			n, err := strconv.Atoi(m[1])
+			if err == nil && n == season {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// parseSizeBytes converts a human-readable size string (e.g. "45.3 ГБ") to bytes for comparison.
+func parseSizeBytes(size string) float64 {
+	m := sizeValueRe.FindStringSubmatch(size)
+	if m == nil {
+		return 0
+	}
+	valStr := strings.ReplaceAll(m[1], ",", ".")
+	val, err := strconv.ParseFloat(valStr, 64)
+	if err != nil {
+		return 0
+	}
+	unit := m[2]
+	switch unit {
+	case "ГБ", "GB":
+		return val * 1024 * 1024 * 1024
+	case "МБ", "MB":
+		return val * 1024 * 1024
+	}
+	return 0
+}
+
+// FindSeasonTorrent searches for torrents matching the query, filters by season number,
+// and returns the largest result. Returns nil if no matching torrent is found.
+func (c *Client) FindSeasonTorrent(query string, seasonNumber int) (*SearchResult, error) {
+	results, err := c.Search(query)
+	if err != nil {
+		return nil, err
+	}
+
+	var best *SearchResult
+	var bestSize float64
+	for i := range results {
+		if !matchSeason(results[i].Title, seasonNumber) {
+			continue
+		}
+		sz := parseSizeBytes(results[i].Size)
+		if best == nil || sz > bestSize {
+			best = &results[i]
+			bestSize = sz
+		}
+	}
+	return best, nil
 }
 
 // fetchPage downloads a Kinozal page and returns decoded UTF-8 body.
