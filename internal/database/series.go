@@ -27,20 +27,20 @@ type Series struct {
 
 // Season represents a season of a series
 type Season struct {
-	TVDBSeasonID  *int
-	Name          *string
-	PosterURL     *string
-	FolderPath    *string
-	VoiceActorID  *int
+	TVDBSeasonID     *int
+	Name             *string
+	PosterURL        *string
+	FolderPath       *string
+	VoiceActorID     *int
 	TrackerURL       *string
 	TorrentHash      *string
 	TrackerUpdatedAt *string
 	DiscoveredAt     *string
-	ID            int64
-	SeriesID      int64
-	SeasonNumber  int
-	AiredEpisodes int
-	Downloaded    bool
+	ID               int64
+	SeriesID         int64
+	SeasonNumber     int
+	AiredEpisodes    int
+	Downloaded       bool
 }
 
 // Character represents a character in a series

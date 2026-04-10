@@ -150,15 +150,16 @@ func (c *Checker) checkSeason(season *database.Season) CheckResult {
 	}
 
 	needsRedownload := false
-	if trackerEps > diskEps {
+	switch {
+	case trackerEps > diskEps:
 		slog.Info("Tracker check: new episodes available",
 			"season_id", season.ID, "tracker", trackerEps, "disk", diskEps)
 		needsRedownload = true
-	} else if trackerUpdated {
+	case trackerUpdated:
 		slog.Info("Tracker check: torrent updated on tracker",
 			"season_id", season.ID, "tracker", trackerEps, "disk", diskEps, "updated", lastUpdated)
 		needsRedownload = true
-	} else {
+	default:
 		slog.Info("Tracker check: no new episodes",
 			"season_id", season.ID, "tracker", trackerEps, "disk", diskEps)
 	}
