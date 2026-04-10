@@ -75,7 +75,7 @@ This helps the user discover what to download next without manually searching th
 - [x] run linter — all issues must be fixed
 
 ### Task 7: [Final] Update documentation
-- [ ] update README.md with Seasons tab description
+- [x] update README.md with Seasons tab description
 
 ## Technical Details
 

@@ -12,6 +12,7 @@ Local web service for tracking TV series with automatic media folder scanning.
 - Automatic database backups
 - qBittorrent integration (tracker links on season pages)
 - Kinozal tracker integration — auto-redownload updated torrents with new episodes
+- Seasons tab — discover next season to download via Kinozal search
 - Plex-inspired dark theme web interface
 
 ## Quick Start
@@ -156,6 +157,10 @@ All settings are configured via environment variables (`.env` file):
 - `GET /api/updates` - get new season updates (with aired episode counts per season)
 - `POST /api/updates/check` - check for TVDB episode updates
 
+### Next Seasons
+
+- `GET /api/next-seasons` - get next season to download for each series (with Kinozal torrent link)
+
 ## Technologies
 
 - **Backend**: Go 1.25
@@ -222,6 +227,7 @@ All core features implemented:
 - [x] Plex-inspired dark theme UI
 - [x] qBittorrent integration (tracker links)
 - [x] Kinozal tracker auto-redownload
+- [x] Seasons tab (next season discovery via Kinozal)
 - [x] Linting and tests
 
 ## License
