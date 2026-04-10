@@ -58,12 +58,12 @@ This helps the user discover what to download next without manually searching th
 - [x] run tests — must pass before next task
 
 ### Task 5: Frontend — Seasons tab
-- [ ] add "Seasons" nav item in index.html
-- [ ] add seasons page container in index.html
-- [ ] implement `loadNextSeasons()` in app.js — fetch /api/next-seasons, render cards
-- [ ] each card shows: series poster, title, "Season N", torrent size, link to Kinozal
-- [ ] style the cards in style.css (consistent with updates tab)
-- [ ] add badge with count (like updates tab)
+- [x] add "Seasons" nav item in index.html
+- [x] add seasons page container in index.html
+- [x] implement `loadNextSeasons()` in app.js — fetch /api/next-seasons, render cards
+- [x] each card shows: series poster, title, "Season N", torrent size, link to Kinozal
+- [x] style the cards in style.css (consistent with updates tab)
+- [x] add badge with count (like updates tab)
 
 ### Task 6: Verify acceptance criteria
 - [ ] verify next season shows correctly for series with downloaded seasons

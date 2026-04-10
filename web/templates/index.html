@@ -44,6 +44,15 @@
                     <span>Updates</span>
                     <span class="nav-badge" id="updates-badge" style="display: none;">0</span>
                 </a>
+                <a href="#/seasons" class="nav-link" data-page="seasons">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/>
+                        <polyline points="3.27 6.96 12 12.01 20.73 6.96"/>
+                        <line x1="12" y1="22.08" x2="12" y2="12"/>
+                    </svg>
+                    <span>Seasons</span>
+                    <span class="nav-badge" id="seasons-badge" style="display: none;">0</span>
+                </a>
             </nav>
 
             <div class="header-actions">
@@ -323,6 +332,31 @@
                 </div>
                 <h3>All caught up</h3>
                 <p>No new seasons available</p>
+            </div>
+        </section>
+
+        <!-- Next Seasons -->
+        <section id="page-seasons" class="page">
+            <div class="page-header">
+                <h2>Next Seasons to Download</h2>
+            </div>
+
+            <div class="seasons-download-list" id="seasons-download-list"></div>
+
+            <div class="empty-state" id="seasons-empty" style="display: none;">
+                <div class="empty-icon">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+                        <path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/>
+                        <polyline points="3.27 6.96 12 12.01 20.73 6.96"/>
+                        <line x1="12" y1="22.08" x2="12" y2="12"/>
+                    </svg>
+                </div>
+                <h3>No seasons to download</h3>
+                <p>All series are up to date</p>
+            </div>
+
+            <div class="loading-state" id="seasons-loading" style="display: none;">
+                <div class="loader"></div>
             </div>
         </section>
     </main>

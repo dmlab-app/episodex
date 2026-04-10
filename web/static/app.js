@@ -1,6 +1,6 @@
 /**
  * EpisodeX - TV Series Audio Track Manager
- * Hash-based SPA with 4 pages: Series List, Series Detail, Season Detail, Updates
+ * Hash-based SPA with 5 pages: Series List, Series Detail, Season Detail, Updates, Next Seasons
  */
 
 const state = {
@@ -104,6 +104,8 @@ function router() {
         showSeasonDetailPage(seriesId, seasonNum);
     } else if (hash === '/updates') {
         showUpdatesPage();
+    } else if (hash === '/seasons') {
+        showSeasonsPage();
     } else if (hash === '/add-series') {
         showAddSeriesPage();
     }
@@ -919,6 +921,91 @@ async function checkUpdates() {
         showToast('Update check failed', 'error');
     } finally {
         btn.disabled = false;
+    }
+}
+
+// ==============================================================================
+// Next Seasons Page
+// ==============================================================================
+async function showSeasonsPage() {
+    state.currentView = 'seasons';
+    hideAllPages();
+    document.getElementById('page-seasons').classList.add('active');
+    updateNav('seasons');
+    await loadNextSeasons();
+}
+
+async function loadNextSeasons() {
+    const list = document.getElementById('seasons-download-list');
+    const empty = document.getElementById('seasons-empty');
+    const loading = document.getElementById('seasons-loading');
+
+    list.innerHTML = '';
+    empty.style.display = 'none';
+    loading.style.display = 'flex';
+
+    try {
+        const data = await api.get('/api/next-seasons');
+
+        loading.style.display = 'none';
+
+        if (data.length === 0) {
+            empty.style.display = 'flex';
+            updateSeasonsBadge(0);
+            return;
+        }
+
+        updateSeasonsBadge(data.length);
+
+        list.innerHTML = data.map(item => {
+            const seasonLabel = `Season ${item.next_season}`;
+            const sizeLabel = item.torrent_size ? esc(item.torrent_size) : '';
+            const torrentTitle = item.torrent_title ? esc(item.torrent_title) : '';
+            const hasLink = !!item.tracker_url;
+
+            return `
+            <div class="season-download-card">
+                <div class="season-download-poster" onclick="navigate('/series/${item.id}')">
+                    <img src="${esc(posterSrc(item.poster_url))}" alt="${esc(item.title)}">
+                </div>
+                <div class="season-download-info">
+                    <h4 class="season-download-title" onclick="navigate('/series/${item.id}')">${esc(item.title)}</h4>
+                    <p class="season-download-season">${esc(seasonLabel)}</p>
+                    ${torrentTitle ? `<p class="season-download-torrent">${torrentTitle}</p>` : ''}
+                    ${sizeLabel ? `<p class="season-download-size">${sizeLabel}</p>` : ''}
+                </div>
+                ${hasLink ? `
+                <a href="${esc(item.tracker_url)}" class="season-download-link" target="_blank" rel="noopener noreferrer" title="Open on Kinozal">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/>
+                        <polyline points="15 3 21 3 21 9"/>
+                        <line x1="10" y1="14" x2="21" y2="3"/>
+                    </svg>
+                </a>
+                ` : `
+                <div class="season-download-link season-download-link-disabled" title="No torrent found">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <circle cx="11" cy="11" r="8"/>
+                        <path d="M21 21l-4.35-4.35"/>
+                    </svg>
+                </div>
+                `}
+            </div>
+            `;
+        }).join('');
+    } catch (e) {
+        loading.style.display = 'none';
+        showToast(`Failed to load next seasons: ${e.message || e}`, 'error');
+    }
+}
+
+function updateSeasonsBadge(count) {
+    const badge = document.getElementById('seasons-badge');
+    if (count > 0) {
+        badge.textContent = count;
+        badge.style.display = 'flex';
+    } else {
+        badge.style.display = 'none';
     }
 }
 

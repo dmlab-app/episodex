@@ -936,6 +936,113 @@ h4 { font-size: 1rem; }
 }
 
 /* ============================================
+   Next Seasons Download List
+   ============================================ */
+.seasons-download-list {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-md);
+}
+
+.season-download-card {
+    display: flex;
+    align-items: center;
+    gap: var(--space-lg);
+    padding: var(--space-md);
+    background: var(--bg-surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-lg);
+    transition: all var(--transition-fast);
+}
+
+.season-download-card:hover {
+    background: var(--bg-hover);
+    border-color: var(--border-accent);
+}
+
+.season-download-poster {
+    width: 60px;
+    height: 90px;
+    border-radius: var(--radius-md);
+    overflow: hidden;
+    flex-shrink: 0;
+    cursor: pointer;
+}
+
+.season-download-poster img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+}
+
+.season-download-info {
+    flex: 1;
+    min-width: 0;
+}
+
+.season-download-title {
+    font-weight: 600;
+    margin-bottom: var(--space-xs);
+    cursor: pointer;
+}
+
+.season-download-title:hover {
+    color: var(--accent);
+}
+
+.season-download-season {
+    color: var(--accent);
+    font-weight: 600;
+    font-size: 0.875rem;
+    margin-bottom: var(--space-xs);
+}
+
+.season-download-torrent {
+    color: var(--text-secondary);
+    font-size: 0.8rem;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.season-download-size {
+    color: var(--text-muted);
+    font-size: 0.8rem;
+}
+
+.season-download-link {
+    flex-shrink: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 40px;
+    height: 40px;
+    border-radius: var(--radius-md);
+    color: var(--accent);
+    background: rgba(99, 102, 241, 0.1);
+    transition: all var(--transition-fast);
+}
+
+.season-download-link:hover {
+    background: rgba(99, 102, 241, 0.2);
+}
+
+.season-download-link svg {
+    width: 20px;
+    height: 20px;
+}
+
+.season-download-link-disabled {
+    color: var(--text-muted);
+    background: transparent;
+    cursor: default;
+}
+
+.season-download-link-disabled:hover {
+    background: transparent;
+}
+
+/* ============================================
    Audio Page / Season Detail
    ============================================ */
 .audio-scanner {
