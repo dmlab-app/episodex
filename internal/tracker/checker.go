@@ -94,16 +94,28 @@ func (c *Checker) checkSeason(season *database.Season) CheckResult {
 		return result
 	}
 
-	trackerEps, err := client.GetEpisodeCount(trackerURL)
-	if err != nil {
-		result.Error = fmt.Errorf("get episode count: %w", err)
-		slog.Error("Tracker check: failed to get episode count", "season_id", season.ID, "url", trackerURL, "error", err)
-		return result
+	// Use PageInfoProvider if available (single request for episodes + update time)
+	var trackerEps int
+	var lastUpdated string
+	if pip, ok := client.(PageInfoProvider); ok {
+		trackerEps, lastUpdated, err = pip.GetPageInfo(trackerURL)
+		if err != nil {
+			result.Error = fmt.Errorf("get page info: %w", err)
+			slog.Error("Tracker check: failed to get page info", "season_id", season.ID, "url", trackerURL, "error", err)
+			return result
+		}
+	} else {
+		trackerEps, err = client.GetEpisodeCount(trackerURL)
+		if err != nil {
+			result.Error = fmt.Errorf("get episode count: %w", err)
+			slog.Error("Tracker check: failed to get episode count", "season_id", season.ID, "url", trackerURL, "error", err)
+			return result
+		}
 	}
 	result.TrackerEps = trackerEps
 
 	if trackerEps == 0 {
-		slog.Debug("Tracker check: no episode info on tracker", "season_id", season.ID)
+		slog.Info("Tracker check: no episode info on tracker", "season_id", season.ID, "url", trackerURL)
 		return result
 	}
 
@@ -116,19 +128,44 @@ func (c *Checker) checkSeason(season *database.Season) CheckResult {
 	result.DiskEps = diskEps
 
 	if diskEps == 0 {
-		slog.Debug("Tracker check: no episodes on disk, skipping (not a mid-season update)",
-			"season_id", season.ID)
+		slog.Info("Tracker check: no episodes on disk, skipping (not a mid-season update)",
+			"season_id", season.ID, "tracker_eps", trackerEps)
 		return result
 	}
 
-	if trackerEps <= diskEps {
-		slog.Debug("Tracker check: no new episodes",
+	// Check if torrent was updated (new audio track, re-encode, etc.)
+	trackerUpdated := false
+	if lastUpdated != "" {
+		storedUpdated := ""
+		if season.TrackerUpdatedAt != nil {
+			storedUpdated = *season.TrackerUpdatedAt
+		}
+		if storedUpdated != lastUpdated {
+			trackerUpdated = true
+			// Save new update timestamp
+			if err := c.db.UpdateTrackerUpdatedAt(season.ID, lastUpdated); err != nil {
+				slog.Warn("Tracker check: failed to save tracker_updated_at", "error", err)
+			}
+		}
+	}
+
+	needsRedownload := false
+	if trackerEps > diskEps {
+		slog.Info("Tracker check: new episodes available",
 			"season_id", season.ID, "tracker", trackerEps, "disk", diskEps)
-		return result
+		needsRedownload = true
+	} else if trackerUpdated {
+		slog.Info("Tracker check: torrent updated on tracker",
+			"season_id", season.ID, "tracker", trackerEps, "disk", diskEps, "updated", lastUpdated)
+		needsRedownload = true
+	} else {
+		slog.Info("Tracker check: no new episodes",
+			"season_id", season.ID, "tracker", trackerEps, "disk", diskEps)
 	}
 
-	slog.Info("Tracker check: new episodes available",
-		"season_id", season.ID, "tracker", trackerEps, "disk", diskEps)
+	if !needsRedownload {
+		return result
+	}
 
 	redownloaded, err := c.redownload(season, client)
 	if err != nil {

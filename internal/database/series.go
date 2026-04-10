@@ -32,9 +32,10 @@ type Season struct {
 	PosterURL     *string
 	FolderPath    *string
 	VoiceActorID  *int
-	TrackerURL    *string
-	TorrentHash   *string
-	DiscoveredAt  *string
+	TrackerURL       *string
+	TorrentHash      *string
+	TrackerUpdatedAt *string
+	DiscoveredAt     *string
 	ID            int64
 	SeriesID      int64
 	SeasonNumber  int
@@ -171,12 +172,12 @@ func (db *DB) GetSeasonBySeriesAndNumber(seriesID int64, seasonNumber int) (*Sea
 	err := db.QueryRow(`
 		SELECT id, series_id, tvdb_season_id, season_number, name,
 			poster_url, folder_path,
-			voice_actor_id, downloaded, aired_episodes, tracker_url, torrent_hash, discovered_at
+			voice_actor_id, downloaded, aired_episodes, tracker_url, torrent_hash, tracker_updated_at, discovered_at
 		FROM seasons WHERE series_id = ? AND season_number = ?
 	`, seriesID, seasonNumber).Scan(
 		&season.ID, &season.SeriesID, &season.TVDBSeasonID, &season.SeasonNumber,
 		&season.Name, &season.PosterURL, &season.FolderPath,
-		&season.VoiceActorID, &season.Downloaded, &season.AiredEpisodes, &season.TrackerURL, &season.TorrentHash, &season.DiscoveredAt,
+		&season.VoiceActorID, &season.Downloaded, &season.AiredEpisodes, &season.TrackerURL, &season.TorrentHash, &season.TrackerUpdatedAt, &season.DiscoveredAt,
 	)
 	if err == sql.ErrNoRows {
 		return nil, nil
@@ -192,7 +193,7 @@ func (db *DB) GetSeasonsWithTrackerURL() ([]Season, error) {
 	rows, err := db.Query(`
 		SELECT id, series_id, tvdb_season_id, season_number, name,
 			poster_url, folder_path,
-			voice_actor_id, downloaded, aired_episodes, tracker_url, torrent_hash, discovered_at
+			voice_actor_id, downloaded, aired_episodes, tracker_url, torrent_hash, tracker_updated_at, discovered_at
 		FROM seasons
 		WHERE tracker_url IS NOT NULL AND tracker_url != ''
 		ORDER BY series_id, season_number
@@ -208,7 +209,7 @@ func (db *DB) GetSeasonsWithTrackerURL() ([]Season, error) {
 		if err := rows.Scan(
 			&s.ID, &s.SeriesID, &s.TVDBSeasonID, &s.SeasonNumber,
 			&s.Name, &s.PosterURL, &s.FolderPath,
-			&s.VoiceActorID, &s.Downloaded, &s.AiredEpisodes, &s.TrackerURL, &s.TorrentHash, &s.DiscoveredAt,
+			&s.VoiceActorID, &s.Downloaded, &s.AiredEpisodes, &s.TrackerURL, &s.TorrentHash, &s.TrackerUpdatedAt, &s.DiscoveredAt,
 		); err != nil {
 			return nil, fmt.Errorf("failed to scan season with tracker URL: %w", err)
 		}
@@ -225,6 +226,15 @@ func (db *DB) UpdateTorrentHash(seasonID int64, hash string) error {
 	_, err := db.Exec(`UPDATE seasons SET torrent_hash = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?`, hash, seasonID)
 	if err != nil {
 		return fmt.Errorf("failed to update torrent hash: %w", err)
+	}
+	return nil
+}
+
+// UpdateTrackerUpdatedAt stores the last update timestamp from the tracker page.
+func (db *DB) UpdateTrackerUpdatedAt(seasonID int64, updatedAt string) error {
+	_, err := db.Exec(`UPDATE seasons SET tracker_updated_at = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?`, updatedAt, seasonID)
+	if err != nil {
+		return fmt.Errorf("failed to update tracker_updated_at: %w", err)
 	}
 	return nil
 }

@@ -56,7 +56,9 @@
       "Bash(ffmpeg:*)",
       "Bash(grep:*)",
       "Bash(docker port:*)",
-      "Bash(docker volume:*)"
+      "Bash(docker volume:*)",
+      "WebFetch(domain:kinozal.tv)",
+      "Bash(git log:*)"
     ],
     "deny": [],
     "ask": []

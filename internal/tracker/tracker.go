@@ -14,6 +14,14 @@ type Client interface {
 	DownloadTorrent(trackerURL string) ([]byte, error)
 }
 
+// PageInfoProvider is an optional interface that tracker clients can implement
+// to return episode count and last-updated timestamp in a single request.
+// Used to detect torrent updates (e.g. new audio tracks) even when episode count hasn't changed.
+type PageInfoProvider interface {
+	// GetPageInfo returns episode count and last update timestamp in one request.
+	GetPageInfo(trackerURL string) (episodeCount int, lastUpdated string, err error)
+}
+
 // Registry holds multiple Client implementations and routes URLs to the right one.
 type Registry struct {
 	clients []Client

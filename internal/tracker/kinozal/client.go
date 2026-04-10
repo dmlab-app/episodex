@@ -146,6 +146,7 @@ var (
 	titleRe         = regexp.MustCompile(`(?i)<title>([^<]+)</title>`)
 	episodeRangeRe  = regexp.MustCompile(`(\d+)-(\d+)\s+сери[ийя]`)
 	episodeSingleRe = regexp.MustCompile(`(\d+)\s+сери[ийя]`)
+	updatedAtRe     = regexp.MustCompile(`Обновлялся\s+(.+?)</`)
 )
 
 // parseEpisodeCount extracts the max episode number from a Kinozal torrent page title.
@@ -173,23 +174,28 @@ func parseEpisodeCount(title string) int {
 	return 0
 }
 
-// GetEpisodeCount fetches the torrent page and returns the number of episodes available.
-func (c *Client) GetEpisodeCount(trackerURL string) (int, error) {
+// fetchPage downloads a Kinozal page and returns decoded UTF-8 body.
+func (c *Client) fetchPage(trackerURL string) ([]byte, error) {
 	resp, err := c.doRequest(trackerURL)
 	if err != nil {
-		return 0, fmt.Errorf("kinozal fetch page failed: %w", err)
+		return nil, fmt.Errorf("kinozal fetch page failed: %w", err)
 	}
 	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
-		return 0, fmt.Errorf("kinozal fetch page: status %d", resp.StatusCode)
+		return nil, fmt.Errorf("kinozal fetch page: status %d", resp.StatusCode)
 	}
 
 	// Kinozal pages are served in Windows-1251 encoding; decode to UTF-8
 	reader := charmap.Windows1251.NewDecoder().Reader(resp.Body)
-	body, err := io.ReadAll(reader)
+	return io.ReadAll(reader)
+}
+
+// GetEpisodeCount fetches the torrent page and returns the number of episodes available.
+func (c *Client) GetEpisodeCount(trackerURL string) (int, error) {
+	body, err := c.fetchPage(trackerURL)
 	if err != nil {
-		return 0, fmt.Errorf("kinozal read body failed: %w", err)
+		return 0, err
 	}
 
 	m := titleRe.FindSubmatch(body)
@@ -198,6 +204,31 @@ func (c *Client) GetEpisodeCount(trackerURL string) (int, error) {
 	}
 
 	return parseEpisodeCount(string(m[1])), nil
+}
+
+// GetPageInfo fetches the torrent page and returns episode count + last updated string in one request.
+func (c *Client) GetPageInfo(trackerURL string) (episodeCount int, lastUpdated string, err error) {
+	body, err := c.fetchPage(trackerURL)
+	if err != nil {
+		return 0, "", err
+	}
+
+	if m := titleRe.FindSubmatch(body); m != nil {
+		episodeCount = parseEpisodeCount(string(m[1]))
+	}
+
+	if m := updatedAtRe.FindSubmatch(body); m != nil {
+		lastUpdated = strings.TrimSpace(string(m[1]))
+	}
+
+	return episodeCount, lastUpdated, nil
+}
+
+// GetLastUpdated fetches the torrent page and returns the update timestamp string.
+// Implements tracker.UpdateChecker interface.
+func (c *Client) GetLastUpdated(trackerURL string) (string, error) {
+	_, lastUpdated, err := c.GetPageInfo(trackerURL)
+	return lastUpdated, err
 }
 
 // parseIDFromURL extracts the torrent ID from a Kinozal URL like /details.php?id=2107649.

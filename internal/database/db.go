@@ -92,6 +92,7 @@ func (db *DB) initTables() error {
 		aired_episodes INTEGER DEFAULT 0,
 		tracker_url TEXT,
 		torrent_hash TEXT,
+		tracker_updated_at TEXT,
 		discovered_at TIMESTAMP,
 		created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
 		updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
