@@ -166,6 +166,17 @@ func (db *DB) initTables() error {
 		created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 	);
 
+	-- Кеш найденных торрентов для следующего сезона
+	CREATE TABLE IF NOT EXISTS next_season_cache (
+		series_id INTEGER NOT NULL,
+		season_number INTEGER NOT NULL,
+		tracker_url TEXT,
+		title TEXT,
+		size TEXT,
+		cached_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+		UNIQUE(series_id, season_number)
+	);
+
 	-- Индексы для производительности
 	CREATE INDEX IF NOT EXISTS idx_series_tvdb_id ON series(tvdb_id);
 	CREATE INDEX IF NOT EXISTS idx_series_status ON series(status);

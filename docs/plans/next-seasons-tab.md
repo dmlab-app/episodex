@@ -38,10 +38,10 @@ This helps the user discover what to download next without manually searching th
 - [x] run tests — must pass before next task
 
 ### Task 3: Database — next_season_cache table
-- [ ] add `next_season_cache` table: series_id, season_number, tracker_url, title, size, cached_at
-- [ ] add DB methods: GetCachedNextSeason, SaveCachedNextSeason, ClearExpiredCache
-- [ ] write tests for cache CRUD
-- [ ] run tests — must pass before next task
+- [x] add `next_season_cache` table: series_id, season_number, tracker_url, title, size, cached_at
+- [x] add DB methods: GetCachedNextSeason, SaveCachedNextSeason, ClearExpiredCache
+- [x] write tests for cache CRUD
+- [x] run tests — must pass before next task
 
 ### Task 4: API — next seasons endpoint
 - [ ] write tests for `GET /api/next-seasons` — returns list of series with next season info
