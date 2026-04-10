@@ -24,11 +24,11 @@ This helps the user discover what to download next without manually searching th
 ## Implementation Steps
 
 ### Task 1: Kinozal client — search torrents
-- [ ] write tests for `Search(query string)` — returns list of results with Title, Size, DetailsURL
-- [ ] write tests for parsing search results HTML (title, size in GB, link)
-- [ ] write tests for empty results
-- [ ] implement `Search()` — GET `/browse.php?s=QUERY`, parse results table
-- [ ] run tests — must pass before next task
+- [x] write tests for `Search(query string)` — returns list of results with Title, Size, DetailsURL
+- [x] write tests for parsing search results HTML (title, size in GB, link)
+- [x] write tests for empty results
+- [x] implement `Search()` — GET `/browse.php?s=QUERY`, parse results table
+- [x] run tests — must pass before next task
 
 ### Task 2: Kinozal client — find best torrent for season
 - [ ] write tests for `FindSeasonTorrent(query string, seasonNumber int)` — filters results by season, returns largest

@@ -459,3 +459,163 @@ func TestDoRequestSendsCookie(t *testing.T) {
 		t.Errorf("expected cookie 'my-session', got %q", receivedCookie)
 	}
 }
+
+// sampleSearchHTML returns a minimal Kinozal browse page with search results.
+func sampleSearchHTML(results []struct{ id, title, size string }) string {
+	rows := ""
+	for _, r := range results {
+		rows += fmt.Sprintf(`<tr class="bg">
+<td class="nam"><a href="/details.php?id=%s">%s</a></td>
+<td class="s">%s</td>
+</tr>`, r.id, r.title, r.size)
+	}
+	return fmt.Sprintf(`<html><body><table class="t_peer">%s</table></body></html>`, rows)
+}
+
+func TestSearch(t *testing.T) {
+	results := []struct{ id, title, size string }{
+		{"1111111", "Звёздные врата: ЗВ-1 (5 сезон: 1-22 серии из 22) / Stargate SG-1 / WEB-DL (1080p)", "45.3 ГБ"},
+		{"2222222", "Звёздные врата: ЗВ-1 (4 сезон: 1-22 серии из 22) / Stargate SG-1 / DVDRip", "12.1 ГБ"},
+	}
+	page := sampleSearchHTML(results)
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/takelogin.php" {
+			http.SetCookie(w, &http.Cookie{Name: "uid", Value: "sess"})
+			w.WriteHeader(http.StatusOK)
+			return
+		}
+		if r.URL.Path == "/browse.php" {
+			q := r.URL.Query().Get("s")
+			if q == "" {
+				t.Error("expected search query parameter 's'")
+			}
+			encoded, _ := charmap.Windows1251.NewEncoder().Bytes([]byte(page))
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write(encoded)
+			return
+		}
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	defer server.Close()
+
+	c := NewClientWithBaseURL(server.URL, "u", "p")
+	_ = c.Login()
+
+	got, err := c.Search("Звёздные врата")
+	if err != nil {
+		t.Fatalf("Search() error: %v", err)
+	}
+	if len(got) != 2 {
+		t.Fatalf("Search() returned %d results, want 2", len(got))
+	}
+
+	if got[0].Title != results[0].title {
+		t.Errorf("result[0].Title = %q, want %q", got[0].Title, results[0].title)
+	}
+	if got[0].Size != "45.3 ГБ" {
+		t.Errorf("result[0].Size = %q, want %q", got[0].Size, "45.3 ГБ")
+	}
+	if got[0].DetailsURL != "/details.php?id=1111111" {
+		t.Errorf("result[0].DetailsURL = %q, want %q", got[0].DetailsURL, "/details.php?id=1111111")
+	}
+
+	if got[1].Title != results[1].title {
+		t.Errorf("result[1].Title = %q, want %q", got[1].Title, results[1].title)
+	}
+	if got[1].Size != "12.1 ГБ" {
+		t.Errorf("result[1].Size = %q, want %q", got[1].Size, "12.1 ГБ")
+	}
+}
+
+func TestSearchParseHTML(t *testing.T) {
+	tests := []struct {
+		name    string
+		html    string
+		want    int
+		wantErr bool
+	}{
+		{
+			name: "single result",
+			html: `<html><body><table class="t_peer">
+<tr class="bg">
+<td class="nam"><a href="/details.php?id=999">Some Series (1 сезон) / BDRip</a></td>
+<td class="s">8.5 ГБ</td>
+</tr>
+</table></body></html>`,
+			want: 1,
+		},
+		{
+			name: "multiple results",
+			html: `<html><body><table class="t_peer">
+<tr class="bg">
+<td class="nam"><a href="/details.php?id=100">Series A</a></td>
+<td class="s">10 ГБ</td>
+</tr>
+<tr class="bg">
+<td class="nam"><a href="/details.php?id=200">Series B</a></td>
+<td class="s">20 ГБ</td>
+</tr>
+<tr class="bg">
+<td class="nam"><a href="/details.php?id=300">Series C</a></td>
+<td class="s">30 ГБ</td>
+</tr>
+</table></body></html>`,
+			want: 3,
+		},
+		{
+			name: "size in MB",
+			html: `<html><body><table class="t_peer">
+<tr class="bg">
+<td class="nam"><a href="/details.php?id=400">Small torrent</a></td>
+<td class="s">500 МБ</td>
+</tr>
+</table></body></html>`,
+			want: 1,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := parseSearchResults([]byte(tt.html))
+			if len(got) != tt.want {
+				t.Errorf("parseSearchResults() returned %d results, want %d", len(got), tt.want)
+			}
+		})
+	}
+}
+
+func TestSearchEmpty(t *testing.T) {
+	emptyPages := []string{
+		`<html><body><table class="t_peer"></table></body></html>`,
+		`<html><body>Ничего не найдено</body></html>`,
+		`<html><body></body></html>`,
+	}
+
+	for i, page := range emptyPages {
+		t.Run(fmt.Sprintf("empty_%d", i), func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.URL.Path == "/takelogin.php" {
+					http.SetCookie(w, &http.Cookie{Name: "uid", Value: "sess"})
+					w.WriteHeader(http.StatusOK)
+					return
+				}
+				encoded, _ := charmap.Windows1251.NewEncoder().Bytes([]byte(page))
+				w.WriteHeader(http.StatusOK)
+				_, _ = w.Write(encoded)
+			}))
+			defer server.Close()
+
+			c := NewClientWithBaseURL(server.URL, "u", "p")
+			_ = c.Login()
+
+			got, err := c.Search("nonexistent query")
+			if err != nil {
+				t.Fatalf("Search() error: %v", err)
+			}
+			if len(got) != 0 {
+				t.Errorf("Search() returned %d results, want 0", len(got))
+			}
+		})
+	}
+}

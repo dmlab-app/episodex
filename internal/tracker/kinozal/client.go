@@ -142,11 +142,19 @@ func (c *Client) rawRequest(reqURL string) (*http.Response, error) {
 	return c.client.Do(req)
 }
 
+// SearchResult represents a single search result from Kinozal browse page.
+type SearchResult struct {
+	Title      string
+	Size       string
+	DetailsURL string
+}
+
 var (
 	titleRe         = regexp.MustCompile(`(?i)<title>([^<]+)</title>`)
 	episodeRangeRe  = regexp.MustCompile(`(\d+)-(\d+)\s+сери[ийя]`)
 	episodeSingleRe = regexp.MustCompile(`(\d+)\s+сери[ийя]`)
 	updatedAtRe     = regexp.MustCompile(`Обновлялся\s+(.+?)</`)
+	searchRowRe     = regexp.MustCompile(`(?s)<tr\s+class="bg">\s*<td\s+class="nam"><a\s+href="([^"]+)">([^<]+)</a></td>\s*<td\s+class="s">([^<]+)</td>`)
 )
 
 // parseEpisodeCount extracts the max episode number from a Kinozal torrent page title.
@@ -172,6 +180,30 @@ func parseEpisodeCount(title string) int {
 		return n
 	}
 	return 0
+}
+
+// parseSearchResults extracts search results from Kinozal browse page HTML.
+func parseSearchResults(body []byte) []SearchResult {
+	matches := searchRowRe.FindAllSubmatch(body, -1)
+	results := make([]SearchResult, 0, len(matches))
+	for _, m := range matches {
+		results = append(results, SearchResult{
+			DetailsURL: string(m[1]),
+			Title:      string(m[2]),
+			Size:       strings.TrimSpace(string(m[3])),
+		})
+	}
+	return results
+}
+
+// Search searches Kinozal for torrents matching the query and returns parsed results.
+func (c *Client) Search(query string) ([]SearchResult, error) {
+	searchURL := c.baseURL + "/browse.php?s=" + url.QueryEscape(query) + "&g=0&c=0&v=0&d=0&w=0&t=0&f=0"
+	body, err := c.fetchPage(searchURL)
+	if err != nil {
+		return nil, fmt.Errorf("kinozal search failed: %w", err)
+	}
+	return parseSearchResults(body), nil
 }
 
 // fetchPage downloads a Kinozal page and returns decoded UTF-8 body.
