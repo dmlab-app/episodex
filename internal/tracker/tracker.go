@@ -22,6 +22,18 @@ type PageInfoProvider interface {
 	GetPageInfo(trackerURL string) (episodeCount int, lastUpdated string, err error)
 }
 
+// SeasonSearchResult represents a torrent search result for a specific season.
+type SeasonSearchResult struct {
+	Title      string
+	Size       string
+	DetailsURL string
+}
+
+// SeasonSearcher can find the best torrent for a given season of a series.
+type SeasonSearcher interface {
+	FindSeasonTorrent(query string, seasonNumber int) (*SeasonSearchResult, error)
+}
+
 // Registry holds multiple Client implementations and routes URLs to the right one.
 type Registry struct {
 	clients []Client

@@ -24,25 +24,27 @@ import (
 	"github.com/episodex/episodex/internal/database"
 	"github.com/episodex/episodex/internal/qbittorrent"
 	"github.com/episodex/episodex/internal/scanner"
+	"github.com/episodex/episodex/internal/tracker"
 	"github.com/episodex/episodex/internal/tvdb"
 )
 
 // Server represents the API server
 type Server struct {
-	db          *database.DB
-	scanner     *scanner.Scanner
-	tvdbClient  *tvdb.Client
-	qbitClient  *qbittorrent.Client
-	audioCutter *audio.AudioCutter
-	router      *chi.Mux
-	mediaPath   string
+	db             *database.DB
+	scanner        *scanner.Scanner
+	tvdbClient     *tvdb.Client
+	qbitClient     *qbittorrent.Client
+	audioCutter    *audio.AudioCutter
+	seasonSearcher tracker.SeasonSearcher
+	router         *chi.Mux
+	mediaPath      string
 }
 
 // NewServer creates a new API server.
 // mediaPath is the root directory of the media library; filesystem deletions
 // are restricted to paths under this directory. Pass "" to disable the boundary
 // check (e.g. in tests that don't exercise filesystem operations).
-func NewServer(db *database.DB, sc *scanner.Scanner, tvdbClient *tvdb.Client, qbitClient *qbittorrent.Client, mediaPath string) *Server {
+func NewServer(db *database.DB, sc *scanner.Scanner, tvdbClient *tvdb.Client, qbitClient *qbittorrent.Client, mediaPath string, opts ...ServerOption) *Server {
 	s := &Server{
 		db:          db,
 		scanner:     sc,
@@ -52,11 +54,24 @@ func NewServer(db *database.DB, sc *scanner.Scanner, tvdbClient *tvdb.Client, qb
 		router:      chi.NewRouter(),
 		mediaPath:   mediaPath,
 	}
+	for _, opt := range opts {
+		opt(s)
+	}
 
 	s.setupMiddleware()
 	s.setupRoutes()
 
 	return s
+}
+
+// ServerOption configures optional Server dependencies.
+type ServerOption func(*Server)
+
+// WithSeasonSearcher sets the tracker client used to search for season torrents.
+func WithSeasonSearcher(ss tracker.SeasonSearcher) ServerOption {
+	return func(s *Server) {
+		s.seasonSearcher = ss
+	}
 }
 
 // setupMiddleware configures middleware chain
@@ -132,6 +147,9 @@ func (s *Server) setupRoutes() {
 		// Updates endpoints
 		r.Get("/updates", s.handleGetUpdates)          // GET /api/updates
 		r.Post("/updates/check", s.handleCheckUpdates) // POST /api/updates/check
+
+		// Next seasons endpoint
+		r.Get("/next-seasons", s.handleGetNextSeasons) // GET /api/next-seasons
 
 		// Search endpoint
 		r.Get("/search", s.handleSearch) // GET /api/search
@@ -1330,6 +1348,142 @@ func (s *Server) handleCheckUpdates(w http.ResponseWriter, _ *http.Request) {
 		"success": true,
 		"message": "Check started",
 	})
+}
+
+// Next seasons handler
+func (s *Server) handleGetNextSeasons(w http.ResponseWriter, _ *http.Request) {
+	// Clear expired cache entries (older than 7 days)
+	if _, err := s.db.ClearExpiredCache(7 * 24 * time.Hour); err != nil {
+		slog.Warn("Failed to clear expired next-season cache", "error", err)
+	}
+
+	// Get all non-ended series with their max downloaded season.
+	// Include series with no downloaded seasons (they get S01).
+	query := `
+		SELECT s.id, s.tvdb_id, s.title, s.original_title, s.poster_url, s.status,
+			s.aired_seasons,
+			(SELECT MAX(sn.season_number) FROM seasons sn WHERE sn.series_id = s.id AND sn.downloaded = 1 AND sn.season_number > 0) as max_downloaded
+		FROM series s
+		WHERE s.status != 'Ended'
+		ORDER BY s.title
+	`
+
+	rows, err := s.db.Query(query)
+	if err != nil {
+		s.respondError(w, http.StatusInternalServerError, "failed to fetch series")
+		return
+	}
+
+	type seriesRow struct {
+		id            int64
+		tvdbID        *int
+		title         string
+		originalTitle *string
+		posterURL     *string
+		status        *string
+		airedSeasons  int
+		maxDownloaded *int
+	}
+	var series []seriesRow
+	for rows.Next() {
+		var r seriesRow
+		if err := rows.Scan(&r.id, &r.tvdbID, &r.title, &r.originalTitle, &r.posterURL, &r.status, &r.airedSeasons, &r.maxDownloaded); err != nil {
+			slog.Error("Failed to scan next-seasons row", "error", err)
+			continue
+		}
+		series = append(series, r)
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close() //nolint:errcheck
+		s.respondError(w, http.StatusInternalServerError, "error reading series")
+		return
+	}
+	rows.Close() //nolint:errcheck
+
+	results := make([]map[string]interface{}, 0)
+	for _, sr := range series {
+		nextSeason := 1
+		if sr.maxDownloaded != nil {
+			nextSeason = *sr.maxDownloaded + 1
+		}
+
+		// Skip if next season hasn't aired yet
+		if nextSeason > sr.airedSeasons {
+			continue
+		}
+
+		entry := map[string]interface{}{
+			"id":            sr.id,
+			"title":         sr.title,
+			"next_season":   nextSeason,
+			"aired_seasons": sr.airedSeasons,
+		}
+		if sr.tvdbID != nil {
+			entry["tvdb_id"] = *sr.tvdbID
+		}
+		if sr.originalTitle != nil {
+			entry["original_title"] = *sr.originalTitle
+		}
+		if sr.posterURL != nil {
+			entry["poster_url"] = *sr.posterURL
+		}
+		if sr.status != nil {
+			entry["status"] = *sr.status
+		}
+
+		// Check cache first
+		cached, err := s.db.GetCachedNextSeason(sr.id, nextSeason)
+		if err != nil {
+			slog.Warn("Failed to check next-season cache", "series_id", sr.id, "error", err)
+		}
+
+		if cached != nil {
+			entry["tracker_url"] = cached.TrackerURL
+			entry["torrent_title"] = cached.Title
+			entry["torrent_size"] = cached.Size
+			results = append(results, entry)
+			continue
+		}
+
+		// Search Kinozal if searcher is configured
+		if s.seasonSearcher != nil {
+			searchQuery := sr.title
+			result, err := s.seasonSearcher.FindSeasonTorrent(searchQuery, nextSeason)
+			if err != nil {
+				slog.Warn("Failed to search for season torrent", "series", sr.title, "season", nextSeason, "error", err)
+			}
+
+			// Fallback to original title if Russian title returned nothing
+			if result == nil && err == nil && sr.originalTitle != nil && *sr.originalTitle != sr.title {
+				result, err = s.seasonSearcher.FindSeasonTorrent(*sr.originalTitle, nextSeason)
+				if err != nil {
+					slog.Warn("Failed to search for season torrent (fallback)", "series", *sr.originalTitle, "season", nextSeason, "error", err)
+				}
+			}
+
+			if result != nil {
+				entry["tracker_url"] = result.DetailsURL
+				entry["torrent_title"] = result.Title
+				entry["torrent_size"] = result.Size
+
+				// Cache the result
+				cacheEntry := &database.NextSeasonCache{
+					SeriesID:     sr.id,
+					SeasonNumber: nextSeason,
+					TrackerURL:   result.DetailsURL,
+					Title:        result.Title,
+					Size:         result.Size,
+				}
+				if err := s.db.SaveCachedNextSeason(cacheEntry); err != nil {
+					slog.Warn("Failed to cache next-season result", "series_id", sr.id, "error", err)
+				}
+			}
+		}
+
+		results = append(results, entry)
+	}
+
+	s.respondJSON(w, http.StatusOK, results)
 }
 
 // Seasons handlers

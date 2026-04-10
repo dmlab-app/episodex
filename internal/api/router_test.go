@@ -12,6 +12,7 @@ import (
 
 	"github.com/episodex/episodex/internal/database"
 	"github.com/episodex/episodex/internal/qbittorrent"
+	"github.com/episodex/episodex/internal/tracker"
 	"github.com/episodex/episodex/internal/tvdb"
 )
 
@@ -1681,5 +1682,304 @@ func TestHandleGetSeasonTracker_NoFolderPath(t *testing.T) {
 
 	if resp["tracker_url"] != nil {
 		t.Fatalf("expected tracker_url to be null when folder_path is empty, got %v", resp["tracker_url"])
+	}
+}
+
+// mockSeasonSearcher implements tracker.SeasonSearcher for testing.
+type mockSeasonSearcher struct {
+	results map[string]*tracker.SeasonSearchResult
+}
+
+func (m *mockSeasonSearcher) FindSeasonTorrent(query string, seasonNumber int) (*tracker.SeasonSearchResult, error) {
+	key := fmt.Sprintf("%s_%d", query, seasonNumber)
+	if r, ok := m.results[key]; ok {
+		return r, nil
+	}
+	return nil, nil
+}
+
+func setupTestServerWithSearcher(t *testing.T, searcher tracker.SeasonSearcher) (*Server, *database.DB) {
+	t.Helper()
+
+	tmpDir := t.TempDir()
+	dbPath := filepath.Join(tmpDir, "test.db")
+
+	db, err := database.New(dbPath)
+	if err != nil {
+		t.Fatalf("failed to create test database: %v", err)
+	}
+
+	t.Cleanup(func() {
+		db.Close()
+		os.Remove(dbPath)
+	})
+
+	srv := NewServer(db, nil, nil, nil, "", WithSeasonSearcher(searcher))
+	return srv, db
+}
+
+func TestHandleGetNextSeasons_WithDownloadedSeasons(t *testing.T) {
+	mock := &mockSeasonSearcher{
+		results: map[string]*tracker.SeasonSearchResult{
+			"Breaking Bad_4": {
+				Title:      "Breaking Bad (4 сезон) / 1080p",
+				Size:       "45.3 ГБ",
+				DetailsURL: "https://kinozal.tv/details.php?id=111",
+			},
+		},
+	}
+	srv, db := setupTestServerWithSearcher(t, mock)
+
+	// Series with 5 aired seasons, user has S01-S03 downloaded
+	id := seedSeriesWithAired(t, db, "Breaking Bad", 5, 5)
+	seedSeasonWithEpisodes(t, db, id, 1, "/media/bb/s01", true, 10)
+	seedSeasonWithEpisodes(t, db, id, 2, "/media/bb/s02", true, 10)
+	seedSeasonWithEpisodes(t, db, id, 3, "/media/bb/s03", true, 10)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/next-seasons", http.NoBody)
+	w := httptest.NewRecorder()
+	srv.router.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+
+	var results []map[string]interface{}
+	if err := json.NewDecoder(w.Body).Decode(&results); err != nil {
+		t.Fatalf("failed to decode: %v", err)
+	}
+
+	if len(results) != 1 {
+		t.Fatalf("expected 1 result, got %d", len(results))
+	}
+
+	r := results[0]
+	if int(r["next_season"].(float64)) != 4 {
+		t.Errorf("expected next_season=4, got %v", r["next_season"])
+	}
+	if r["tracker_url"] != "https://kinozal.tv/details.php?id=111" {
+		t.Errorf("expected tracker_url, got %v", r["tracker_url"])
+	}
+	if r["torrent_title"] != "Breaking Bad (4 сезон) / 1080p" {
+		t.Errorf("expected torrent_title, got %v", r["torrent_title"])
+	}
+	if r["torrent_size"] != "45.3 ГБ" {
+		t.Errorf("expected torrent_size, got %v", r["torrent_size"])
+	}
+}
+
+func TestHandleGetNextSeasons_NoDownloadedSeasons(t *testing.T) {
+	mock := &mockSeasonSearcher{
+		results: map[string]*tracker.SeasonSearchResult{
+			"New Show_1": {
+				Title:      "New Show (1 сезон) / 1080p",
+				Size:       "20.0 ГБ",
+				DetailsURL: "https://kinozal.tv/details.php?id=222",
+			},
+		},
+	}
+	srv, db := setupTestServerWithSearcher(t, mock)
+
+	// Series in library with aired seasons but nothing downloaded
+	id := seedSeriesWithAired(t, db, "New Show", 3, 3)
+	// No downloaded seasons — but series exists
+	_ = id
+
+	req := httptest.NewRequest(http.MethodGet, "/api/next-seasons", http.NoBody)
+	w := httptest.NewRecorder()
+	srv.router.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", w.Code)
+	}
+
+	var results []map[string]interface{}
+	json.NewDecoder(w.Body).Decode(&results)
+
+	if len(results) != 1 {
+		t.Fatalf("expected 1 result, got %d", len(results))
+	}
+	if int(results[0]["next_season"].(float64)) != 1 {
+		t.Errorf("expected next_season=1, got %v", results[0]["next_season"])
+	}
+}
+
+func TestHandleGetNextSeasons_SkipsUnairedSeasons(t *testing.T) {
+	srv, db := setupTestServer(t)
+
+	// Series with 2 aired seasons, user has both — next would be S03 but only 2 aired
+	id := seedSeriesWithAired(t, db, "Complete Show", 3, 2)
+	seedSeasonWithEpisodes(t, db, id, 1, "/media/cs/s01", true, 10)
+	seedSeasonWithEpisodes(t, db, id, 2, "/media/cs/s02", true, 10)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/next-seasons", http.NoBody)
+	w := httptest.NewRecorder()
+	srv.router.ServeHTTP(w, req)
+
+	var results []map[string]interface{}
+	json.NewDecoder(w.Body).Decode(&results)
+
+	if len(results) != 0 {
+		t.Errorf("expected 0 results (next season not aired), got %d", len(results))
+	}
+}
+
+func TestHandleGetNextSeasons_FiltersEndedSeries(t *testing.T) {
+	srv, db := setupTestServer(t)
+
+	// Ended series — should be excluded
+	_, err := db.Exec(`
+		INSERT INTO series (title, status, total_seasons, aired_seasons, created_at, updated_at)
+		VALUES ('Ended Show', 'Ended', 3, 3, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+	`)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/api/next-seasons", http.NoBody)
+	w := httptest.NewRecorder()
+	srv.router.ServeHTTP(w, req)
+
+	var results []map[string]interface{}
+	json.NewDecoder(w.Body).Decode(&results)
+
+	if len(results) != 0 {
+		t.Errorf("expected 0 results for ended series, got %d", len(results))
+	}
+}
+
+func TestHandleGetNextSeasons_UsesCache(t *testing.T) {
+	// No searcher configured — should still return cached results
+	srv, db := setupTestServer(t)
+
+	id := seedSeriesWithAired(t, db, "Cached Show", 5, 5)
+	seedSeasonWithEpisodes(t, db, id, 1, "/media/cs/s01", true, 10)
+	seedSeasonWithEpisodes(t, db, id, 2, "/media/cs/s02", true, 10)
+
+	// Pre-populate cache
+	err := db.SaveCachedNextSeason(&database.NextSeasonCache{
+		SeriesID:     id,
+		SeasonNumber: 3,
+		TrackerURL:   "https://kinozal.tv/details.php?id=333",
+		Title:        "Cached Show (3 сезон)",
+		Size:         "30.0 ГБ",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/api/next-seasons", http.NoBody)
+	w := httptest.NewRecorder()
+	srv.router.ServeHTTP(w, req)
+
+	var results []map[string]interface{}
+	json.NewDecoder(w.Body).Decode(&results)
+
+	if len(results) != 1 {
+		t.Fatalf("expected 1 result, got %d", len(results))
+	}
+	if results[0]["tracker_url"] != "https://kinozal.tv/details.php?id=333" {
+		t.Errorf("expected cached tracker_url, got %v", results[0]["tracker_url"])
+	}
+}
+
+func TestHandleGetNextSeasons_NoSearcherConfigured(t *testing.T) {
+	srv, db := setupTestServer(t)
+
+	// Series with next season to find, but no searcher
+	id := seedSeriesWithAired(t, db, "No Searcher Show", 5, 5)
+	seedSeasonWithEpisodes(t, db, id, 1, "/media/ns/s01", true, 10)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/next-seasons", http.NoBody)
+	w := httptest.NewRecorder()
+	srv.router.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", w.Code)
+	}
+
+	var results []map[string]interface{}
+	json.NewDecoder(w.Body).Decode(&results)
+
+	// Should still return the series, just without tracker info
+	if len(results) != 1 {
+		t.Fatalf("expected 1 result, got %d", len(results))
+	}
+	if results[0]["tracker_url"] != nil {
+		t.Errorf("expected no tracker_url without searcher, got %v", results[0]["tracker_url"])
+	}
+}
+
+func TestHandleGetNextSeasons_FallbackToOriginalTitle(t *testing.T) {
+	mock := &mockSeasonSearcher{
+		results: map[string]*tracker.SeasonSearchResult{
+			// No result for Russian title, but result for original title
+			"Stargate SG-1_5": {
+				Title:      "Stargate SG-1 Season 5 Complete",
+				Size:       "50.0 ГБ",
+				DetailsURL: "https://kinozal.tv/details.php?id=444",
+			},
+		},
+	}
+	srv, db := setupTestServerWithSearcher(t, mock)
+
+	// Series with Russian title + original title
+	result, err := db.Exec(`
+		INSERT INTO series (title, original_title, status, total_seasons, aired_seasons, created_at, updated_at)
+		VALUES ('Звёздные врата: ЗВ-1', 'Stargate SG-1', 'Continuing', 10, 10, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+	`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	id, _ := result.LastInsertId()
+	seedSeasonWithEpisodes(t, db, id, 1, "/media/sg/s01", true, 22)
+	seedSeasonWithEpisodes(t, db, id, 2, "/media/sg/s02", true, 22)
+	seedSeasonWithEpisodes(t, db, id, 3, "/media/sg/s03", true, 22)
+	seedSeasonWithEpisodes(t, db, id, 4, "/media/sg/s04", true, 22)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/next-seasons", http.NoBody)
+	w := httptest.NewRecorder()
+	srv.router.ServeHTTP(w, req)
+
+	var results []map[string]interface{}
+	json.NewDecoder(w.Body).Decode(&results)
+
+	if len(results) != 1 {
+		t.Fatalf("expected 1 result, got %d", len(results))
+	}
+	if results[0]["tracker_url"] != "https://kinozal.tv/details.php?id=444" {
+		t.Errorf("expected fallback tracker_url, got %v", results[0]["tracker_url"])
+	}
+}
+
+func TestHandleGetNextSeasons_CachesSearchResult(t *testing.T) {
+	mock := &mockSeasonSearcher{
+		results: map[string]*tracker.SeasonSearchResult{
+			"Test Show_2": {
+				Title:      "Test Show (2 сезон)",
+				Size:       "25.0 ГБ",
+				DetailsURL: "https://kinozal.tv/details.php?id=555",
+			},
+		},
+	}
+	srv, db := setupTestServerWithSearcher(t, mock)
+
+	id := seedSeriesWithAired(t, db, "Test Show", 5, 5)
+	seedSeasonWithEpisodes(t, db, id, 1, "/media/ts/s01", true, 10)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/next-seasons", http.NoBody)
+	w := httptest.NewRecorder()
+	srv.router.ServeHTTP(w, req)
+
+	// Verify result was cached in DB
+	cached, err := db.GetCachedNextSeason(id, 2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cached == nil {
+		t.Fatal("expected search result to be cached")
+	}
+	if cached.TrackerURL != "https://kinozal.tv/details.php?id=555" {
+		t.Errorf("expected cached tracker_url, got %s", cached.TrackerURL)
 	}
 }

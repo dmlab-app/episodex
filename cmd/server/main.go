@@ -202,7 +202,13 @@ func main() {
 	}
 
 	// Initialize HTTP server
-	apiServer := api.NewServer(db, mediaScanner, tvdbClient, qbitClient, cfg.MediaPath)
+	var serverOpts []api.ServerOption
+	if clients := trackerRegistry.Clients(); len(clients) > 0 {
+		if kz, ok := clients[0].(*kinozal.Client); ok {
+			serverOpts = append(serverOpts, api.WithSeasonSearcher(kz.SeasonSearcher()))
+		}
+	}
+	apiServer := api.NewServer(db, mediaScanner, tvdbClient, qbitClient, cfg.MediaPath, serverOpts...)
 	httpServer := &http.Server{
 		Addr:         cfg.Host + ":" + cfg.Port,
 		Handler:      apiServer.Handler(),

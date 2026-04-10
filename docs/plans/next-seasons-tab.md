@@ -44,8 +44,8 @@ This helps the user discover what to download next without manually searching th
 - [x] run tests — must pass before next task
 
 ### Task 4: API — next seasons endpoint
-- [ ] write tests for `GET /api/next-seasons` — returns list of series with next season info
-- [ ] implement handler logic:
+- [x] write tests for `GET /api/next-seasons` — returns list of series with next season info
+- [x] implement handler logic:
   - for each series with at least one downloaded season:
     - next_season = max_downloaded_season + 1
   - for series with no downloaded seasons but in library:
@@ -54,8 +54,8 @@ This helps the user discover what to download next without manually searching th
   - check cache first, if miss → search Kinozal (russian title, fallback to original)
   - cache result
   - return: series info + next season number + tracker link + torrent title + size
-- [ ] filter out Ended series (same as updates tab)
-- [ ] run tests — must pass before next task
+- [x] filter out Ended series (same as updates tab)
+- [x] run tests — must pass before next task
 
 ### Task 5: Frontend — Seasons tab
 - [ ] add "Seasons" nav item in index.html
