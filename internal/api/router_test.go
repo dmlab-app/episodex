@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/episodex/episodex/internal/database"
 	"github.com/episodex/episodex/internal/qbittorrent"
@@ -1698,6 +1699,13 @@ func (m *mockSeasonSearcher) FindSeasonTorrent(query string, seasonNumber int) (
 	return nil, nil
 }
 
+// errorSeasonSearcher always returns an error, simulating transient tracker failures.
+type errorSeasonSearcher struct{}
+
+func (m *errorSeasonSearcher) FindSeasonTorrent(_ string, _ int) (*tracker.SeasonSearchResult, error) {
+	return nil, fmt.Errorf("kinozal connection refused")
+}
+
 func setupTestServerWithSearcher(t *testing.T, searcher tracker.SeasonSearcher) (*Server, *database.DB) {
 	t.Helper()
 
@@ -1993,5 +2001,87 @@ func TestHandleGetNextSeasons_CachesSearchResult(t *testing.T) {
 	}
 	if cached.TrackerURL != "https://kinozal.tv/details.php?id=555" {
 		t.Errorf("expected cached tracker_url, got %s", cached.TrackerURL)
+	}
+}
+
+func TestHandleGetNextSeasons_NegativeCacheExpiresAfter24h(t *testing.T) {
+	mock := &mockSeasonSearcher{
+		results: map[string]*tracker.SeasonSearchResult{
+			"Recheck Show_2": {
+				Title:      "Recheck Show (2 сезон)",
+				Size:       "30.0 ГБ",
+				DetailsURL: "https://kinozal.tv/details.php?id=777",
+			},
+		},
+	}
+	srv, db := setupTestServerWithSearcher(t, mock)
+
+	id := seedSeriesWithAired(t, db, "Recheck Show", 5, 5)
+	seedSeasonWithEpisodes(t, db, id, 1, "/media/rc/s01", true, 10)
+
+	// Insert a negative cache entry (empty tracker_url) older than 24 hours
+	_, err := db.Exec(`
+		INSERT INTO next_season_cache (series_id, season_number, tracker_url, title, size, cached_at)
+		VALUES (?, 2, '', '', '', ?)
+	`, id, time.Now().Add(-25*time.Hour))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/api/next-seasons", http.NoBody)
+	w := httptest.NewRecorder()
+	srv.router.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", w.Code)
+	}
+
+	var results []map[string]interface{}
+	if err := json.NewDecoder(w.Body).Decode(&results); err != nil {
+		t.Fatalf("failed to decode: %v", err)
+	}
+
+	if len(results) != 1 {
+		t.Fatalf("expected 1 result, got %d", len(results))
+	}
+	// After expired negative cache, the search should have run and found the torrent
+	if results[0]["tracker_url"] != "https://kinozal.tv/details.php?id=777" {
+		t.Errorf("expected tracker_url from fresh search after expired negative cache, got %v", results[0]["tracker_url"])
+	}
+
+	// Verify the cache was updated with the positive result
+	cached, err := db.GetCachedNextSeason(id, 2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cached == nil {
+		t.Fatal("expected cache entry after re-search")
+	}
+	if cached.TrackerURL != "https://kinozal.tv/details.php?id=777" {
+		t.Errorf("expected updated cache with tracker_url, got %s", cached.TrackerURL)
+	}
+}
+
+func TestHandleGetNextSeasons_DoesNotCacheOnError(t *testing.T) {
+	srv, db := setupTestServerWithSearcher(t, &errorSeasonSearcher{})
+
+	id := seedSeriesWithAired(t, db, "Error Show", 5, 5)
+	seedSeasonWithEpisodes(t, db, id, 1, "/media/es/s01", true, 10)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/next-seasons", http.NoBody)
+	w := httptest.NewRecorder()
+	srv.router.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", w.Code)
+	}
+
+	// Verify that no cache entry was created for the failed search
+	cached, err := db.GetCachedNextSeason(id, 2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cached != nil {
+		t.Errorf("expected no cache entry on search error, but found one: %+v", cached)
 	}
 }

@@ -621,6 +621,41 @@ func TestSearchEmpty(t *testing.T) {
 	}
 }
 
+func TestIsMultiSeasonPack(t *testing.T) {
+	tests := []struct {
+		title string
+		want  bool
+	}{
+		{"Stargate SG-1 S01-S05 Complete BluRay 1080p", true},
+		{"Stargate SG-1 S01–S10 Complete", true},
+		{"Сериал (1-5 сезон) / DVDRip", true},
+		{"Сериал (1–5 сезон) Complete", true},
+		{"Show Seasons 1-3 Complete", true},
+		{"Show Season 1-5 Pack", true},
+		{"Stargate SG-1 S01-05 Complete BluRay 1080p", true},
+		{"Show S01–05 Pack", true},
+		{"Звёздные врата: ЗВ-1 (5 сезон: 1-22 серии из 22)", false},
+		{"Stargate SG-1 S05 Complete BluRay 1080p", false},
+		{"Some Series s03e01-e10", false},
+		{"Сериал (3сезон) / DVDRip", false},
+		{"Show Season 5 - 1080p", false},
+		{"Show Season 5-1080p", false},
+	}
+
+	for _, tt := range tests {
+		name := tt.title
+		if len(name) > 30 {
+			name = name[:30]
+		}
+		t.Run(name, func(t *testing.T) {
+			got := isMultiSeasonPack(tt.title)
+			if got != tt.want {
+				t.Errorf("isMultiSeasonPack(%q) = %v, want %v", tt.title, got, tt.want)
+			}
+		})
+	}
+}
+
 func TestMatchSeason(t *testing.T) {
 	tests := []struct {
 		title  string
@@ -638,6 +673,13 @@ func TestMatchSeason(t *testing.T) {
 		{"Some Series s03e01-e10", 2, false},
 		{"Сериал (3сезон) / DVDRip", 3, true},
 		{"No season info here", 1, false},
+		// Multi-season packs should be rejected
+		{"Stargate SG-1 S01-S05 Complete BluRay 1080p", 5, false},
+		{"Stargate SG-1 S01-S05 Complete BluRay 1080p", 1, false},
+		{"Сериал (1-5 сезон) Complete", 5, false},
+		{"Show Seasons 1-3 Complete", 3, false},
+		{"Stargate SG-1 S01-05 Complete BluRay 1080p", 1, false},
+		{"Stargate SG-1 S01-05 Complete BluRay 1080p", 5, false},
 	}
 
 	for _, tt := range tests {
@@ -729,6 +771,43 @@ func TestFindSeasonTorrent(t *testing.T) {
 	wantURL4 := server.URL + "/details.php?id=3333333"
 	if got.DetailsURL != wantURL4 {
 		t.Errorf("FindSeasonTorrent() S04 returned %q, want S04 torrent", got.DetailsURL)
+	}
+}
+
+func TestFindSeasonTorrentSkipsMultiSeasonPack(t *testing.T) {
+	results := []struct{ id, title, size string }{
+		// Multi-season pack is largest but should be skipped
+		{"9999999", "Stargate SG-1 S01-S05 Complete BluRay 1080p", "100.0 ГБ"},
+		// Single-season torrent is smaller but should be selected
+		{"1111111", "Звёздные врата: ЗВ-1 (5 сезон: 1-22 серии из 22) / Stargate SG-1 / WEB-DL (1080p)", "45.3 ГБ"},
+	}
+	page := sampleSearchHTML(results)
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/takelogin.php" {
+			http.SetCookie(w, &http.Cookie{Name: "uid", Value: "sess"})
+			w.WriteHeader(http.StatusOK)
+			return
+		}
+		encoded, _ := charmap.Windows1251.NewEncoder().Bytes([]byte(page))
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write(encoded)
+	}))
+	defer server.Close()
+
+	c := NewClientWithBaseURL(server.URL, "u", "p")
+	_ = c.Login()
+
+	got, err := c.FindSeasonTorrent("Stargate", 5)
+	if err != nil {
+		t.Fatalf("FindSeasonTorrent() error: %v", err)
+	}
+	if got == nil {
+		t.Fatal("FindSeasonTorrent() returned nil, want single-season result")
+	}
+	wantURL := server.URL + "/details.php?id=1111111"
+	if got.DetailsURL != wantURL {
+		t.Errorf("FindSeasonTorrent() returned %q, want single-season torrent %q", got.DetailsURL, wantURL)
 	}
 }
 

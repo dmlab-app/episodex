@@ -1437,46 +1437,62 @@ func (s *Server) handleGetNextSeasons(w http.ResponseWriter, _ *http.Request) {
 		}
 
 		if cached != nil {
-			if cached.TrackerURL != "" {
-				entry["tracker_url"] = cached.TrackerURL
-				entry["torrent_title"] = cached.Title
-				entry["torrent_size"] = cached.Size
+			// Negative cache entries (no torrent found) expire after 24h
+			// so we re-check sooner in case the torrent has been uploaded
+			isNegative := cached.TrackerURL == ""
+			if isNegative && time.Since(cached.CachedAt) > 24*time.Hour {
+				// Negative entry expired — fall through to re-search
+			} else {
+				if !isNegative {
+					entry["tracker_url"] = cached.TrackerURL
+					entry["torrent_title"] = cached.Title
+					entry["torrent_size"] = cached.Size
+				}
+				results = append(results, entry)
+				continue
 			}
-			results = append(results, entry)
-			continue
 		}
 
 		// Search Kinozal if searcher is configured
 		if s.seasonSearcher != nil {
 			searchQuery := sr.title
+			searchFailed := false
 			result, err := s.seasonSearcher.FindSeasonTorrent(searchQuery, nextSeason)
 			if err != nil {
 				slog.Warn("Failed to search for season torrent", "series", sr.title, "season", nextSeason, "error", err)
+				searchFailed = true
 			}
 
 			// Fallback to original title if Russian title returned nothing
-			if result == nil && err == nil && sr.originalTitle != nil && *sr.originalTitle != sr.title {
+			if result == nil && !searchFailed && sr.originalTitle != nil && *sr.originalTitle != sr.title {
 				result, err = s.seasonSearcher.FindSeasonTorrent(*sr.originalTitle, nextSeason)
 				if err != nil {
 					slog.Warn("Failed to search for season torrent (fallback)", "series", *sr.originalTitle, "season", nextSeason, "error", err)
+					searchFailed = true
 				}
 			}
 
-			// Cache the result (including negative results to avoid repeated searches)
-			cacheEntry := &database.NextSeasonCache{
-				SeriesID:     sr.id,
-				SeasonNumber: nextSeason,
-			}
 			if result != nil {
 				entry["tracker_url"] = result.DetailsURL
 				entry["torrent_title"] = result.Title
 				entry["torrent_size"] = result.Size
-				cacheEntry.TrackerURL = result.DetailsURL
-				cacheEntry.Title = result.Title
-				cacheEntry.Size = result.Size
 			}
-			if err := s.db.SaveCachedNextSeason(cacheEntry); err != nil {
-				slog.Warn("Failed to cache next-season result", "series_id", sr.id, "error", err)
+
+			// Only cache when search completed without errors; skip on transient failures
+			// to allow retry on next request instead of creating a 7-day negative cache hit
+			if !searchFailed {
+				cacheEntry := &database.NextSeasonCache{
+					SeriesID:     sr.id,
+					SeasonNumber: nextSeason,
+				}
+				if result != nil {
+					cacheEntry.TrackerURL = result.DetailsURL
+					cacheEntry.Title = result.Title
+					cacheEntry.Size = result.Size
+				}
+				if err := s.db.SaveCachedNextSeason(cacheEntry); err != nil {
+					slog.Warn("Failed to cache next-season result", "series_id", sr.id, "error", err)
+				}
 			}
 		}
 

@@ -159,6 +159,9 @@ var (
 	seasonSRe       = regexp.MustCompile(`(?i)S(\d+)`)
 	seasonEnRe      = regexp.MustCompile(`(?i)Season\s*(\d+)`)
 	sizeValueRe     = regexp.MustCompile(`([\d.,]+)\s*(ГБ|МБ|GB|MB)`)
+	multiSeasonSRe  = regexp.MustCompile(`(?i)S\d{1,2}\s*[-–]\s*S?\d{1,2}\b`)
+	multiSeasonRuRe = regexp.MustCompile(`\d+\s*[-–]\s*\d+\s*сезон`)
+	multiSeasonEnRe = regexp.MustCompile(`(?i)Seasons?\s*\d+\s*[-–]\s*\d+\b`)
 )
 
 // parseEpisodeCount extracts the max episode number from a Kinozal torrent page title.
@@ -216,8 +219,17 @@ func (c *Client) Search(query string) ([]SearchResult, error) {
 	return results, nil
 }
 
-// matchSeason checks if a torrent title contains a reference to the given season number.
+// isMultiSeasonPack checks if a torrent title indicates a multi-season pack (e.g. "S01-S05", "1-5 сезон").
+func isMultiSeasonPack(title string) bool {
+	return multiSeasonSRe.MatchString(title) || multiSeasonRuRe.MatchString(title) || multiSeasonEnRe.MatchString(title)
+}
+
+// matchSeason checks if a torrent title contains a reference to the given season number
+// and is not a multi-season pack.
 func matchSeason(title string, season int) bool {
+	if isMultiSeasonPack(title) {
+		return false
+	}
 	for _, re := range []*regexp.Regexp{seasonRuRe, seasonSRe, seasonEnRe} {
 		for _, m := range re.FindAllStringSubmatch(title, -1) {
 			n, err := strconv.Atoi(m[1])
