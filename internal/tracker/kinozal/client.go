@@ -207,7 +207,13 @@ func (c *Client) Search(query string) ([]SearchResult, error) {
 	if err != nil {
 		return nil, fmt.Errorf("kinozal search failed: %w", err)
 	}
-	return parseSearchResults(body), nil
+	results := parseSearchResults(body)
+	for i := range results {
+		if strings.HasPrefix(results[i].DetailsURL, "/") {
+			results[i].DetailsURL = c.baseURL + results[i].DetailsURL
+		}
+	}
+	return results, nil
 }
 
 // matchSeason checks if a torrent title contains a reference to the given season number.

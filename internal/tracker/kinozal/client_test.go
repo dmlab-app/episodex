@@ -516,8 +516,9 @@ func TestSearch(t *testing.T) {
 	if got[0].Size != "45.3 ГБ" {
 		t.Errorf("result[0].Size = %q, want %q", got[0].Size, "45.3 ГБ")
 	}
-	if got[0].DetailsURL != "/details.php?id=1111111" {
-		t.Errorf("result[0].DetailsURL = %q, want %q", got[0].DetailsURL, "/details.php?id=1111111")
+	wantURL0 := server.URL + "/details.php?id=1111111"
+	if got[0].DetailsURL != wantURL0 {
+		t.Errorf("result[0].DetailsURL = %q, want %q", got[0].DetailsURL, wantURL0)
 	}
 
 	if got[1].Title != results[1].title {
@@ -709,7 +710,8 @@ func TestFindSeasonTorrent(t *testing.T) {
 	if got == nil {
 		t.Fatal("FindSeasonTorrent() returned nil, want result")
 	}
-	if got.DetailsURL != "/details.php?id=1111111" {
+	wantURL := server.URL + "/details.php?id=1111111"
+	if got.DetailsURL != wantURL {
 		t.Errorf("FindSeasonTorrent() returned %q, want largest S05 torrent", got.DetailsURL)
 	}
 	if got.Size != "45.3 ГБ" {
@@ -724,7 +726,8 @@ func TestFindSeasonTorrent(t *testing.T) {
 	if got == nil {
 		t.Fatal("FindSeasonTorrent() S04 returned nil, want result")
 	}
-	if got.DetailsURL != "/details.php?id=3333333" {
+	wantURL4 := server.URL + "/details.php?id=3333333"
+	if got.DetailsURL != wantURL4 {
 		t.Errorf("FindSeasonTorrent() S04 returned %q, want S04 torrent", got.DetailsURL)
 	}
 }

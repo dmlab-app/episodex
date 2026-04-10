@@ -106,8 +106,14 @@ func TestGetCachedNextSeason_DifferentSeasons(t *testing.T) {
 		t.Fatalf("save s6: %v", err)
 	}
 
-	got5, _ := db.GetCachedNextSeason(1, 5)
-	got6, _ := db.GetCachedNextSeason(1, 6)
+	got5, err := db.GetCachedNextSeason(1, 5)
+	if err != nil {
+		t.Fatalf("get season 5: %v", err)
+	}
+	got6, err := db.GetCachedNextSeason(1, 6)
+	if err != nil {
+		t.Fatalf("get season 6: %v", err)
+	}
 
 	if got5.Title != "S5" {
 		t.Errorf("season 5 title = %q, want S5", got5.Title)
@@ -144,13 +150,19 @@ func TestClearExpiredCache_RemovesOld(t *testing.T) {
 	}
 
 	// Old entry gone
-	old, _ := db.GetCachedNextSeason(1, 1)
+	old, err := db.GetCachedNextSeason(1, 1)
+	if err != nil {
+		t.Fatalf("get old entry: %v", err)
+	}
 	if old != nil {
 		t.Error("expected old entry to be deleted")
 	}
 
 	// Fresh entry still there
-	got, _ := db.GetCachedNextSeason(2, 1)
+	got, err := db.GetCachedNextSeason(2, 1)
+	if err != nil {
+		t.Fatalf("get fresh entry: %v", err)
+	}
 	if got == nil {
 		t.Error("expected fresh entry to remain")
 	}

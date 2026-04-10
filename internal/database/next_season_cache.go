@@ -67,6 +67,9 @@ func (db *DB) ClearExpiredCache(maxAge time.Duration) (int64, error) {
 		return 0, fmt.Errorf("failed to clear expired cache: %w", err)
 	}
 
-	affected, _ := result.RowsAffected()
+	affected, err := result.RowsAffected()
+	if err != nil {
+		return 0, fmt.Errorf("failed to get rows affected: %w", err)
+	}
 	return affected, nil
 }

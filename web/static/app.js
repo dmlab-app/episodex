@@ -961,21 +961,22 @@ async function loadNextSeasons() {
             const seasonLabel = `Season ${item.next_season}`;
             const sizeLabel = item.torrent_size ? esc(item.torrent_size) : '';
             const torrentTitle = item.torrent_title ? esc(item.torrent_title) : '';
-            const hasLink = !!item.tracker_url;
+            const safeUrl = item.tracker_url && (item.tracker_url.startsWith('http://') || item.tracker_url.startsWith('https://')) ? item.tracker_url : '';
+            const hasLink = !!safeUrl;
 
             return `
             <div class="season-download-card">
-                <div class="season-download-poster" onclick="navigate('/series/${item.id}')">
+                <div class="season-download-poster" onclick="navigate('/series/${parseInt(item.id, 10)}')">
                     <img src="${esc(posterSrc(item.poster_url))}" alt="${esc(item.title)}">
                 </div>
                 <div class="season-download-info">
-                    <h4 class="season-download-title" onclick="navigate('/series/${item.id}')">${esc(item.title)}</h4>
+                    <h4 class="season-download-title" onclick="navigate('/series/${parseInt(item.id, 10)}')">${esc(item.title)}</h4>
                     <p class="season-download-season">${esc(seasonLabel)}</p>
                     ${torrentTitle ? `<p class="season-download-torrent">${torrentTitle}</p>` : ''}
                     ${sizeLabel ? `<p class="season-download-size">${sizeLabel}</p>` : ''}
                 </div>
                 ${hasLink ? `
-                <a href="${esc(item.tracker_url)}" class="season-download-link" target="_blank" rel="noopener noreferrer" title="Open on Kinozal">
+                <a href="${esc(safeUrl)}" class="season-download-link" target="_blank" rel="noopener noreferrer" title="Open on Kinozal">
                     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                         <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/>
                         <polyline points="15 3 21 3 21 9"/>

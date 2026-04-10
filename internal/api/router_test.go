@@ -1794,7 +1794,9 @@ func TestHandleGetNextSeasons_NoDownloadedSeasons(t *testing.T) {
 	}
 
 	var results []map[string]interface{}
-	json.NewDecoder(w.Body).Decode(&results)
+	if err := json.NewDecoder(w.Body).Decode(&results); err != nil {
+		t.Fatalf("failed to decode: %v", err)
+	}
 
 	if len(results) != 1 {
 		t.Fatalf("expected 1 result, got %d", len(results))
@@ -1817,7 +1819,9 @@ func TestHandleGetNextSeasons_SkipsUnairedSeasons(t *testing.T) {
 	srv.router.ServeHTTP(w, req)
 
 	var results []map[string]interface{}
-	json.NewDecoder(w.Body).Decode(&results)
+	if err := json.NewDecoder(w.Body).Decode(&results); err != nil {
+		t.Fatalf("failed to decode: %v", err)
+	}
 
 	if len(results) != 0 {
 		t.Errorf("expected 0 results (next season not aired), got %d", len(results))
@@ -1841,7 +1845,9 @@ func TestHandleGetNextSeasons_FiltersEndedSeries(t *testing.T) {
 	srv.router.ServeHTTP(w, req)
 
 	var results []map[string]interface{}
-	json.NewDecoder(w.Body).Decode(&results)
+	if err := json.NewDecoder(w.Body).Decode(&results); err != nil {
+		t.Fatalf("failed to decode: %v", err)
+	}
 
 	if len(results) != 0 {
 		t.Errorf("expected 0 results for ended series, got %d", len(results))
@@ -1873,7 +1879,9 @@ func TestHandleGetNextSeasons_UsesCache(t *testing.T) {
 	srv.router.ServeHTTP(w, req)
 
 	var results []map[string]interface{}
-	json.NewDecoder(w.Body).Decode(&results)
+	if err := json.NewDecoder(w.Body).Decode(&results); err != nil {
+		t.Fatalf("failed to decode: %v", err)
+	}
 
 	if len(results) != 1 {
 		t.Fatalf("expected 1 result, got %d", len(results))
@@ -1899,7 +1907,9 @@ func TestHandleGetNextSeasons_NoSearcherConfigured(t *testing.T) {
 	}
 
 	var results []map[string]interface{}
-	json.NewDecoder(w.Body).Decode(&results)
+	if err := json.NewDecoder(w.Body).Decode(&results); err != nil {
+		t.Fatalf("failed to decode: %v", err)
+	}
 
 	// Should still return the series, just without tracker info
 	if len(results) != 1 {
@@ -1942,7 +1952,9 @@ func TestHandleGetNextSeasons_FallbackToOriginalTitle(t *testing.T) {
 	srv.router.ServeHTTP(w, req)
 
 	var results []map[string]interface{}
-	json.NewDecoder(w.Body).Decode(&results)
+	if err := json.NewDecoder(w.Body).Decode(&results); err != nil {
+		t.Fatalf("failed to decode: %v", err)
+	}
 
 	if len(results) != 1 {
 		t.Fatalf("expected 1 result, got %d", len(results))

@@ -1373,6 +1373,7 @@ func (s *Server) handleGetNextSeasons(w http.ResponseWriter, _ *http.Request) {
 		s.respondError(w, http.StatusInternalServerError, "failed to fetch series")
 		return
 	}
+	defer rows.Close() //nolint:errcheck
 
 	type seriesRow struct {
 		id            int64
@@ -1394,11 +1395,9 @@ func (s *Server) handleGetNextSeasons(w http.ResponseWriter, _ *http.Request) {
 		series = append(series, r)
 	}
 	if err := rows.Err(); err != nil {
-		rows.Close() //nolint:errcheck
 		s.respondError(w, http.StatusInternalServerError, "error reading series")
 		return
 	}
-	rows.Close() //nolint:errcheck
 
 	results := make([]map[string]interface{}, 0)
 	for _, sr := range series {
@@ -1438,9 +1437,11 @@ func (s *Server) handleGetNextSeasons(w http.ResponseWriter, _ *http.Request) {
 		}
 
 		if cached != nil {
-			entry["tracker_url"] = cached.TrackerURL
-			entry["torrent_title"] = cached.Title
-			entry["torrent_size"] = cached.Size
+			if cached.TrackerURL != "" {
+				entry["tracker_url"] = cached.TrackerURL
+				entry["torrent_title"] = cached.Title
+				entry["torrent_size"] = cached.Size
+			}
 			results = append(results, entry)
 			continue
 		}
@@ -1461,22 +1462,21 @@ func (s *Server) handleGetNextSeasons(w http.ResponseWriter, _ *http.Request) {
 				}
 			}
 
+			// Cache the result (including negative results to avoid repeated searches)
+			cacheEntry := &database.NextSeasonCache{
+				SeriesID:     sr.id,
+				SeasonNumber: nextSeason,
+			}
 			if result != nil {
 				entry["tracker_url"] = result.DetailsURL
 				entry["torrent_title"] = result.Title
 				entry["torrent_size"] = result.Size
-
-				// Cache the result
-				cacheEntry := &database.NextSeasonCache{
-					SeriesID:     sr.id,
-					SeasonNumber: nextSeason,
-					TrackerURL:   result.DetailsURL,
-					Title:        result.Title,
-					Size:         result.Size,
-				}
-				if err := s.db.SaveCachedNextSeason(cacheEntry); err != nil {
-					slog.Warn("Failed to cache next-season result", "series_id", sr.id, "error", err)
-				}
+				cacheEntry.TrackerURL = result.DetailsURL
+				cacheEntry.Title = result.Title
+				cacheEntry.Size = result.Size
+			}
+			if err := s.db.SaveCachedNextSeason(cacheEntry); err != nil {
+				slog.Warn("Failed to cache next-season result", "series_id", sr.id, "error", err)
 			}
 		}
 
