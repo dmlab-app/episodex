@@ -154,7 +154,7 @@ var (
 	episodeRangeRe  = regexp.MustCompile(`(\d+)-(\d+)\s+сери[ийя]`)
 	episodeSingleRe = regexp.MustCompile(`(\d+)\s+сери[ийя]`)
 	updatedAtRe     = regexp.MustCompile(`Обновлялся\s+(.+?)</`)
-	searchRowRe     = regexp.MustCompile(`(?s)<tr\s+class="bg">\s*<td\s+class="nam"><a\s+href="([^"]+)">([^<]+)</a></td>\s*<td\s+class="s">([^<]+)</td>`)
+	searchRowRe     = regexp.MustCompile(`(?s)<td\s+class="nam"><a\s+href="([^"]+)"[^>]*>([^<]+)</a>.*?<td\s+class='s'>\d+</td>\s*<td\s+class='s'>([^<]+)</td>`)
 	seasonRuRe      = regexp.MustCompile(`(\d+)\s*сезон`)
 	seasonSRe       = regexp.MustCompile(`(?i)S(\d+)`)
 	seasonEnRe      = regexp.MustCompile(`(?i)Season\s*(\d+)`)

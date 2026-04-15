@@ -464,10 +464,13 @@ func TestDoRequestSendsCookie(t *testing.T) {
 func sampleSearchHTML(results []struct{ id, title, size string }) string {
 	rows := ""
 	for _, r := range results {
-		rows += fmt.Sprintf(`<tr class="bg">
-<td class="nam"><a href="/details.php?id=%s">%s</a></td>
-<td class="s">%s</td>
-</tr>`, r.id, r.title, r.size)
+		rows += fmt.Sprintf(`<tr class=bg><td class="bt"><img src="/pic/cat/46.gif"></td><td class="nam"><a href="/details.php?id=%s" class="r1">%s</a><td class='s'>10</td>
+<td class='s'>%s</td>
+<td class='sl_s'>5</td>
+<td class='sl_p'>1</td>
+<td class='s'>01.01.2026 в 12:00</td>
+<td class='sl'><a href='/userdetails.php?id=123'>user</a></td></tr>
+`, r.id, r.title, r.size)
 	}
 	return fmt.Sprintf(`<html><body><table class="t_peer">%s</table></body></html>`, rows)
 }
@@ -539,38 +542,33 @@ func TestSearchParseHTML(t *testing.T) {
 		{
 			name: "single result",
 			html: `<html><body><table class="t_peer">
-<tr class="bg">
-<td class="nam"><a href="/details.php?id=999">Some Series (1 сезон) / BDRip</a></td>
-<td class="s">8.5 ГБ</td>
-</tr>
+<tr class=bg><td class="bt"><img src="/pic/cat/46.gif"></td><td class="nam"><a href="/details.php?id=999" class="r1">Some Series (1 сезон) / BDRip</a><td class='s'>5</td>
+<td class='s'>8.5 ГБ</td>
+<td class='sl_s'>1</td><td class='sl_p'>0</td><td class='s'>01.01.2026</td><td class='sl'><a href='/userdetails.php?id=1'>u</a></td></tr>
 </table></body></html>`,
 			want: 1,
 		},
 		{
 			name: "multiple results",
 			html: `<html><body><table class="t_peer">
-<tr class="bg">
-<td class="nam"><a href="/details.php?id=100">Series A</a></td>
-<td class="s">10 ГБ</td>
-</tr>
-<tr class="bg">
-<td class="nam"><a href="/details.php?id=200">Series B</a></td>
-<td class="s">20 ГБ</td>
-</tr>
-<tr class="bg">
-<td class="nam"><a href="/details.php?id=300">Series C</a></td>
-<td class="s">30 ГБ</td>
-</tr>
+<tr class=bg><td class="bt"><img src="/pic/cat/46.gif"></td><td class="nam"><a href="/details.php?id=100" class="r1">Series A</a><td class='s'>5</td>
+<td class='s'>10 ГБ</td>
+<td class='sl_s'>1</td><td class='sl_p'>0</td><td class='s'>01.01.2026</td><td class='sl'><a href='/userdetails.php?id=1'>u</a></td></tr>
+<tr class=bg><td class="bt"><img src="/pic/cat/46.gif"></td><td class="nam"><a href="/details.php?id=200" class="r1">Series B</a><td class='s'>5</td>
+<td class='s'>20 ГБ</td>
+<td class='sl_s'>1</td><td class='sl_p'>0</td><td class='s'>01.01.2026</td><td class='sl'><a href='/userdetails.php?id=1'>u</a></td></tr>
+<tr class=bg><td class="bt"><img src="/pic/cat/46.gif"></td><td class="nam"><a href="/details.php?id=300" class="r1">Series C</a><td class='s'>5</td>
+<td class='s'>30 ГБ</td>
+<td class='sl_s'>1</td><td class='sl_p'>0</td><td class='s'>01.01.2026</td><td class='sl'><a href='/userdetails.php?id=1'>u</a></td></tr>
 </table></body></html>`,
 			want: 3,
 		},
 		{
 			name: "size in MB",
 			html: `<html><body><table class="t_peer">
-<tr class="bg">
-<td class="nam"><a href="/details.php?id=400">Small torrent</a></td>
-<td class="s">500 МБ</td>
-</tr>
+<tr class=bg><td class="bt"><img src="/pic/cat/46.gif"></td><td class="nam"><a href="/details.php?id=400" class="r1">Small torrent</a><td class='s'>5</td>
+<td class='s'>500 МБ</td>
+<td class='sl_s'>1</td><td class='sl_p'>0</td><td class='s'>01.01.2026</td><td class='sl'><a href='/userdetails.php?id=1'>u</a></td></tr>
 </table></body></html>`,
 			want: 1,
 		},
