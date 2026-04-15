@@ -1673,10 +1673,7 @@ func (s *Server) handleGetAudioTracks(w http.ResponseWriter, r *http.Request) {
 	// Get files and their processed status
 	files := []map[string]interface{}{}
 	for _, filePath := range sortedPaths {
-		var processed bool
-		err := s.db.QueryRow(`
-			SELECT COUNT(*) > 0 FROM processed_files WHERE file_path = ?
-		`, filePath).Scan(&processed)
+		processed, err := s.db.IsFileProcessed(filePath)
 		if err != nil {
 			processed = false
 		}
@@ -2106,9 +2103,7 @@ func (s *Server) handleProcessAudioStream(w http.ResponseWriter, r *http.Request
 		default:
 		}
 
-		// Check if already processed
-		var alreadyProcessed bool
-		_ = s.db.QueryRow(`SELECT COUNT(*) > 0 FROM processed_files WHERE file_path = ?`, filePath).Scan(&alreadyProcessed)
+		alreadyProcessed, _ := s.db.IsFileProcessed(filePath)
 
 		if alreadyProcessed {
 			skippedCount++
@@ -2153,13 +2148,7 @@ func (s *Server) handleProcessAudioStream(w http.ResponseWriter, r *http.Request
 			continue
 		}
 
-		// Mark as processed in database
-		_, err = s.db.Exec(`
-			INSERT INTO processed_files (file_path, series_id, season_number, track_kept, processed_at)
-			VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP)
-		`, filePath, sid, snum, req.TrackID)
-
-		if err != nil {
+		if err := s.db.InsertProcessedFile(filePath, sid, int(snum), req.TrackID); err != nil {
 			slog.Error("Failed to log processed file", "file", filePath, "error", err)
 		}
 

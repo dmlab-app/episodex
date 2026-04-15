@@ -95,36 +95,3 @@ func ComputeFileHash(filePath string) (*FileHash, error) {
 	}, nil
 }
 
-// ComputeMultiFileHash computes a combined hash for multiple files (e.g., all episodes in a season)
-// This is useful for detecting if any file in a folder changed
-func ComputeMultiFileHash(filePaths []string) (string, error) {
-	if len(filePaths) == 0 {
-		return "", fmt.Errorf("no files provided")
-	}
-
-	hasher := sha256.New()
-
-	for _, path := range filePaths {
-		fileHash, err := ComputeFileHash(path)
-		if err != nil {
-			// Skip files that can't be read (they might be deleted)
-			continue
-		}
-
-		// Add individual hash to combined hash
-		hasher.Write([]byte(fileHash.Hash))
-	}
-
-	hashBytes := hasher.Sum(nil)
-	return hex.EncodeToString(hashBytes), nil
-}
-
-// HasChanged checks if a file's hash has changed by comparing with stored hash
-func HasChanged(filePath, storedHash string) (bool, error) {
-	currentHash, err := ComputeFileHash(filePath)
-	if err != nil {
-		return false, err
-	}
-
-	return currentHash.Hash != storedHash, nil
-}

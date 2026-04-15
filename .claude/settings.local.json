@@ -59,7 +59,13 @@
       "Bash(docker volume:*)",
       "WebFetch(domain:kinozal.tv)",
       "Bash(git log:*)",
-      "Bash(iconv -f windows-1251 -t utf-8)"
+      "Bash(iconv -f windows-1251 -t utf-8)",
+      "Bash(bash /tmp/check_columns.sh)",
+      "Bash(awk '{print $2}')",
+      "Bash(command -v deadcode)",
+      "Bash(deadcode ./...)",
+      "Bash(go install *)",
+      "Bash(~/go/bin/deadcode ./...)"
     ],
     "deny": [],
     "ask": []

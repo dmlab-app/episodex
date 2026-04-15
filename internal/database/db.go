@@ -128,8 +128,6 @@ func (db *DB) initTables() error {
 		series_id INTEGER,
 		season_number INTEGER,
 		track_kept INTEGER,
-		track_language TEXT,
-		track_name TEXT,
 		processed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
 		FOREIGN KEY (series_id) REFERENCES series(id) ON DELETE SET NULL
 	);
@@ -156,15 +154,6 @@ func (db *DB) initTables() error {
 		message TEXT,
 		created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
 		dismissed INTEGER DEFAULT 0
-	);
-
-	-- Метаданные бекапов
-	CREATE TABLE IF NOT EXISTS backups (
-		id INTEGER PRIMARY KEY AUTOINCREMENT,
-		filename TEXT NOT NULL,
-		size_bytes INTEGER,
-		integrity_ok INTEGER,
-		created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 	);
 
 	-- Кеш найденных торрентов для следующего сезона

@@ -10,7 +10,6 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
-	"time"
 )
 
 // AudioCutter handles audio track operations on MKV files
@@ -231,38 +230,6 @@ func (ac *AudioCutter) RemoveAudioTracks(filePath string, keepTrackID int, keepO
 	return nil
 }
 
-// ProcessFolder processes all MKV files in a folder, keeping only the specified audio track.
-// If keepOriginal is true, the original English audio track is also preserved.
-func (ac *AudioCutter) ProcessFolder(folderPath string, keepTrackID int, keepOriginal bool) (processed, failed []string, err error) {
-	if _, err := os.Stat(folderPath); os.IsNotExist(err) {
-		return nil, nil, fmt.Errorf("folder does not exist: %s", folderPath)
-	}
-
-	// Walk through folder
-	err = filepath.Walk(folderPath, func(path string, info os.FileInfo, err error) error {
-		if err != nil {
-			return err
-		}
-
-		// Only process MKV files
-		if !info.IsDir() && strings.ToLower(filepath.Ext(path)) == ".mkv" {
-			if err := ac.RemoveAudioTracks(path, keepTrackID, keepOriginal); err != nil {
-				failed = append(failed, path)
-			} else {
-				processed = append(processed, path)
-			}
-		}
-
-		return nil
-	})
-
-	if err != nil {
-		return processed, failed, fmt.Errorf("failed to process folder: %w", err)
-	}
-
-	return processed, failed, nil
-}
-
 // GeneratePreview generates a 30-second audio preview from an MKV file
 // Returns a hash that can be used to retrieve the preview file
 func (ac *AudioCutter) GeneratePreview(filePath string, trackIndex, duration int) (string, error) {
@@ -311,28 +278,6 @@ func (ac *AudioCutter) GetPreviewPath(hash string) (string, error) {
 	}
 
 	return previewPath, nil
-}
-
-// CleanupOldPreviews removes preview files older than 24 hours
-func (ac *AudioCutter) CleanupOldPreviews() error {
-	files, err := filepath.Glob(filepath.Join(ac.tempDir, "*.mp3"))
-	if err != nil {
-		return err
-	}
-
-	for _, file := range files {
-		info, err := os.Stat(file)
-		if err != nil {
-			continue
-		}
-
-		// Remove files older than 24 hours
-		if info.ModTime().Before(time.Now().Add(-24 * time.Hour)) {
-			os.Remove(file) //nolint:errcheck // removal failure is non-critical
-		}
-	}
-
-	return nil
 }
 
 // SetDefaultAudioTrack sets the specified audio track as default using mkvpropedit.

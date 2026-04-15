@@ -12,21 +12,19 @@ import (
 
 // BackupManager handles database backups
 type BackupManager struct {
-	db             *DB
-	dbPath         string
-	backupPath     string
-	retention      int
-	alertOnFailure bool
+	db         *DB
+	dbPath     string
+	backupPath string
+	retention  int
 }
 
 // NewBackupManager creates a new backup manager
 func NewBackupManager(db *DB, dbPath, backupPath string, retention int) *BackupManager {
 	return &BackupManager{
-		db:             db,
-		dbPath:         dbPath,
-		backupPath:     backupPath,
-		retention:      retention,
-		alertOnFailure: true,
+		db:         db,
+		dbPath:     dbPath,
+		backupPath: backupPath,
+		retention:  retention,
 	}
 }
 
@@ -70,12 +68,6 @@ func (bm *BackupManager) Backup() error {
 		slog.Info("Backup completed successfully", "file", backupFile, "size", fileInfo.Size())
 	}
 
-	// Record backup in metadata table
-	if err := bm.recordBackup(filepath.Base(backupFile), fileInfo.Size(), integrityOK); err != nil {
-		return fmt.Errorf("failed to record backup: %w", err)
-	}
-
-	// Rotate old backups
 	if err := bm.rotateBackups(); err != nil {
 		slog.Warn("Failed to rotate backups", "error", err)
 	}
@@ -100,22 +92,6 @@ func (bm *BackupManager) checkIntegrity(backupFile string) (bool, error) {
 	}
 
 	return result == "ok", nil
-}
-
-// recordBackup saves backup metadata to the database
-func (bm *BackupManager) recordBackup(filename string, size int64, integrityOK bool) error {
-	query := `
-		INSERT INTO backups (filename, size_bytes, integrity_ok, created_at)
-		VALUES (?, ?, ?, CURRENT_TIMESTAMP)
-	`
-
-	integrityInt := 0
-	if integrityOK {
-		integrityInt = 1
-	}
-
-	_, err := bm.db.Exec(query, filename, size, integrityInt)
-	return err
 }
 
 // rotateBackups removes old backups keeping only the most recent ones
@@ -155,10 +131,6 @@ func (bm *BackupManager) rotateBackups() error {
 
 // createAlert creates a system alert
 func (bm *BackupManager) createAlert(alertType, message string) {
-	if !bm.alertOnFailure {
-		return
-	}
-
 	query := `
 		INSERT INTO system_alerts (type, message, created_at)
 		VALUES (?, ?, CURRENT_TIMESTAMP)
@@ -168,40 +140,4 @@ func (bm *BackupManager) createAlert(alertType, message string) {
 	if err != nil {
 		slog.Error("Failed to create alert", "error", err)
 	}
-}
-
-// GetBackupHistory returns recent backup metadata
-func (bm *BackupManager) GetBackupHistory(limit int) ([]BackupInfo, error) {
-	query := `
-		SELECT id, filename, size_bytes, integrity_ok, created_at
-		FROM backups
-		ORDER BY created_at DESC
-		LIMIT ?
-	`
-
-	rows, err := bm.db.Query(query, limit)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close() //nolint:errcheck // closing read-only rows
-
-	var backups []BackupInfo
-	for rows.Next() {
-		var b BackupInfo
-		if err := rows.Scan(&b.ID, &b.Filename, &b.SizeBytes, &b.IntegrityOK, &b.CreatedAt); err != nil {
-			return nil, err
-		}
-		backups = append(backups, b)
-	}
-
-	return backups, rows.Err()
-}
-
-// BackupInfo represents backup metadata
-type BackupInfo struct {
-	CreatedAt   time.Time
-	Filename    string
-	SizeBytes   int64
-	ID          int
-	IntegrityOK bool
 }
