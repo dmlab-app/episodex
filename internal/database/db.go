@@ -90,6 +90,7 @@ func (db *DB) initTables() error {
 		voice_actor_id INTEGER,
 		downloaded BOOLEAN DEFAULT 0,
 		aired_episodes INTEGER DEFAULT 0,
+		max_episode_on_disk INTEGER DEFAULT 0,
 		tracker_url TEXT,
 		torrent_hash TEXT,
 		tracker_updated_at TEXT,

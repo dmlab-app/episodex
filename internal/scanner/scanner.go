@@ -575,6 +575,9 @@ func (s *Scanner) processSeriesInfo(info SeriesInfo) error {
 		slog.Error("Failed to scan media files", "series", seriesTitle, "season", info.Season, "error", err)
 	}
 
+	// Update max_episode_on_disk (only increases, never decreases)
+	s.updateMaxEpisode(seriesID, info.Season)
+
 	return nil
 }
 
@@ -666,4 +669,26 @@ func (s *Scanner) scanMediaFiles(seriesID int64, seasonNumber int, folderPath st
 		"changed", filesChanged)
 
 	return nil
+}
+
+// updateMaxEpisode parses episode numbers from media files and updates max_episode_on_disk (only increases).
+func (s *Scanner) updateMaxEpisode(seriesID int64, seasonNumber int) {
+	files, err := s.db.GetMediaFilesBySeason(seriesID, seasonNumber)
+	if err != nil {
+		return
+	}
+	maxEp := 0
+	for i := range files {
+		info, parseErr := ptn.Parse(files[i].FileName)
+		if parseErr != nil || info.Episode == 0 {
+			continue
+		}
+		if info.Episode > maxEp {
+			maxEp = info.Episode
+		}
+	}
+	if maxEp > 0 {
+		s.db.Exec(`UPDATE seasons SET max_episode_on_disk = MAX(COALESCE(max_episode_on_disk, 0), ?) WHERE series_id = ? AND season_number = ?`,
+			maxEp, seriesID, seasonNumber) //nolint:errcheck
+	}
 }

@@ -72,30 +72,20 @@ func seedSeason(t *testing.T, db *database.DB, seriesID int64, seasonNum int, fo
 	}
 }
 
-// seedSeasonWithEpisodes inserts a season with aired_episodes set.
-// When downloaded=true, also seeds media_files so file count matches aired_episodes.
+// seedSeasonWithEpisodes inserts a season with aired_episodes and max_episode_on_disk set.
+// When downloaded=true, max_episode_on_disk = airedEpisodes (user had all episodes).
 func seedSeasonWithEpisodes(t *testing.T, db *database.DB, seriesID int64, seasonNum int, folderPath string, downloaded bool, airedEpisodes int) {
 	t.Helper()
+	maxEpOnDisk := 0
+	if downloaded {
+		maxEpOnDisk = airedEpisodes
+	}
 	_, err := db.Exec(`
-		INSERT INTO seasons (series_id, season_number, folder_path, downloaded, aired_episodes, discovered_at, created_at, updated_at)
-		VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
-	`, seriesID, seasonNum, folderPath, downloaded, airedEpisodes)
+		INSERT INTO seasons (series_id, season_number, folder_path, downloaded, aired_episodes, max_episode_on_disk, discovered_at, created_at, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+	`, seriesID, seasonNum, folderPath, downloaded, airedEpisodes, maxEpOnDisk)
 	if err != nil {
 		t.Fatalf("failed to seed season with episodes: %v", err)
-	}
-	if downloaded {
-		for i := 1; i <= airedEpisodes; i++ {
-			_, err := db.Exec(`
-				INSERT INTO media_files (series_id, season_number, file_path, file_name, file_size, file_hash)
-				VALUES (?, ?, ?, ?, 100, ?)
-			`, seriesID, seasonNum,
-				fmt.Sprintf("/media/s%02d/Show.S%02dE%02d.mkv", seasonNum, seasonNum, i),
-				fmt.Sprintf("Show.S%02dE%02d.mkv", seasonNum, i),
-				fmt.Sprintf("hash_%d_%d_%d", seriesID, seasonNum, i))
-			if err != nil {
-				t.Fatalf("failed to seed media file: %v", err)
-			}
-		}
 	}
 }
 

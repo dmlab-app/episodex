@@ -18,8 +18,6 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
 	"github.com/go-chi/cors"
-	ptn "github.com/middelink/go-parse-torrent-name"
-
 	"github.com/episodex/episodex/internal/audio"
 	"github.com/episodex/episodex/internal/database"
 	"github.com/episodex/episodex/internal/qbittorrent"
@@ -1149,9 +1147,8 @@ func (s *Server) handleTriggerScan(w http.ResponseWriter, _ *http.Request) {
 
 // Updates handlers
 func (s *Server) handleGetUpdates(w http.ResponseWriter, _ *http.Request) {
-	// Get all non-ended series that have at least one downloaded season.
-	// For each, check if there are new episodes by comparing aired_episodes
-	// with the max episode number parsed from file names on disk.
+	// Shows seasons where aired_episodes (from TVDB API) > max_episode_on_disk (highest episode ever on disk).
+	// Also shows new seasons beyond max downloaded season.
 	query := `
 		SELECT s.id, s.tvdb_id, s.title, s.original_title, s.poster_url, s.status,
 			s.aired_seasons,
@@ -1159,6 +1156,15 @@ func (s *Server) handleGetUpdates(w http.ResponseWriter, _ *http.Request) {
 		FROM series s
 		WHERE s.status != 'Ended'
 		AND (SELECT COUNT(*) FROM seasons sn WHERE sn.series_id = s.id AND sn.downloaded = 1 AND sn.season_number > 0) > 0
+		AND EXISTS (
+			SELECT 1 FROM seasons sn
+			WHERE sn.series_id = s.id AND sn.season_number > 0
+			AND (
+				(sn.downloaded = 1 AND sn.aired_episodes > COALESCE(sn.max_episode_on_disk, 0))
+				OR (sn.downloaded = 0 AND sn.aired_episodes > 0
+					AND sn.season_number > (SELECT MAX(sn2.season_number) FROM seasons sn2 WHERE sn2.series_id = s.id AND sn2.downloaded = 1 AND sn2.season_number > 0))
+			)
+		)
 		ORDER BY s.updated_at DESC
 	`
 
@@ -1242,88 +1248,47 @@ type seasonUpdate struct {
 	NewEpisodes   int `json:"new_episodes"`
 }
 
-// findNewEpisodes checks each downloaded season: if aired_episodes > max episode
-// number on disk, there are new episodes. Also includes undownloaded seasons
-// beyond max_downloaded that have aired episodes.
+// findNewEpisodes returns seasons with new episodes:
+// - downloaded season: aired_episodes > max_episode_on_disk
+// - new season beyond max downloaded: aired_episodes > 0
 func (s *Server) findNewEpisodes(seriesID, maxDownloaded int) []seasonUpdate {
-	// Get downloaded seasons with aired_episodes > 0
 	rows, err := s.db.Query(`
-		SELECT sn.season_number, sn.aired_episodes, sn.downloaded
+		SELECT sn.season_number, sn.aired_episodes, sn.downloaded, COALESCE(sn.max_episode_on_disk, 0)
 		FROM seasons sn
 		WHERE sn.series_id = ? AND sn.season_number > 0 AND sn.aired_episodes > 0
+		AND (
+			(sn.downloaded = 1 AND sn.aired_episodes > COALESCE(sn.max_episode_on_disk, 0))
+			OR (sn.downloaded = 0 AND sn.season_number > ? AND sn.aired_episodes > 0)
+		)
 		ORDER BY sn.season_number
-	`, seriesID)
+	`, seriesID, maxDownloaded)
 	if err != nil {
 		slog.Warn("Failed to query seasons for updates", "series_id", seriesID, "error", err)
 		return nil
 	}
 	defer rows.Close() //nolint:errcheck
 
-	type seasonInfo struct {
-		number        int
-		airedEpisodes int
-		downloaded    bool
-	}
-	var seasons []seasonInfo
+	var result []seasonUpdate
 	for rows.Next() {
-		var si seasonInfo
-		if err := rows.Scan(&si.number, &si.airedEpisodes, &si.downloaded); err != nil {
+		var seasonNum, airedEps, maxOnDisk int
+		var downloaded bool
+		if err := rows.Scan(&seasonNum, &airedEps, &downloaded, &maxOnDisk); err != nil {
 			continue
 		}
-		seasons = append(seasons, si)
-	}
-	rows.Close() //nolint:errcheck
-
-	var result []seasonUpdate
-	for _, si := range seasons {
-		if si.downloaded {
-			// Get max episode number from file names on disk
-			maxEp := s.getMaxEpisodeOnDisk(seriesID, si.number)
-			if si.airedEpisodes > maxEp {
-				result = append(result, seasonUpdate{
-					SeasonNumber:  si.number,
-					AiredEpisodes: si.airedEpisodes,
-					NewEpisodes:   si.airedEpisodes - maxEp,
-				})
-			}
-		} else if si.number > maxDownloaded {
-			// New season beyond what user has
-			result = append(result, seasonUpdate{
-				SeasonNumber:  si.number,
-				AiredEpisodes: si.airedEpisodes,
-				NewEpisodes:   si.airedEpisodes,
-			})
+		newEps := airedEps - maxOnDisk
+		if !downloaded {
+			newEps = airedEps
 		}
+		result = append(result, seasonUpdate{
+			SeasonNumber:  seasonNum,
+			AiredEpisodes: airedEps,
+			NewEpisodes:   newEps,
+		})
+	}
+	if result == nil {
+		result = []seasonUpdate{}
 	}
 	return result
-}
-
-// getMaxEpisodeOnDisk parses episode numbers from file names using ptn and returns the max.
-func (s *Server) getMaxEpisodeOnDisk(seriesID, seasonNumber int) int {
-	rows, err := s.db.Query(`
-		SELECT file_name FROM media_files
-		WHERE series_id = ? AND season_number = ?
-	`, seriesID, seasonNumber)
-	if err != nil {
-		return 0
-	}
-	defer rows.Close() //nolint:errcheck
-
-	maxEp := 0
-	for rows.Next() {
-		var fileName string
-		if err := rows.Scan(&fileName); err != nil {
-			continue
-		}
-		info, err := ptn.Parse(fileName)
-		if err != nil {
-			continue
-		}
-		if info.Episode > maxEp {
-			maxEp = info.Episode
-		}
-	}
-	return maxEp
 }
 
 func (s *Server) handleCheckUpdates(w http.ResponseWriter, _ *http.Request) {
