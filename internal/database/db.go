@@ -87,19 +87,19 @@ func (db *DB) initTables() error {
 		name TEXT,
 		poster_url TEXT,
 		folder_path TEXT,
-		voice_actor_id INTEGER,
+		track_name TEXT,
 		downloaded BOOLEAN DEFAULT 0,
 		aired_episodes INTEGER DEFAULT 0,
 		max_episode_on_disk INTEGER DEFAULT 0,
 		tracker_url TEXT,
 		torrent_hash TEXT,
+		auto_process BOOLEAN DEFAULT 0,
 		tracker_updated_at TEXT,
 		discovered_at TIMESTAMP,
 		created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
 		updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
 		UNIQUE(series_id, season_number),
-		FOREIGN KEY (series_id) REFERENCES series(id) ON DELETE CASCADE,
-		FOREIGN KEY (voice_actor_id) REFERENCES voice_actors(id) ON DELETE SET NULL
+		FOREIGN KEY (series_id) REFERENCES series(id) ON DELETE CASCADE
 	);
 
 	-- Актёры/персонажи сериала
@@ -116,18 +116,12 @@ func (db *DB) initTables() error {
 		FOREIGN KEY (series_id) REFERENCES series(id) ON DELETE CASCADE
 	);
 
-	-- Справочник озвучек
-	CREATE TABLE IF NOT EXISTS voice_actors (
-		id INTEGER PRIMARY KEY AUTOINCREMENT,
-		name TEXT UNIQUE NOT NULL
-	);
-
 	-- Обработанные файлы (AudioCutter)
 	CREATE TABLE IF NOT EXISTS processed_files (
 		file_path TEXT PRIMARY KEY,
 		series_id INTEGER,
 		season_number INTEGER,
-		track_kept INTEGER,
+		track_kept TEXT,
 		processed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
 		FOREIGN KEY (series_id) REFERENCES series(id) ON DELETE SET NULL
 	);
@@ -184,51 +178,6 @@ func (db *DB) initTables() error {
 		return fmt.Errorf("failed to create tables: %w", err)
 	}
 
-	// Seed default voice actors if table is empty
-	if err := db.seedVoiceActors(); err != nil {
-		return fmt.Errorf("failed to seed voice actors: %w", err)
-	}
-
-	return nil
-}
-
-// seedVoiceActors inserts popular voice actors if the table is empty
-func (db *DB) seedVoiceActors() error {
-	var count int
-	err := db.QueryRow("SELECT COUNT(*) FROM voice_actors").Scan(&count)
-	if err != nil {
-		return err
-	}
-
-	if count > 0 {
-		return nil // Already seeded
-	}
-
-	defaultVoices := []string{
-		"LostFilm",
-		"Кубик в Кубе",
-		"Amedia",
-		"NewStudio",
-		"ColdFilm",
-		"Jaskier",
-		"AlexFilm",
-		"SDI Media",
-		"Original",
-	}
-
-	stmt, err := db.Prepare("INSERT INTO voice_actors (name) VALUES (?)")
-	if err != nil {
-		return err
-	}
-	defer stmt.Close() //nolint:errcheck // closing prepared statement
-
-	for _, name := range defaultVoices {
-		if _, err := stmt.Exec(name); err != nil {
-			return err
-		}
-	}
-
-	slog.Info("Seeded default voice actors", "count", len(defaultVoices))
 	return nil
 }
 

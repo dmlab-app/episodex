@@ -136,7 +136,7 @@ func insertTestProcessedFile(t *testing.T, db *database.DB, seriesID int64, seas
 	t.Helper()
 	_, err := db.Exec(`
 		INSERT INTO processed_files (file_path, series_id, season_number, track_kept)
-		VALUES (?, ?, ?, 1)
+		VALUES (?, ?, ?, 'TestTrack')
 	`, filePath, seriesID, seasonNum)
 	if err != nil {
 		t.Fatalf("insert processed file: %v", err)

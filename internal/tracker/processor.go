@@ -13,21 +13,23 @@ import (
 
 // AudioProcessor defines the audio operations needed by the post-download processor.
 type AudioProcessor interface {
-	RemoveAudioTracks(filePath string, keepTrackID int, keepOriginal bool) error
+	RemoveAudioTracks(filePath string, trackName string, keepOriginal bool) error
 }
 
 // PostDownloadProcessor checks for completed torrents and processes audio on new files.
 type PostDownloadProcessor struct {
-	db    *database.DB
-	qbit  QbitClient
-	audio AudioProcessor
+	db       *database.DB
+	qbit     QbitClient
+	audio    AudioProcessor
+	procLock *database.ProcessingLock
 }
 
 // NewPostDownloadProcessor creates a new PostDownloadProcessor.
-func NewPostDownloadProcessor(db *database.DB, qbit QbitClient, audio AudioProcessor) *PostDownloadProcessor {
+func NewPostDownloadProcessor(db *database.DB, qbit QbitClient, audio AudioProcessor, procLock *database.ProcessingLock) *PostDownloadProcessor {
 	return &PostDownloadProcessor{
-		db:    db,
-		qbit:  qbit,
+		db:       db,
+		qbit:     qbit,
+		procLock: procLock,
 		audio: audio,
 	}
 }
@@ -92,10 +94,20 @@ func (p *PostDownloadProcessor) processSeason(season *database.Season, torrentBy
 		Season:   season.SeasonNumber,
 	}
 
-	// Skip if missing required fields
-	if season.VoiceActorID == nil {
-		return nil // no voice actor configured, can't auto-process
+	// Skip if not flagged for auto-processing (only checker-initiated downloads)
+	if !season.AutoProcess {
+		return nil
 	}
+
+	if season.TrackName == nil || *season.TrackName == "" {
+		return nil // no track configured, can't auto-process
+	}
+
+	// Skip if already being processed (e.g. by frontend)
+	if !p.procLock.TryLock(season.SeriesID, int64(season.SeasonNumber)) {
+		return nil
+	}
+	defer p.procLock.Unlock(season.SeriesID, int64(season.SeasonNumber))
 	if season.TorrentHash == nil || *season.TorrentHash == "" {
 		return nil
 	}
@@ -112,17 +124,7 @@ func (p *PostDownloadProcessor) processSeason(season *database.Season, torrentBy
 		return nil // still downloading
 	}
 
-	// Get the track to keep from previously processed files
-	trackKept, found, err := p.db.GetTrackKeptForSeason(season.SeriesID, season.SeasonNumber)
-	if err != nil {
-		result.Error = fmt.Errorf("get track kept: %w", err)
-		return result
-	}
-	if !found {
-		// No previously processed files — user hasn't selected a track yet
-		result.Skipped = true
-		return result
-	}
+	trackName := *season.TrackName
 
 	// Find unprocessed MKV files in the folder
 	processedPaths, err := p.db.GetProcessedFilePathsBySeason(season.SeriesID, season.SeasonNumber)
@@ -148,16 +150,16 @@ func (p *PostDownloadProcessor) processSeason(season *database.Season, torrentBy
 		}
 
 		slog.Info("Post-download processor: processing file",
-			"season_id", season.ID, "file", filePath, "track", trackKept)
+			"season_id", season.ID, "file", filePath, "track", trackName)
 
-		if err := p.audio.RemoveAudioTracks(filePath, trackKept, false); err != nil {
+		if err := p.audio.RemoveAudioTracks(filePath, trackName, false); err != nil {
 			slog.Error("Post-download processor: audio processing failed",
 				"file", filePath, "error", err)
 			result.Failed++
 			continue
 		}
 
-		if err := p.db.InsertProcessedFile(filePath, season.SeriesID, season.SeasonNumber, trackKept); err != nil {
+		if err := p.db.InsertProcessedFile(filePath, season.SeriesID, season.SeasonNumber, trackName); err != nil {
 			slog.Error("Post-download processor: failed to mark file as processed",
 				"file", filePath, "error", err)
 			result.Failed++
@@ -165,6 +167,11 @@ func (p *PostDownloadProcessor) processSeason(season *database.Season, torrentBy
 		}
 
 		result.Processed++
+	}
+
+	// Clear auto_process flag — this download batch is done
+	if result.Failed == 0 {
+		p.db.Exec(`UPDATE seasons SET auto_process = 0 WHERE id = ?`, season.ID) //nolint:errcheck
 	}
 
 	return result

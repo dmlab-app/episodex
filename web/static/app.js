@@ -325,8 +325,8 @@ function renderSeasons(series, seasons) {
             `;
         } else {
             // Owned season - clickable card with optional voice badge
-            const voiceBadge = season.voice_actor_name
-                ? `<span class="voice-badge">${esc(season.voice_actor_name)}</span>`
+            const voiceBadge = season.track_name
+                ? `<span class="voice-badge">${esc(season.track_name)}</span>`
                 : '';
             return `
                 <div class="season-card on-disk" data-season="${season.season_number}" onclick="navigate('/series/${series.id}/season/${season.season_number}')">
@@ -380,7 +380,6 @@ async function showSeasonDetailPage(seriesId, seasonNum) {
     document.getElementById('files-list').innerHTML = '<div class="loader"></div>';
     document.getElementById('audio-tracks-list').innerHTML = '';
     document.getElementById('progress-container').style.display = 'none';
-    document.getElementById('processed-files-list').innerHTML = '';
     document.getElementById('tracker-link-container').style.display = 'none';
     document.getElementById('tracker-link').removeAttribute('href');
 
@@ -390,7 +389,7 @@ async function showSeasonDetailPage(seriesId, seasonNum) {
     await loadSeasonDetail(seriesId, seasonNum);
 }
 
-let selectedTrackId = null;
+let selectedTrackName = null;
 let currentAudioPlayer = null;
 let voiceSelectHandler = null;
 
@@ -454,20 +453,41 @@ async function loadSeasonDetail(seriesId, seasonNum) {
             document.getElementById('audio-tracks-container').style.display = 'block';
             const tracksList = document.getElementById('audio-tracks-list');
 
+            // Disable actions if season is already being processed
+            if (audioData.processing) {
+                const processBtn = document.getElementById('process-audio-btn');
+                const defaultBtn = document.getElementById('set-default-btn');
+                if (processBtn) { processBtn.disabled = true; processBtn.textContent = 'Processing...'; }
+                if (defaultBtn) { defaultBtn.disabled = true; }
+            }
+
             // Store file path for preview
             window.currentAudioFilePath = audioData.files[0]?.path;
 
+            // Auto-select: prefer current season's track_name, then first history match, then first track
+            let autoSelectIndex = 0;
+            const currentTrack = seasonInfo.track_name;
+            if (currentTrack) {
+                const idx = audioData.audio_tracks.findIndex(t => t.name === currentTrack);
+                if (idx >= 0) autoSelectIndex = idx;
+            } else {
+                const histIdx = audioData.audio_tracks.findIndex(t => t.matched_history);
+                if (histIdx >= 0) autoSelectIndex = histIdx;
+            }
+
             tracksList.innerHTML = audioData.audio_tracks.map((track, index) => `
-                <div class="track-item ${index === 0 ? 'selected' : ''}" id="track-item-${index}">
-                    <input type="radio" name="audioTrack" value="${track.id}" id="track-radio-${index}"
-                        ${index === 0 ? 'checked' : ''} onchange="selectTrack(${track.id}, ${index})">
-                    <div class="track-info" onclick="selectTrack(${track.id}, ${index}); document.getElementById('track-radio-${index}').checked = true;">
+                <div class="track-item ${index === autoSelectIndex ? 'selected' : ''} ${track.matched_history ? 'history-match' : ''}" id="track-item-${index}">
+                    <input type="radio" name="audioTrack" value="${esc(track.name)}" id="track-radio-${index}"
+                        ${index === autoSelectIndex ? 'checked' : ''} onchange="selectTrack('${esc(track.name)}', ${index})">
+                    <div class="track-info" onclick="selectTrack('${esc(track.name)}', ${index}); document.getElementById('track-radio-${index}').checked = true;">
                         <div class="track-name">
-                            ${esc(track.name) || `Track ${track.id}`}
+                            ${esc(track.name) || 'Unnamed track'}
                             ${track.default ? ' <span class="default-badge">default</span>' : ''}
+                            ${track.matched_history ? ' <span class="history-badge">used before</span>' : ''}
                         </div>
                         <div class="track-details">
-                            ID: ${track.id} | Lang: ${esc(track.language)} | Codec: ${esc(track.codec)} | Channels: ${esc(track.channels) || 'N/A'}
+                            Lang: ${esc(track.language)} | Codec: ${esc(track.codec)} | Channels: ${esc(track.channels) || 'N/A'}
+                            | Files: ${track.file_count}/${track.total_files}${track.file_count < track.total_files ? ' ⚠' : ''}
                         </div>
                     </div>
                     <div class="track-actions">
@@ -479,23 +499,19 @@ async function loadSeasonDetail(seriesId, seasonNum) {
                 </div>
             `).join('');
 
-            // Select first track by default
-            if (audioData.audio_tracks.length > 0) {
-                selectedTrackId = audioData.audio_tracks[0].id;
-            }
+            selectedTrackName = audioData.audio_tracks[autoSelectIndex]?.name || null;
 
-            // Parse studio names from Russian audio track names
+            // Populate voice selector dropdown from track names
             const studioNames = parseStudiosFromTracks(audioData.audio_tracks);
 
             const voiceSelect = document.getElementById('voice-select');
             if (voiceSelect && studioNames.length > 0) {
-                voiceSelect.innerHTML = '<option value="">No voice selected</option>';
+                voiceSelect.innerHTML = '<option value="">No track selected</option>';
                 studioNames.forEach(name => {
                     const option = document.createElement('option');
                     option.value = name;
                     option.textContent = name;
-                    // Match against current voice actor name
-                    if (seasonInfo.voice_actor_name && seasonInfo.voice_actor_name === name) {
+                    if (seasonInfo.track_name && seasonInfo.track_name === name) {
                         option.selected = true;
                     }
                     voiceSelect.appendChild(option);
@@ -548,20 +564,20 @@ function parseStudiosFromTracks(tracks) {
     return studios;
 }
 
-async function updateSeasonVoice(seriesId, seasonNum, voiceName) {
+async function updateSeasonVoice(seriesId, seasonNum, trackName) {
     try {
         await api.put(`/api/series/${seriesId}/seasons/${seasonNum}`, {
-            voice_name: voiceName
+            track_name: trackName
         });
-        showToast('Voice studio updated');
+        showToast('Track updated');
     } catch (e) {
-        showToast('Failed to update voice studio', 'error');
+        showToast('Failed to update track', 'error');
         console.error(e);
     }
 }
 
-function selectTrack(trackId, index) {
-    selectedTrackId = trackId;
+function selectTrack(trackName, index) {
+    selectedTrackName = trackName;
     document.querySelectorAll('.track-item').forEach((item, i) => {
         item.classList.toggle('selected', i === index);
     });
@@ -661,7 +677,7 @@ async function togglePreview(index) {
 }
 
 async function processSeasonAudio() {
-    if (!selectedTrackId) {
+    if (!selectedTrackName) {
         showToast('Please select an audio track', 'error');
         return;
     }
@@ -681,7 +697,7 @@ async function processSeasonAudio() {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
-                track_id: selectedTrackId,
+                track_name: selectedTrackName,
                 keep_original: keepOriginal
             })
         });
@@ -728,7 +744,7 @@ async function processSeasonAudio() {
 }
 
 async function setDefaultTrack() {
-    if (!selectedTrackId) {
+    if (!selectedTrackName) {
         showToast('Please select an audio track', 'error');
         return;
     }
@@ -745,7 +761,7 @@ async function setDefaultTrack() {
         const response = await fetch(`/api/series/${state.currentSeriesId}/seasons/${state.currentSeasonNum}/audio/set-default`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ track_id: selectedTrackId })
+            body: JSON.stringify({ track_name: selectedTrackName })
         });
 
         if (!response.ok) {
@@ -790,59 +806,57 @@ async function setDefaultTrack() {
 function handleProgressEvent(data, stats) {
     const progressBar = document.getElementById('progress-bar');
     const progressPercent = document.getElementById('progress-percent');
-    const currentFileInfo = document.getElementById('current-file-info');
-    const filesList = document.getElementById('processed-files-list');
+
+    // Find file item in the Files list by name and update its badge
+    function updateFileBadge(fileName, statusClass, statusText) {
+        const fileItems = document.querySelectorAll('#files-list .file-item');
+        for (const item of fileItems) {
+            const nameEl = item.querySelector('.file-name');
+            if (nameEl && nameEl.textContent === fileName) {
+                const badge = item.querySelector('.file-status');
+                if (badge) {
+                    badge.className = 'file-status ' + statusClass;
+                    badge.textContent = statusText;
+                }
+                break;
+            }
+        }
+    }
 
     switch (data.type) {
         case 'start':
             document.getElementById('progress-text').textContent = `Processing ${data.total} files...`;
             break;
 
-        case 'progress':
-            const percent = Math.round((data.current / data.total) * 100);
+        case 'progress': {
+            // File started but not done yet — show (current-1)/total progress
+            const percent = Math.round(((data.current - 1) / data.total) * 100);
             progressBar.style.width = percent + '%';
             progressPercent.textContent = percent + '%';
-            currentFileInfo.innerHTML = `
-                <div class="file-label">Processing (${data.current}/${data.total}):</div>
-                <div class="file-name">${esc(data.file)}</div>
-            `;
+            updateFileBadge(data.file, 'processing', 'Processing...');
             break;
+        }
 
-        case 'file_done':
-            // Update stats
+        case 'file_done': {
             if (data.status === 'success') stats.success++;
             else if (data.status === 'error') stats.error++;
             else if (data.status === 'skipped') stats.skipped++;
 
-            document.getElementById('stat-success').textContent = stats.success;
-            document.getElementById('stat-error').textContent = stats.error;
-            document.getElementById('stat-skipped').textContent = stats.skipped;
-
-            // Add to files list
-            const statusClass = data.status;
             const statusText = data.status === 'success' ? 'Success' :
                               data.status === 'skipped' ? 'Skipped' : 'Error';
-
-            filesList.insertAdjacentHTML('beforeend', `
-                <div class="file-item">
-                    <span class="file-name">${esc(data.file)}</span>
-                    <span class="file-status ${statusClass}">${statusText}</span>
-                </div>
-            `);
+            updateFileBadge(data.file, data.status, statusText);
 
             const percentDone = Math.round((data.current / data.total) * 100);
             progressBar.style.width = percentDone + '%';
             progressPercent.textContent = percentDone + '%';
             break;
+        }
 
         case 'complete':
             progressBar.style.width = '100%';
+            progressBar.classList.add('complete');
             progressPercent.textContent = '100%';
             document.getElementById('progress-text').textContent = 'Complete!';
-            currentFileInfo.innerHTML = `
-                <div class="file-label">Processing complete</div>
-                <div class="file-name">Success: ${stats.success}, Errors: ${stats.error}, Skipped: ${stats.skipped}</div>
-            `;
             break;
     }
 }

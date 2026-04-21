@@ -1504,6 +1504,17 @@ h4 { font-size: 1rem; }
     color: var(--warning);
 }
 
+.file-status.processing {
+    background: rgba(59, 130, 246, 0.2);
+    color: var(--accent);
+    animation: pulse-status 1.5s ease-in-out infinite;
+}
+
+@keyframes pulse-status {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.5; }
+}
+
 .file-status.processed,
 .file-status.success {
     background: rgba(34, 197, 94, 0.2);
@@ -1552,15 +1563,29 @@ h4 { font-size: 1rem; }
 
 .progress-bar {
     height: 100%;
-    background: var(--accent);
+    background: linear-gradient(
+        -45deg,
+        var(--accent) 25%,
+        rgba(255, 255, 255, 0.15) 25%,
+        rgba(255, 255, 255, 0.15) 50%,
+        var(--accent) 50%,
+        var(--accent) 75%,
+        rgba(255, 255, 255, 0.15) 75%
+    );
+    background-size: 40px 40px;
     border-radius: var(--radius-full);
-    transition: width var(--transition-fast);
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    color: var(--bg-deep);
-    font-weight: 600;
-    font-size: 0.75rem;
+    transition: width 0.4s ease;
+    animation: progress-stripes 1s linear infinite;
+}
+
+.progress-bar.complete {
+    background: var(--success);
+    animation: none;
+}
+
+@keyframes progress-stripes {
+    0% { background-position: 40px 0; }
+    100% { background-position: 0 0; }
 }
 
 .progress-fill {
@@ -2271,6 +2296,21 @@ h4 { font-size: 1rem; }
     background: rgba(34, 197, 94, 0.2);
     color: var(--success);
     border-radius: var(--radius-sm);
+}
+
+.history-badge {
+    font-size: 0.65rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    padding: 2px 6px;
+    background: rgba(59, 130, 246, 0.2);
+    color: var(--accent);
+    border-radius: var(--radius-sm);
+}
+
+.track-item.history-match {
+    border-left: 3px solid var(--accent);
 }
 
 .text-muted {

@@ -48,6 +48,9 @@ func main() {
 	}
 	defer db.Close() //nolint:errcheck
 
+	// Shared processing lock for concurrent access control
+	procLock := database.NewProcessingLock()
+
 	// Initialize backup manager
 	backupManager := database.NewBackupManager(db, cfg.DBPath, cfg.BackupPath, cfg.BackupRetention)
 
@@ -166,7 +169,7 @@ func main() {
 		})
 
 		audioCutter := audio.New()
-		postProcessor := tracker.NewPostDownloadProcessor(db, qbitClient, audioCutter)
+		postProcessor := tracker.NewPostDownloadProcessor(db, qbitClient, audioCutter, procLock)
 		sch.AddTask(scheduler.Task{
 			Name:     "post_download_processing",
 			Schedule: &scheduler.IntervalSchedule{Interval: time.Duration(cfg.TrackerCheckIntervalHours) * time.Hour},
@@ -208,6 +211,7 @@ func main() {
 			serverOpts = append(serverOpts, api.WithSeasonSearcher(kz.SeasonSearcher()))
 		}
 	}
+	serverOpts = append(serverOpts, api.WithProcessingLock(procLock))
 	apiServer := api.NewServer(db, mediaScanner, tvdbClient, qbitClient, cfg.MediaPath, serverOpts...)
 	httpServer := &http.Server{
 		Addr:         cfg.Host + ":" + cfg.Port,

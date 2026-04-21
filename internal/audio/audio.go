@@ -112,8 +112,8 @@ func (ac *AudioCutter) ScanFolderAudioTracks(folderPath string) (map[string][]Au
 			return err
 		}
 
-		// Only process MKV files
-		if !info.IsDir() && strings.ToLower(filepath.Ext(path)) == ".mkv" {
+		// Only process MKV files, skip temp files from mkvmerge
+		if !info.IsDir() && strings.ToLower(filepath.Ext(path)) == ".mkv" && !strings.HasPrefix(info.Name(), ".tmp_") {
 			tracks, err := ac.GetAudioTracks(path)
 			if err != nil {
 				// Log error but continue processing other files
@@ -132,44 +132,13 @@ func (ac *AudioCutter) ScanFolderAudioTracks(folderPath string) (map[string][]Au
 	return results, nil
 }
 
-// RemoveAudioTracks removes all audio tracks except the specified one.
+// RemoveAudioTracks removes all audio tracks except the one matching trackName.
 // If keepOriginal is true, the original English audio track is also preserved.
-func (ac *AudioCutter) RemoveAudioTracks(filePath string, keepTrackID int, keepOriginal bool) error {
-	// Check if file exists
+func (ac *AudioCutter) RemoveAudioTracks(filePath string, trackName string, keepOriginal bool) error {
 	if _, err := os.Stat(filePath); os.IsNotExist(err) {
 		return fmt.Errorf("file does not exist: %s", filePath)
 	}
 
-	// Get all tracks to build the command
-	tracks, err := ac.GetAudioTracks(filePath)
-	if err != nil {
-		return fmt.Errorf("failed to get audio tracks: %w", err)
-	}
-
-	// Verify that the track to keep exists
-	trackExists := false
-	for _, track := range tracks {
-		if track.ID == keepTrackID {
-			trackExists = true
-			break
-		}
-	}
-
-	if !trackExists {
-		return fmt.Errorf("track ID %d does not exist in file", keepTrackID)
-	}
-
-	// Create output file path (temporary)
-	dir := filepath.Dir(filePath)
-	base := filepath.Base(filePath)
-	tempFile := filepath.Join(dir, ".tmp_"+base)
-	defer func() { _ = os.Remove(tempFile) }() // Clean up temp file on failure; no-op after successful rename
-
-	// Build track selection arguments
-	// We need to keep video, subtitles, and the selected audio track
-	var trackArgs []string
-
-	// Get all tracks (not just audio)
 	cmd := exec.Command(ac.mkvmergePath, "-J", filePath) //nolint:gosec // controlled input
 	output, err := cmd.Output()
 	if err != nil {
@@ -181,42 +150,43 @@ func (ac *AudioCutter) RemoveAudioTracks(filePath string, keepTrackID int, keepO
 		return fmt.Errorf("failed to parse mkvmerge output: %w", err)
 	}
 
-	// Build track selection: keep all video and subtitle tracks, only specified audio track
-	// If keepOriginal is set, also keep English audio tracks
+	// Find target track by name and collect IDs to keep
 	kept := make(map[int]bool)
 	var audioTrackIDs []string
 	for _, track := range info.Tracks {
-		if track.Type == "audio" {
-			keep := track.ID == keepTrackID
-			if keepOriginal && (track.Properties.Language == "eng" || track.Properties.Language == "und") {
-				keep = true
-			}
-			if keep && !kept[track.ID] {
-				kept[track.ID] = true
-				audioTrackIDs = append(audioTrackIDs, fmt.Sprintf("%d", track.ID))
-			}
+		if track.Type != "audio" {
+			continue
+		}
+		keep := strings.EqualFold(track.Properties.TrackName, trackName)
+		if keepOriginal && (track.Properties.Language == "eng" || track.Properties.Language == "und") {
+			keep = true
+		}
+		if keep && !kept[track.ID] {
+			kept[track.ID] = true
+			audioTrackIDs = append(audioTrackIDs, fmt.Sprintf("%d", track.ID))
 		}
 	}
 
 	if len(audioTrackIDs) == 0 {
-		return fmt.Errorf("no audio track to keep")
+		return fmt.Errorf("track %q not found in file", trackName)
 	}
 
-	// Build mkvmerge command
-	// mkvmerge -o output.mkv --audio-tracks <keep_track_id> input.mkv
-	trackArgs = []string{
+	dir := filepath.Dir(filePath)
+	base := filepath.Base(filePath)
+	tempFile := filepath.Join(dir, ".tmp_"+base)
+	defer func() { _ = os.Remove(tempFile) }()
+
+	trackArgs := []string{
 		"-o", tempFile,
 		"--audio-tracks", strings.Join(audioTrackIDs, ","),
 		filePath,
 	}
 
-	// Execute mkvmerge
 	mkvCmd := exec.Command(ac.mkvmergePath, trackArgs...) //nolint:gosec // controlled input
 	if output, err := mkvCmd.CombinedOutput(); err != nil {
 		return fmt.Errorf("mkvmerge failed: %w, output: %s", err, string(output))
 	}
 
-	// Replace original file. If rename fails, save with [processed] suffix.
 	if err := os.Rename(tempFile, filePath); err != nil {
 		ext := filepath.Ext(filePath)
 		base := strings.TrimSuffix(filePath, ext)
@@ -280,14 +250,13 @@ func (ac *AudioCutter) GetPreviewPath(hash string) (string, error) {
 	return previewPath, nil
 }
 
-// SetDefaultAudioTrack sets the specified audio track as default using mkvpropedit.
-// It clears the default flag on all tracks and sets it on the target audio track.
-func (ac *AudioCutter) SetDefaultAudioTrack(filePath string, trackID int) error {
+// SetDefaultAudioTrack sets the audio track matching trackName as default using mkvpropedit.
+// It clears the default flag on all tracks and sets it on the matching audio track.
+func (ac *AudioCutter) SetDefaultAudioTrack(filePath string, trackName string) error {
 	if _, err := os.Stat(filePath); os.IsNotExist(err) {
 		return fmt.Errorf("file does not exist: %s", filePath)
 	}
 
-	// Get all tracks to know which ones exist
 	cmd := exec.Command(ac.mkvmergePath, "-J", filePath) //nolint:gosec // controlled input
 	output, err := cmd.Output()
 	if err != nil {
@@ -299,28 +268,26 @@ func (ac *AudioCutter) SetDefaultAudioTrack(filePath string, trackID int) error 
 		return fmt.Errorf("failed to parse mkvmerge output: %w", err)
 	}
 
-	// Verify target track exists and is audio
-	trackFound := false
+	// Find target track ID by name
+	targetID := -1
 	for _, track := range info.Tracks {
-		if track.ID == trackID && track.Type == "audio" {
-			trackFound = true
+		if track.Type == "audio" && strings.EqualFold(track.Properties.TrackName, trackName) {
+			targetID = track.ID
 			break
 		}
 	}
-	if !trackFound {
-		return fmt.Errorf("audio track ID %d does not exist in file", trackID)
+	if targetID < 0 {
+		return fmt.Errorf("audio track %q not found in file", trackName)
 	}
 
 	// Build mkvpropedit arguments:
 	// Clear default on all tracks, then set default on target
 	args := []string{filePath}
 	for _, track := range info.Tracks {
-		// mkvpropedit uses 1-based track numbers; mkvmerge -J gives 0-based IDs
-		trackNum := track.ID + 1
+		trackNum := track.ID + 1 // mkvpropedit uses 1-based track numbers
 		args = append(args, "--edit", fmt.Sprintf("track:%d", trackNum), "--set", "flag-default=0")
 	}
-	// Set default on target track
-	targetNum := trackID + 1
+	targetNum := targetID + 1
 	args = append(args, "--edit", fmt.Sprintf("track:%d", targetNum), "--set", "flag-default=1")
 
 	editCmd := exec.Command(ac.mkvpropeditPath, args...) //nolint:gosec // controlled input

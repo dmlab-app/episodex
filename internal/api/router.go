@@ -36,6 +36,7 @@ type Server struct {
 	seasonSearcher tracker.SeasonSearcher
 	router         *chi.Mux
 	mediaPath      string
+	procLock *database.ProcessingLock
 }
 
 // NewServer creates a new API server.
@@ -51,6 +52,7 @@ func NewServer(db *database.DB, sc *scanner.Scanner, tvdbClient *tvdb.Client, qb
 		audioCutter: audio.New(),
 		router:      chi.NewRouter(),
 		mediaPath:   mediaPath,
+		procLock:    database.NewProcessingLock(),
 	}
 	for _, opt := range opts {
 		opt(s)
@@ -70,6 +72,18 @@ func WithSeasonSearcher(ss tracker.SeasonSearcher) ServerOption {
 	return func(s *Server) {
 		s.seasonSearcher = ss
 	}
+}
+
+// WithProcessingLock sets a shared processing lock for concurrent access control.
+func WithProcessingLock(pl *database.ProcessingLock) ServerOption {
+	return func(s *Server) {
+		s.procLock = pl
+	}
+}
+
+// ProcessingLock returns the server's processing lock for sharing with other components.
+func (s *Server) ProcessingLock() *database.ProcessingLock {
+	return s.procLock
 }
 
 // setupMiddleware configures middleware chain
@@ -130,7 +144,6 @@ func (s *Server) setupRoutes() {
 		})
 
 		// Voice actors endpoint
-		r.Get("/voices", s.handleListVoices) // GET /api/voices
 
 		// Audio preview serving endpoint
 		r.Get("/audio/preview/{hash}", s.handleServeAudioPreview) // GET /api/audio/preview/:hash
@@ -442,11 +455,10 @@ func (s *Server) handleGetSeries(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Get seasons from seasons table with voice actor JOIN
+	// Get seasons
 	seasonsQuery := `
-		SELECT sn.season_number, sn.folder_path, sn.downloaded, sn.voice_actor_id, va.name, sn.discovered_at
+		SELECT sn.season_number, sn.folder_path, sn.downloaded, sn.track_name, sn.discovered_at
 		FROM seasons sn
-		LEFT JOIN voice_actors va ON sn.voice_actor_id = va.id
 		WHERE sn.series_id = ?
 		ORDER BY sn.season_number
 	`
@@ -461,12 +473,11 @@ func (s *Server) handleGetSeries(w http.ResponseWriter, r *http.Request) {
 	seasons := []map[string]interface{}{}
 	for rows.Next() {
 		var seasonNum int
-		var folderPath, voiceActorName *string
+		var folderPath, trackName *string
 		var downloaded bool
-		var voiceActorID *int
 		var discoveredAt *time.Time
 
-		if err := rows.Scan(&seasonNum, &folderPath, &downloaded, &voiceActorID, &voiceActorName, &discoveredAt); err != nil {
+		if err := rows.Scan(&seasonNum, &folderPath, &downloaded, &trackName, &discoveredAt); err != nil {
 			slog.Error("Failed to scan season row", "error", err)
 			continue
 		}
@@ -480,11 +491,8 @@ func (s *Server) handleGetSeries(w http.ResponseWriter, r *http.Request) {
 		if folderPath != nil {
 			season["folder_path"] = *folderPath
 		}
-		if voiceActorID != nil {
-			season["voice_actor_id"] = *voiceActorID
-		}
-		if voiceActorName != nil {
-			season["voice_actor_name"] = *voiceActorName
+		if trackName != nil {
+			season["track_name"] = *trackName
 		}
 		if discoveredAt != nil {
 			season["discovered_at"] = *discoveredAt
@@ -768,7 +776,7 @@ func (s *Server) handleMatchSeries(w http.ResponseWriter, r *http.Request) {
 			SET folder_path = COALESCE((SELECT src.folder_path FROM seasons src WHERE src.series_id = ? AND src.season_number = seasons.season_number), folder_path),
 				downloaded = MAX(downloaded, COALESCE((SELECT src.downloaded FROM seasons src WHERE src.series_id = ? AND src.season_number = seasons.season_number), 0)),
 				aired_episodes = MAX(aired_episodes, COALESCE((SELECT src.aired_episodes FROM seasons src WHERE src.series_id = ? AND src.season_number = seasons.season_number), 0)),
-				voice_actor_id = COALESCE(voice_actor_id, (SELECT src.voice_actor_id FROM seasons src WHERE src.series_id = ? AND src.season_number = seasons.season_number)),
+				track_name = COALESCE(track_name, (SELECT src.track_name FROM seasons src WHERE src.series_id = ? AND src.season_number = seasons.season_number)),
 				discovered_at = COALESCE(discovered_at, (SELECT src.discovered_at FROM seasons src WHERE src.series_id = ? AND src.season_number = seasons.season_number)),
 				tvdb_season_id = COALESCE(tvdb_season_id, (SELECT src.tvdb_season_id FROM seasons src WHERE src.series_id = ? AND src.season_number = seasons.season_number)),
 				name = COALESCE(name, (SELECT src.name FROM seasons src WHERE src.series_id = ? AND src.season_number = seasons.season_number)),
@@ -1366,20 +1374,29 @@ func (s *Server) handleGetNextSeasons(w http.ResponseWriter, _ *http.Request) {
 
 	results := make([]map[string]interface{}, 0)
 	for _, sr := range series {
-		nextSeason := 1
+		// Build list of candidate seasons to search for:
+		// - If user has downloads: only (maxDownloaded+1) — the single next season
+		// - If disk is empty: try airedSeasons first, fall back to older if not found
+		var candidates []int
 		if sr.maxDownloaded != nil {
-			nextSeason = *sr.maxDownloaded + 1
-		}
-
-		// Skip if next season hasn't aired yet
-		if nextSeason > sr.airedSeasons {
-			continue
+			next := *sr.maxDownloaded + 1
+			if next > sr.airedSeasons {
+				continue // already has everything
+			}
+			candidates = []int{next}
+		} else {
+			// Nothing on disk — try newest first, fall back to older
+			if sr.airedSeasons < 1 {
+				continue
+			}
+			for n := sr.airedSeasons; n >= 1; n-- {
+				candidates = append(candidates, n)
+			}
 		}
 
 		entry := map[string]interface{}{
 			"id":            sr.id,
 			"title":         sr.title,
-			"next_season":   nextSeason,
 			"aired_seasons": sr.airedSeasons,
 		}
 		if sr.tvdbID != nil {
@@ -1395,70 +1412,80 @@ func (s *Server) handleGetNextSeasons(w http.ResponseWriter, _ *http.Request) {
 			entry["status"] = *sr.status
 		}
 
-		// Check cache first
-		cached, err := s.db.GetCachedNextSeason(sr.id, nextSeason)
-		if err != nil {
-			slog.Warn("Failed to check next-season cache", "series_id", sr.id, "error", err)
-		}
-
-		if cached != nil {
-			// Negative cache entries (no torrent found) expire after 24h
-			// so we re-check sooner in case the torrent has been uploaded
-			isNegative := cached.TrackerURL == ""
-			if isNegative && time.Since(cached.CachedAt) > 24*time.Hour {
-				// Negative entry expired — fall through to re-search
-			} else {
-				if !isNegative {
-					entry["tracker_url"] = cached.TrackerURL
-					entry["torrent_title"] = cached.Title
-					entry["torrent_size"] = cached.Size
-				}
-				results = append(results, entry)
-				continue
+		// Try each candidate season in order until we find a torrent.
+		// For single candidate (user has downloads), we accept "not found" result.
+		// For multi-candidate (empty disk), we fall through to previous season if not found.
+		foundSeason := candidates[0]
+		var foundResult *tracker.SeasonSearchResult
+		for _, seasonNum := range candidates {
+			cached, cErr := s.db.GetCachedNextSeason(sr.id, seasonNum)
+			if cErr != nil {
+				slog.Warn("Failed to check next-season cache", "series_id", sr.id, "error", cErr)
 			}
-		}
+			if cached != nil {
+				isNegative := cached.TrackerURL == ""
+				if !(isNegative && time.Since(cached.CachedAt) > 24*time.Hour) {
+					// Valid cache hit
+					if !isNegative {
+						foundSeason = seasonNum
+						foundResult = &tracker.SeasonSearchResult{
+							DetailsURL: cached.TrackerURL,
+							Title:      cached.Title,
+							Size:       cached.Size,
+						}
+						break
+					}
+					// Negative cache: season known to have no torrent — try next candidate
+					continue
+				}
+			}
 
-		// Search Kinozal if searcher is configured
-		if s.seasonSearcher != nil {
-			searchQuery := sr.title
+			if s.seasonSearcher == nil {
+				break
+			}
+
 			searchFailed := false
-			result, err := s.seasonSearcher.FindSeasonTorrent(searchQuery, nextSeason)
+			result, err := s.seasonSearcher.FindSeasonTorrent(sr.title, seasonNum)
 			if err != nil {
-				slog.Warn("Failed to search for season torrent", "series", sr.title, "season", nextSeason, "error", err)
+				slog.Warn("Failed to search for season torrent", "series", sr.title, "season", seasonNum, "error", err)
 				searchFailed = true
 			}
-
-			// Fallback to original title if Russian title returned nothing
 			if result == nil && !searchFailed && sr.originalTitle != nil && *sr.originalTitle != sr.title {
-				result, err = s.seasonSearcher.FindSeasonTorrent(*sr.originalTitle, nextSeason)
+				result, err = s.seasonSearcher.FindSeasonTorrent(*sr.originalTitle, seasonNum)
 				if err != nil {
-					slog.Warn("Failed to search for season torrent (fallback)", "series", *sr.originalTitle, "season", nextSeason, "error", err)
+					slog.Warn("Failed to search for season torrent (fallback)", "series", *sr.originalTitle, "season", seasonNum, "error", err)
 					searchFailed = true
 				}
 			}
 
-			if result != nil {
-				entry["tracker_url"] = result.DetailsURL
-				entry["torrent_title"] = result.Title
-				entry["torrent_size"] = result.Size
-			}
-
-			// Only cache when search completed without errors; skip on transient failures
-			// to allow retry on next request instead of creating a 7-day negative cache hit
 			if !searchFailed {
 				cacheEntry := &database.NextSeasonCache{
 					SeriesID:     sr.id,
-					SeasonNumber: nextSeason,
+					SeasonNumber: seasonNum,
 				}
 				if result != nil {
 					cacheEntry.TrackerURL = result.DetailsURL
 					cacheEntry.Title = result.Title
 					cacheEntry.Size = result.Size
 				}
-				if err := s.db.SaveCachedNextSeason(cacheEntry); err != nil {
-					slog.Warn("Failed to cache next-season result", "series_id", sr.id, "error", err)
+				if cErr := s.db.SaveCachedNextSeason(cacheEntry); cErr != nil {
+					slog.Warn("Failed to cache next-season result", "series_id", sr.id, "error", cErr)
 				}
 			}
+
+			if result != nil {
+				foundSeason = seasonNum
+				foundResult = result
+				break
+			}
+			// Not found — for multi-candidate (empty disk) keep trying older seasons
+		}
+
+		entry["next_season"] = foundSeason
+		if foundResult != nil {
+			entry["tracker_url"] = foundResult.DetailsURL
+			entry["torrent_title"] = foundResult.Title
+			entry["torrent_size"] = foundResult.Size
 		}
 
 		results = append(results, entry)
@@ -1491,9 +1518,8 @@ func (s *Server) handleListSeasons(w http.ResponseWriter, r *http.Request) {
 
 	// Get owned seasons from seasons table with voice actor JOIN (includes cached poster_url)
 	query := `
-		SELECT sn.season_number, sn.folder_path, sn.downloaded, sn.voice_actor_id, va.name, sn.discovered_at, sn.poster_url
+		SELECT sn.season_number, sn.folder_path, sn.downloaded, sn.track_name, sn.discovered_at, sn.poster_url
 		FROM seasons sn
-		LEFT JOIN voice_actors va ON sn.voice_actor_id = va.id
 		WHERE sn.series_id = ?
 		ORDER BY sn.season_number
 	`
@@ -1509,12 +1535,11 @@ func (s *Server) handleListSeasons(w http.ResponseWriter, r *http.Request) {
 	downloadedSeasons := make(map[int]map[string]interface{})
 	for rows.Next() {
 		var seasonNum int
-		var folderPath, voiceActorName, seasonPosterURL *string
+		var folderPath, trackName, seasonPosterURL *string
 		var downloaded bool
-		var voiceActorID *int
 		var discoveredAt *time.Time
 
-		if err := rows.Scan(&seasonNum, &folderPath, &downloaded, &voiceActorID, &voiceActorName, &discoveredAt, &seasonPosterURL); err != nil {
+		if err := rows.Scan(&seasonNum, &folderPath, &downloaded, &trackName, &discoveredAt, &seasonPosterURL); err != nil {
 			slog.Error("Failed to scan season detail row", "error", err)
 			continue
 		}
@@ -1528,11 +1553,8 @@ func (s *Server) handleListSeasons(w http.ResponseWriter, r *http.Request) {
 		if folderPath != nil {
 			season["folder_path"] = *folderPath
 		}
-		if voiceActorID != nil {
-			season["voice_actor_id"] = *voiceActorID
-		}
-		if voiceActorName != nil {
-			season["voice_actor_name"] = *voiceActorName
+		if trackName != nil {
+			season["track_name"] = *trackName
 		}
 		if discoveredAt != nil {
 			season["discovered_at"] = *discoveredAt
@@ -1685,26 +1707,76 @@ func (s *Server) handleGetAudioTracks(w http.ResponseWriter, r *http.Request) {
 		})
 	}
 
-	// Get audio tracks from first file (assuming all files have same structure)
-	var audioTracks []map[string]interface{}
-	if len(sortedPaths) > 0 {
-		tracks := results[sortedPaths[0]]
-		for _, track := range tracks {
-			audioTracks = append(audioTracks, map[string]interface{}{
-				"id":       track.ID,
-				"codec":    track.Codec,
-				"language": track.Language,
-				"name":     track.Name,
-				"default":  track.Default,
-				"channels": track.Channels,
-			})
+	// Aggregate audio tracks across all files by name.
+	// Track IDs differ between files, so name is the stable identifier.
+	type trackInfo struct {
+		Name      string
+		Language  string
+		Codec     string
+		Channels  int
+		IsDefault bool
+		FileCount int
+	}
+	tracksByKey := map[string]*trackInfo{} // keyed by lowercase name
+	var trackOrder []string                // preserve first-seen order (lowercase keys)
+
+	totalFiles := len(sortedPaths)
+	for _, fp := range sortedPaths {
+		seen := map[string]bool{}
+		for _, track := range results[fp] {
+			key := strings.ToLower(track.Name)
+			if seen[key] {
+				continue
+			}
+			seen[key] = true
+			ti, exists := tracksByKey[key]
+			if !exists {
+				ti = &trackInfo{
+					Name:     track.Name, // keep original casing from first file
+					Language: track.Language,
+					Codec:    track.Codec,
+					Channels: track.Channels,
+				}
+				tracksByKey[key] = ti
+				trackOrder = append(trackOrder, key)
+			}
+			ti.FileCount++
+			if track.Default {
+				ti.IsDefault = true
+			}
 		}
 	}
 
+	// Get track name history for this series to flag matches
+	trackHistory, _ := s.db.GetTrackNamesForSeries(sid)
+	historySet := make(map[string]bool, len(trackHistory))
+	for _, h := range trackHistory {
+		historySet[strings.ToLower(h)] = true
+	}
+
+	var audioTracks []map[string]interface{}
+	for _, key := range trackOrder {
+		ti := tracksByKey[key]
+		audioTracks = append(audioTracks, map[string]interface{}{
+			"name":            ti.Name,
+			"codec":           ti.Codec,
+			"language":        ti.Language,
+			"default":         ti.IsDefault,
+			"channels":        ti.Channels,
+			"file_count":      ti.FileCount,
+			"total_files":     totalFiles,
+			"matched_history": historySet[key],
+		})
+	}
+
+	isProcessing := s.procLock.IsLocked(sid, int64(snum))
+
 	response := map[string]interface{}{
-		"files":        files,
-		"audio_tracks": audioTracks,
-		"folder_path":  *folderPath,
+		"files":               files,
+		"audio_tracks":        audioTracks,
+		"folder_path":         *folderPath,
+		"track_names_history": trackHistory,
+		"processing":          isProcessing,
 	}
 
 	s.respondJSON(w, http.StatusOK, response)
@@ -1725,15 +1797,13 @@ func (s *Server) handleGetSeason(w http.ResponseWriter, r *http.Request) {
 
 	var folderPath *string
 	var downloaded bool
-	var voiceActorID *int
-	var voiceActorName *string
+	var trackName *string
 	var discoveredAt *time.Time
 	err = s.db.QueryRow(`
-		SELECT sn.folder_path, sn.downloaded, sn.voice_actor_id, va.name, sn.discovered_at
+		SELECT sn.folder_path, sn.downloaded, sn.track_name, sn.discovered_at
 		FROM seasons sn
-		LEFT JOIN voice_actors va ON sn.voice_actor_id = va.id
 		WHERE sn.series_id = ? AND sn.season_number = ?
-	`, sid, snum).Scan(&folderPath, &downloaded, &voiceActorID, &voiceActorName, &discoveredAt)
+	`, sid, snum).Scan(&folderPath, &downloaded, &trackName, &discoveredAt)
 
 	if err == sql.ErrNoRows {
 		s.respondError(w, http.StatusNotFound, "season not found")
@@ -1752,20 +1822,23 @@ func (s *Server) handleGetSeason(w http.ResponseWriter, r *http.Request) {
 		"on_disk":       folderPath != nil,
 	}
 
-	if voiceActorID != nil {
-		response["voice_actor_id"] = *voiceActorID
-	}
-	if voiceActorName != nil {
-		response["voice_actor_name"] = *voiceActorName
+	if trackName != nil {
+		response["track_name"] = *trackName
 	}
 	if discoveredAt != nil {
 		response["discovered_at"] = *discoveredAt
 	}
 
+	// Include track name history for this series
+	trackHistory, _ := s.db.GetTrackNamesForSeries(sid)
+	if len(trackHistory) > 0 {
+		response["track_names_history"] = trackHistory
+	}
+
 	s.respondJSON(w, http.StatusOK, response)
 }
 
-// handleUpdateSeason updates a season's voice_actor_id
+// handleUpdateSeason updates a season's track_name
 func (s *Server) handleUpdateSeason(w http.ResponseWriter, r *http.Request) {
 	sid, err := strconv.ParseInt(chi.URLParam(r, "id"), 10, 64)
 	if err != nil {
@@ -1779,8 +1852,7 @@ func (s *Server) handleUpdateSeason(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var req struct {
-		VoiceActorID *int    `json:"voice_actor_id"`
-		VoiceName    *string `json:"voice_name"`
+		TrackName *string `json:"track_name"`
 	}
 
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -1788,101 +1860,20 @@ func (s *Server) handleUpdateSeason(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Verify season exists
-	var exists bool
-	err = s.db.QueryRow(`
-		SELECT COUNT(*) > 0 FROM seasons
-		WHERE series_id = ? AND season_number = ?
-	`, sid, snum).Scan(&exists)
-	if err != nil {
-		s.respondError(w, http.StatusInternalServerError, "failed to check season existence")
-		return
-	}
-	if !exists {
-		s.respondError(w, http.StatusNotFound, "season not found")
-		return
-	}
-
-	// Resolve voice_actor_id from voice_name if provided
-	if req.VoiceName != nil && *req.VoiceName != "" {
-		name := strings.TrimSpace(*req.VoiceName)
-		var id int
-		err := s.db.QueryRow(`SELECT id FROM voice_actors WHERE name = ?`, name).Scan(&id)
-		if err != nil {
-			// Not found — create
-			result, err := s.db.Exec(`INSERT INTO voice_actors (name) VALUES (?)`, name)
-			if err != nil {
-				s.respondError(w, http.StatusInternalServerError, "failed to create voice actor")
-				return
-			}
-			newID, _ := result.LastInsertId()
-			id = int(newID)
-			slog.Info("Created voice actor from track name", "name", name, "id", id)
-		}
-		req.VoiceActorID = &id
-	}
-
-	// Treat voice_actor_id <= 0 as "clear"
-	if req.VoiceActorID != nil && *req.VoiceActorID <= 0 {
-		req.VoiceActorID = nil
-	}
-
-	// Verify voice actor exists if provided
-	if req.VoiceActorID != nil {
-		var voiceExists bool
-		err := s.db.QueryRow(`SELECT COUNT(*) > 0 FROM voice_actors WHERE id = ?`, *req.VoiceActorID).Scan(&voiceExists)
-		if err != nil || !voiceExists {
-			s.respondError(w, http.StatusBadRequest, "invalid voice actor ID")
-			return
-		}
-	}
-
-	// Update voice_actor_id
 	_, err = s.db.Exec(`
-		UPDATE seasons SET voice_actor_id = ?, updated_at = CURRENT_TIMESTAMP
+		UPDATE seasons SET track_name = ?, updated_at = CURRENT_TIMESTAMP
 		WHERE series_id = ? AND season_number = ?
-	`, req.VoiceActorID, sid, snum)
+	`, req.TrackName, sid, snum)
 	if err != nil {
 		s.respondError(w, http.StatusInternalServerError, "failed to update season")
 		return
 	}
 
-	slog.Info("Updated season voice", "series_id", sid, "season", snum, "voice_actor_id", req.VoiceActorID)
+	slog.Info("Updated season track", "series_id", sid, "season", snum, "track_name", req.TrackName)
 
 	s.respondJSON(w, http.StatusOK, map[string]interface{}{
 		"success": true,
 	})
-}
-
-// handleListVoices returns all voice actor studios
-func (s *Server) handleListVoices(w http.ResponseWriter, _ *http.Request) {
-	rows, err := s.db.Query(`SELECT id, name FROM voice_actors ORDER BY name`)
-	if err != nil {
-		s.respondError(w, http.StatusInternalServerError, "failed to fetch voices")
-		return
-	}
-	defer rows.Close() //nolint:errcheck
-
-	voices := []map[string]interface{}{}
-	for rows.Next() {
-		var id int
-		var name string
-		if err := rows.Scan(&id, &name); err != nil {
-			slog.Error("Failed to scan voice actor row", "error", err)
-			continue
-		}
-		voices = append(voices, map[string]interface{}{
-			"id":   id,
-			"name": name,
-		})
-	}
-
-	if err := rows.Err(); err != nil {
-		s.respondError(w, http.StatusInternalServerError, "error reading voices")
-		return
-	}
-
-	s.respondJSON(w, http.StatusOK, voices)
 }
 
 // handleGenerateAudioPreview generates a 30-second preview of an audio track
@@ -1981,8 +1972,8 @@ func (s *Server) handleProcessAudioStream(w http.ResponseWriter, r *http.Request
 	slog.Info("Audio processing started", "series_id", seriesID, "season", seasonNum)
 
 	var req struct {
-		TrackID      int  `json:"track_id"`
-		KeepOriginal bool `json:"keep_original"`
+		TrackName    string `json:"track_name"`
+		KeepOriginal bool   `json:"keep_original"`
 	}
 
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -1990,12 +1981,11 @@ func (s *Server) handleProcessAudioStream(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	if req.TrackID <= 0 {
-		s.respondError(w, http.StatusBadRequest, "track_id is required")
+	if req.TrackName == "" {
+		s.respondError(w, http.StatusBadRequest, "track_name is required")
 		return
 	}
 
-	// Validate series ID and season number before database query
 	sid, err := strconv.ParseInt(seriesID, 10, 64)
 	if err != nil {
 		s.respondError(w, http.StatusBadRequest, "invalid series ID")
@@ -2019,6 +2009,13 @@ func (s *Server) handleProcessAudioStream(w http.ResponseWriter, r *http.Request
 		return
 	}
 
+	// Prevent concurrent processing of the same season
+	if !s.procLock.TryLock(sid, snum) {
+		s.respondError(w, http.StatusConflict, "this season is already being processed")
+		return
+	}
+	defer s.procLock.Unlock(sid, snum)
+
 	flusher, ok := w.(http.Flusher)
 	if !ok {
 		s.respondError(w, http.StatusInternalServerError, "streaming unsupported")
@@ -2034,27 +2031,30 @@ func (s *Server) handleProcessAudioStream(w http.ResponseWriter, r *http.Request
 	}
 
 	// Remove torrent from qBittorrent before processing to avoid file locks.
-	// Try cached torrent_hash first, then resolve from qBit.
+	// Try cached torrent_hash first, fall back to folder match.
 	if s.qbitClient != nil {
+		deleted := false
 		var torrentHash *string
 		s.db.QueryRow(`SELECT torrent_hash FROM seasons WHERE series_id = ? AND season_number = ?`,
 			sid, snum).Scan(&torrentHash) //nolint:errcheck
 
 		if torrentHash != nil && *torrentHash != "" {
 			if err := s.qbitClient.DeleteTorrent(*torrentHash); err != nil {
-				slog.Warn("Failed to delete torrent before audio processing", "hash", *torrentHash, "error", err)
+				slog.Warn("Failed to delete torrent by cached hash, will try folder match", "hash", *torrentHash, "error", err)
 			} else {
 				slog.Info("Deleted torrent before audio processing", "hash", *torrentHash)
+				deleted = true
 			}
-		} else if folderPath != nil {
-			// No cached hash — try to find and delete by folder match
+		}
+
+		// Fallback: find by folder match if hash was missing or stale
+		if !deleted && folderPath != nil {
 			if torrents, err := s.qbitClient.ListTorrents(); err == nil {
 				if matched := qbittorrent.FindTorrentByFolder(torrents, *folderPath); matched != nil {
 					if err := s.qbitClient.DeleteTorrent(matched.Hash); err != nil {
-						slog.Warn("Failed to delete torrent before audio processing", "hash", matched.Hash, "error", err)
+						slog.Warn("Failed to delete torrent by folder match", "hash", matched.Hash, "error", err)
 					} else {
 						slog.Info("Deleted torrent before audio processing", "hash", matched.Hash)
-						// Save hash for future use
 						_, _ = s.db.Exec(`UPDATE seasons SET torrent_hash = ? WHERE series_id = ? AND season_number = ?`,
 							matched.Hash, sid, snum)
 					}
@@ -2088,6 +2088,10 @@ func (s *Server) handleProcessAudioStream(w http.ResponseWriter, r *http.Request
 	}
 	fmt.Fprintf(w, "data: %s\n\n", mustJSON(startEvent)) //nolint:errcheck
 	flusher.Flush()
+
+	// Save track selection to season (single source of truth)
+	s.db.Exec(`UPDATE seasons SET track_name = ?, updated_at = CURRENT_TIMESTAMP WHERE series_id = ? AND season_number = ?`,
+		req.TrackName, sid, snum) //nolint:errcheck
 
 	// Process files
 	successCount := 0
@@ -2130,8 +2134,7 @@ func (s *Server) handleProcessAudioStream(w http.ResponseWriter, r *http.Request
 		fmt.Fprintf(w, "data: %s\n\n", mustJSON(progressEvent)) //nolint:errcheck
 		flusher.Flush()
 
-		// Process file
-		err := s.audioCutter.RemoveAudioTracks(filePath, req.TrackID, req.KeepOriginal)
+		err := s.audioCutter.RemoveAudioTracks(filePath, req.TrackName, req.KeepOriginal)
 		if err != nil {
 			errorCount++
 			slog.Error("Failed to process audio file", "file", filePath, "error", err)
@@ -2148,7 +2151,7 @@ func (s *Server) handleProcessAudioStream(w http.ResponseWriter, r *http.Request
 			continue
 		}
 
-		if err := s.db.InsertProcessedFile(filePath, sid, int(snum), req.TrackID); err != nil {
+		if err := s.db.InsertProcessedFile(filePath, sid, int(snum), req.TrackName); err != nil {
 			slog.Error("Failed to log processed file", "file", filePath, "error", err)
 		}
 
@@ -2186,7 +2189,7 @@ func (s *Server) handleSetDefaultTrackStream(w http.ResponseWriter, r *http.Requ
 	slog.Info("Set default track started", "series_id", seriesID, "season", seasonNum)
 
 	var req struct {
-		TrackID int `json:"track_id"`
+		TrackName string `json:"track_name"`
 	}
 
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -2194,8 +2197,8 @@ func (s *Server) handleSetDefaultTrackStream(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
-	if req.TrackID <= 0 {
-		s.respondError(w, http.StatusBadRequest, "track_id is required")
+	if req.TrackName == "" {
+		s.respondError(w, http.StatusBadRequest, "track_name is required")
 		return
 	}
 
@@ -2221,6 +2224,12 @@ func (s *Server) handleSetDefaultTrackStream(w http.ResponseWriter, r *http.Requ
 		s.respondError(w, http.StatusNotFound, "season not found or no folder path")
 		return
 	}
+
+	if !s.procLock.TryLock(sid, snum) {
+		s.respondError(w, http.StatusConflict, "this season is already being processed")
+		return
+	}
+	defer s.procLock.Unlock(sid, snum)
 
 	flusher, ok := w.(http.Flusher)
 	if !ok {
@@ -2281,7 +2290,7 @@ func (s *Server) handleSetDefaultTrackStream(w http.ResponseWriter, r *http.Requ
 		fmt.Fprintf(w, "data: %s\n\n", mustJSON(progressEvent)) //nolint:errcheck
 		flusher.Flush()
 
-		err := s.audioCutter.SetDefaultAudioTrack(filePath, req.TrackID)
+		err := s.audioCutter.SetDefaultAudioTrack(filePath, req.TrackName)
 		if err != nil {
 			errorCount++
 			slog.Error("Failed to set default track", "file", filePath, "error", err)

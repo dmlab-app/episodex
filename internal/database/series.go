@@ -31,7 +31,7 @@ type Season struct {
 	Name             *string
 	PosterURL        *string
 	FolderPath       *string
-	VoiceActorID     *int
+	TrackName     *string
 	TrackerURL       *string
 	TorrentHash      *string
 	TrackerUpdatedAt *string
@@ -41,6 +41,7 @@ type Season struct {
 	SeasonNumber     int
 	AiredEpisodes    int
 	Downloaded       bool
+	AutoProcess      bool
 }
 
 // Character represents a character in a series
@@ -105,14 +106,14 @@ func (db *DB) UpsertSeason(season *Season) (int64, error) {
 				name = COALESCE(?, name),
 				poster_url = COALESCE(?, poster_url),
 				folder_path = COALESCE(?, folder_path),
-				voice_actor_id = COALESCE(?, voice_actor_id),
+				track_name = COALESCE(?, track_name),
 				downloaded = MAX(downloaded, ?),
 				aired_episodes = ?,
 				discovered_at = COALESCE(?, discovered_at),
 				updated_at = CURRENT_TIMESTAMP
 			WHERE id = ?
 		`, season.TVDBSeasonID, season.Name, season.PosterURL,
-			season.FolderPath, season.VoiceActorID, season.Downloaded,
+			season.FolderPath, season.TrackName, season.Downloaded,
 			season.AiredEpisodes,
 			season.DiscoveredAt, existingID)
 		if err != nil {
@@ -126,12 +127,12 @@ func (db *DB) UpsertSeason(season *Season) (int64, error) {
 		INSERT INTO seasons (
 			series_id, tvdb_season_id, season_number, name,
 			poster_url, folder_path,
-			voice_actor_id, downloaded, aired_episodes, discovered_at,
+			track_name, downloaded, aired_episodes, discovered_at,
 			created_at, updated_at
 		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
 	`, season.SeriesID, season.TVDBSeasonID, season.SeasonNumber, season.Name,
 		season.PosterURL, season.FolderPath,
-		season.VoiceActorID, season.Downloaded, season.AiredEpisodes, season.DiscoveredAt)
+		season.TrackName, season.Downloaded, season.AiredEpisodes, season.DiscoveredAt)
 
 	if err != nil {
 		return 0, fmt.Errorf("failed to insert season: %w", err)
@@ -172,12 +173,12 @@ func (db *DB) GetSeasonBySeriesAndNumber(seriesID int64, seasonNumber int) (*Sea
 	err := db.QueryRow(`
 		SELECT id, series_id, tvdb_season_id, season_number, name,
 			poster_url, folder_path,
-			voice_actor_id, downloaded, aired_episodes, tracker_url, torrent_hash, tracker_updated_at, discovered_at
+			track_name, downloaded, aired_episodes, tracker_url, torrent_hash, tracker_updated_at, discovered_at
 		FROM seasons WHERE series_id = ? AND season_number = ?
 	`, seriesID, seasonNumber).Scan(
 		&season.ID, &season.SeriesID, &season.TVDBSeasonID, &season.SeasonNumber,
 		&season.Name, &season.PosterURL, &season.FolderPath,
-		&season.VoiceActorID, &season.Downloaded, &season.AiredEpisodes, &season.TrackerURL, &season.TorrentHash, &season.TrackerUpdatedAt, &season.DiscoveredAt,
+		&season.TrackName, &season.Downloaded, &season.AiredEpisodes, &season.TrackerURL, &season.TorrentHash, &season.TrackerUpdatedAt, &season.DiscoveredAt,
 	)
 	if err == sql.ErrNoRows {
 		return nil, nil
@@ -193,7 +194,7 @@ func (db *DB) GetSeasonsWithTrackerURL() ([]Season, error) {
 	rows, err := db.Query(`
 		SELECT id, series_id, tvdb_season_id, season_number, name,
 			poster_url, folder_path,
-			voice_actor_id, downloaded, aired_episodes, tracker_url, torrent_hash, tracker_updated_at, discovered_at
+			track_name, downloaded, aired_episodes, tracker_url, torrent_hash, tracker_updated_at, discovered_at, auto_process
 		FROM seasons
 		WHERE tracker_url IS NOT NULL AND tracker_url != ''
 		ORDER BY series_id, season_number
@@ -209,7 +210,7 @@ func (db *DB) GetSeasonsWithTrackerURL() ([]Season, error) {
 		if err := rows.Scan(
 			&s.ID, &s.SeriesID, &s.TVDBSeasonID, &s.SeasonNumber,
 			&s.Name, &s.PosterURL, &s.FolderPath,
-			&s.VoiceActorID, &s.Downloaded, &s.AiredEpisodes, &s.TrackerURL, &s.TorrentHash, &s.TrackerUpdatedAt, &s.DiscoveredAt,
+			&s.TrackName, &s.Downloaded, &s.AiredEpisodes, &s.TrackerURL, &s.TorrentHash, &s.TrackerUpdatedAt, &s.DiscoveredAt, &s.AutoProcess,
 		); err != nil {
 			return nil, fmt.Errorf("failed to scan season with tracker URL: %w", err)
 		}
@@ -237,6 +238,32 @@ func (db *DB) UpdateTrackerUpdatedAt(seasonID int64, updatedAt string) error {
 		return fmt.Errorf("failed to update tracker_updated_at: %w", err)
 	}
 	return nil
+}
+
+// GetTrackNamesForSeries returns all distinct track_name values for a series (history).
+func (db *DB) GetTrackNamesForSeries(seriesID int64) ([]string, error) {
+	rows, err := db.Query(`
+		SELECT DISTINCT track_name FROM seasons
+		WHERE series_id = ? AND track_name IS NOT NULL AND track_name != ''
+		ORDER BY season_number
+	`, seriesID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to query track names: %w", err)
+	}
+	defer rows.Close() //nolint:errcheck
+
+	var names []string
+	for rows.Next() {
+		var name string
+		if err := rows.Scan(&name); err != nil {
+			return nil, fmt.Errorf("failed to scan track name: %w", err)
+		}
+		names = append(names, name)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("failed to iterate track names: %w", err)
+	}
+	return names, nil
 }
 
 // SyncSeriesAndChildren updates the series row and writes all child records
@@ -321,14 +348,14 @@ func upsertSeasonTx(tx *sql.Tx, season *Season) error {
 				name = COALESCE(?, name),
 				poster_url = COALESCE(?, poster_url),
 				folder_path = COALESCE(?, folder_path),
-				voice_actor_id = COALESCE(?, voice_actor_id),
+				track_name = COALESCE(?, track_name),
 				downloaded = MAX(downloaded, ?),
 				aired_episodes = ?,
 				discovered_at = COALESCE(?, discovered_at),
 				updated_at = CURRENT_TIMESTAMP
 			WHERE id = ?
 		`, season.TVDBSeasonID, season.Name, season.PosterURL,
-			season.FolderPath, season.VoiceActorID, season.Downloaded,
+			season.FolderPath, season.TrackName, season.Downloaded,
 			season.AiredEpisodes,
 			season.DiscoveredAt, existingID)
 		if err != nil {
@@ -341,12 +368,12 @@ func upsertSeasonTx(tx *sql.Tx, season *Season) error {
 		INSERT INTO seasons (
 			series_id, tvdb_season_id, season_number, name,
 			poster_url, folder_path,
-			voice_actor_id, downloaded, aired_episodes, discovered_at,
+			track_name, downloaded, aired_episodes, discovered_at,
 			created_at, updated_at
 		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
 	`, season.SeriesID, season.TVDBSeasonID, season.SeasonNumber, season.Name,
 		season.PosterURL, season.FolderPath,
-		season.VoiceActorID, season.Downloaded, season.AiredEpisodes, season.DiscoveredAt)
+		season.TrackName, season.Downloaded, season.AiredEpisodes, season.DiscoveredAt)
 	if err != nil {
 		return fmt.Errorf("failed to insert season: %w", err)
 	}

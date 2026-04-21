@@ -225,43 +225,35 @@ func TestCleanupRemovedSeasons_NonOwnedSeason_NotTouched(t *testing.T) {
 	}
 }
 
-func TestCleanupRemovedSeasons_PreservesVoiceActorID(t *testing.T) {
+func TestCleanupRemovedSeasons_PreservesTrackName(t *testing.T) {
 	db := setupTestDB(t)
 	sc := New(db, nil, t.TempDir())
 
 	seriesID := seedTestSeries(t, db, "Voice Show")
 
-	// Get a voice actor ID
-	var voiceID int
-	err := db.QueryRow(`SELECT id FROM voice_actors WHERE name = 'LostFilm'`).Scan(&voiceID)
-	if err != nil {
-		t.Fatalf("failed to get voice actor: %v", err)
-	}
-
-	// Create owned season with voice actor, folder gone
+	// Create owned season with track_name, folder gone
 	missingDir := filepath.Join(t.TempDir(), "nonexistent")
-	_, err = db.Exec(`
-		INSERT INTO seasons (series_id, season_number, folder_path, voice_actor_id, downloaded, discovered_at, created_at, updated_at)
-		VALUES (?, 3, ?, ?, 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
-	`, seriesID, missingDir, voiceID)
+	_, err := db.Exec(`
+		INSERT INTO seasons (series_id, season_number, folder_path, track_name, downloaded, discovered_at, created_at, updated_at)
+		VALUES (?, 3, ?, 'LostFilm', 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+	`, seriesID, missingDir)
 	if err != nil {
-		t.Fatalf("failed to seed season with voice: %v", err)
+		t.Fatalf("failed to seed season: %v", err)
 	}
 
 	if err := sc.cleanupRemovedSeasons(); err != nil {
 		t.Fatalf("cleanupRemovedSeasons failed: %v", err)
 	}
 
-	// voice_actor_id should be preserved
-	var savedVoiceID *int
+	var savedTrackName *string
 	err = db.QueryRow(`
-		SELECT voice_actor_id FROM seasons WHERE series_id = ? AND season_number = 3
-	`, seriesID).Scan(&savedVoiceID)
+		SELECT track_name FROM seasons WHERE series_id = ? AND season_number = 3
+	`, seriesID).Scan(&savedTrackName)
 	if err != nil {
-		t.Fatalf("failed to query voice_actor_id: %v", err)
+		t.Fatalf("failed to query track_name: %v", err)
 	}
-	if savedVoiceID == nil || *savedVoiceID != voiceID {
-		t.Errorf("expected voice_actor_id=%d to be preserved, got %v", voiceID, savedVoiceID)
+	if savedTrackName == nil || *savedTrackName != "LostFilm" {
+		t.Errorf("expected track_name=LostFilm to be preserved, got %v", savedTrackName)
 	}
 }
 
@@ -321,6 +313,18 @@ func TestParseSeriesFolder(t *testing.T) {
 			folder:     "DS9.S03.1080p.2xRus",
 			wantSeason: 3,
 			wantTitle:  "DS9",
+		},
+		{
+			name:       "Russian Сезон N pattern",
+			folder:     "Друзья и соседи (Your Friends and Neighbors) Сезон 2",
+			wantSeason: 2,
+			wantTitle:  "Друзья и соседи",
+		},
+		{
+			name:       "Russian N сезон pattern",
+			folder:     "Некий сериал 3 сезон",
+			wantSeason: 3,
+			wantTitle:  "Некий сериал",
 		},
 	}
 

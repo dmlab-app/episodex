@@ -24,10 +24,14 @@ var (
 	reSeasonS          = regexp.MustCompile(`(?i)[Ss](\d{1,2})`)
 	reSeasonStandalone = regexp.MustCompile(`(?i)\bS(\d{1,2})\b`)
 	reSeasonWord       = regexp.MustCompile(`(?i)[Ss]eason\s*(\d{1,2})`)
+	reSeasonRu         = regexp.MustCompile(`(?i)сезон\s*(\d{1,2})`)     // "Сезон 2"
+	reSeasonRuRev      = regexp.MustCompile(`(?i)(\d{1,2})[-\s]*[ий]?\s*сезон`) // "2 сезон", "2-й сезон"
 	reSeasonEnd        = regexp.MustCompile(`(?i)\s*[Ss]\d{1,2}$`)
 	reSeasonWordEnd    = regexp.MustCompile(`(?i)\s*[Ss]eason\s*\d{1,2}$`)
 	reSeasonMid        = regexp.MustCompile(`(?i)\s+[Ss]\d{1,2}\s+`)
 	reSeasonWordMid    = regexp.MustCompile(`(?i)\s+[Ss]eason\s*\d{1,2}\s+`)
+	reSeasonRuEnd      = regexp.MustCompile(`(?i)\s*сезон\s*\d{1,2}\s*$`)
+	reSeasonRuRevEnd   = regexp.MustCompile(`(?i)\s*\d{1,2}[-\s]*[ий]?\s*сезон\s*$`)
 	reMultiSpace       = regexp.MustCompile(`\s+`)
 
 	reQualityPatterns = []*regexp.Regexp{
@@ -60,6 +64,8 @@ var (
 	reParseSeasonFolder = []*regexp.Regexp{
 		regexp.MustCompile(`^[Ss]eason\s*(\d{1,2})$`),
 		regexp.MustCompile(`^[Ss](\d{1,2})$`),
+		regexp.MustCompile(`(?i)^сезон\s*(\d{1,2})$`),
+		regexp.MustCompile(`(?i)^(\d{1,2})[-\s]*[ий]?\s*сезон$`),
 		regexp.MustCompile(`^(\d{1,2})$`),
 	}
 
@@ -260,6 +266,11 @@ func (s *Scanner) parseSeriesFolder(name, path string) *SeriesInfo {
 		title = extractTitleFromName(name)
 	}
 
+	// Strip Russian season suffixes from title (ptn doesn't know them)
+	title = reSeasonRuEnd.ReplaceAllString(title, "")
+	title = reSeasonRuRevEnd.ReplaceAllString(title, "")
+	title = strings.TrimSpace(title)
+
 	// Only return SeriesInfo if we found a season number
 	if season > 0 && title != "" {
 		return &SeriesInfo{
@@ -326,8 +337,10 @@ func extractTitleFromName(name string) string {
 	// Replace dots with spaces first
 	cleaned := strings.ReplaceAll(name, ".", " ")
 
-	// Remove season patterns
+	// Remove season patterns (EN + RU)
 	cleaned = reExtractSeasonSuffix.ReplaceAllString(cleaned, "")
+	cleaned = reSeasonRuEnd.ReplaceAllString(cleaned, "")
+	cleaned = reSeasonRuRevEnd.ReplaceAllString(cleaned, "")
 
 	// Remove quality and other junk patterns at the end
 	cleaned = reExtractJunkSuffix.ReplaceAllString(cleaned, "")
@@ -341,8 +354,8 @@ func extractTitleFromName(name string) string {
 
 // extractSeasonNumber manually extracts season number from folder name
 func extractSeasonNumber(name string) int {
-	// Match patterns like S01, S02, S37, etc.
-	for _, pattern := range []*regexp.Regexp{reSeasonS, reSeasonWord} {
+	// Match patterns like S01, S02, Season 2, Сезон 2, 2 сезон
+	for _, pattern := range []*regexp.Regexp{reSeasonWord, reSeasonRu, reSeasonRuRev, reSeasonS} {
 		matches := pattern.FindStringSubmatch(name)
 		if len(matches) >= 2 {
 			num, err := strconv.Atoi(matches[1])

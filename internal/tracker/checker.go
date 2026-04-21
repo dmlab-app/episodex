@@ -229,11 +229,11 @@ func (c *Checker) redownload(season *database.Season, client Client) (bool, erro
 		return false, fmt.Errorf("set file priorities: %w", err)
 	}
 
-	// Update torrent_hash in DB first (before deleting old torrent, so processor can find the new hash
-	// even if old torrent deletion fails or we crash between these steps)
+	// Update torrent_hash and flag for auto-processing
 	if err := c.db.UpdateTorrentHash(season.ID, newHash); err != nil {
 		return false, fmt.Errorf("update torrent hash: %w", err)
 	}
+	c.db.Exec(`UPDATE seasons SET auto_process = 1 WHERE id = ?`, season.ID) //nolint:errcheck
 
 	// Delete old torrent from qBit (after DB is updated, so we never lose track of the active torrent)
 	if season.TorrentHash != nil && *season.TorrentHash != "" {
