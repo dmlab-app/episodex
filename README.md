@@ -13,6 +13,7 @@ Local web service for tracking TV series with automatic media folder scanning.
 - qBittorrent integration (tracker links on season pages)
 - Kinozal tracker integration — auto-redownload updated torrents with new episodes
 - Seasons tab — discover next season to download via Kinozal search
+- Recommendations tab — TMDB-powered TV show suggestions based on your library, with Kinozal availability filter and blacklist management
 - Plex-inspired dark theme web interface
 
 ## Quick Start
@@ -112,6 +113,7 @@ All settings are configured via environment variables (`.env` file):
 - `KINOZAL_USER` - Kinozal username (optional, enables tracker auto-redownload)
 - `KINOZAL_PASSWORD` - Kinozal password (required when KINOZAL_USER is set)
 - `TRACKER_CHECK_INTERVAL_HOURS` - how often to check trackers for new episodes (default 6)
+- `TMDB_API_KEY` - TMDB v3 Bearer token (optional, enables Recommendations tab)
 
 ## API Endpoints
 
@@ -161,6 +163,14 @@ All settings are configured via environment variables (`.env` file):
 
 - `GET /api/next-seasons` - get next season to download for each series (with Kinozal torrent link)
 
+### Recommendations
+
+- `GET /api/recommendations` - list current TMDB-powered recommendations
+- `POST /api/recommendations/refresh` - trigger refresh of recommendations
+- `GET /api/recommendations/blacklist` - list blacklisted shows
+- `POST /api/recommendations/blacklist` - add show to blacklist; body: `{tvdb_id, title}`
+- `DELETE /api/recommendations/blacklist/{tvdb_id}` - remove show from blacklist
+
 ## Technologies
 
 - **Backend**: Go 1.25
@@ -181,6 +191,7 @@ Scheduler automatically runs:
 - TVDB updates check (daily)
 - Tracker check for new episodes (every 6 hours, configurable)
 - Post-download audio processing for completed torrents
+- Recommendations refresh (every 24 hours, when TMDB_API_KEY is set)
 - Database backup (daily at 3:00)
 - Old backup rotation
 
@@ -228,6 +239,7 @@ All core features implemented:
 - [x] qBittorrent integration (tracker links)
 - [x] Kinozal tracker auto-redownload
 - [x] Seasons tab (next season discovery via Kinozal)
+- [x] Recommendations tab (TMDB-powered)
 - [x] Linting and tests
 
 ## License

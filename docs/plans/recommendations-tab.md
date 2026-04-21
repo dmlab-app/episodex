@@ -187,8 +187,8 @@ The refresh runs on container startup and once every 24 hours via the existing s
 - [x] manual: click Refresh button → logs show refresh task running (skipped - not automatable)
 
 ### Task 11: [Final] Update documentation
-- [ ] update README.md env vars section with `TMDB_API_KEY`
-- [ ] add short "Recommendations" feature description to README
+- [x] update README.md env vars section with `TMDB_API_KEY`
+- [x] add short "Recommendations" feature description to README
 
 *Note: ralphex automatically moves completed plans to `docs/plans/completed/`*
 
