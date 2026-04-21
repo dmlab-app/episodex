@@ -15,8 +15,10 @@ import (
 	"github.com/episodex/episodex/internal/config"
 	"github.com/episodex/episodex/internal/database"
 	"github.com/episodex/episodex/internal/qbittorrent"
+	"github.com/episodex/episodex/internal/recommender"
 	"github.com/episodex/episodex/internal/scanner"
 	"github.com/episodex/episodex/internal/scheduler"
+	"github.com/episodex/episodex/internal/tmdb"
 	"github.com/episodex/episodex/internal/tracker"
 	"github.com/episodex/episodex/internal/tracker/kinozal"
 	"github.com/episodex/episodex/internal/tvdb"
@@ -185,6 +187,33 @@ func main() {
 				return nil
 			},
 		})
+	}
+
+	// Initialize recommendation refresh (optional — requires TMDB key + Kinozal searcher)
+	if cfg.TMDBApiKey == "" {
+		slog.Info("TMDB API key not configured, recommendations feature disabled")
+	} else {
+		var kzSearcher tracker.SeasonSearcher
+		for _, c := range trackerRegistry.Clients() {
+			if kz, ok := c.(*kinozal.Client); ok {
+				kzSearcher = kz.SeasonSearcher()
+				break
+			}
+		}
+		if kzSearcher == nil {
+			slog.Info("Kinozal client not configured, recommendations feature disabled")
+		} else {
+			tmdbClient := tmdb.NewClient(cfg.TMDBApiKey)
+			rec := recommender.New(db, tmdbClient, kzSearcher)
+			sch.AddTask(scheduler.Task{
+				Name:     "recommendation_refresh",
+				Schedule: &scheduler.IntervalSchedule{Interval: 24 * time.Hour},
+				Handler: func(_ context.Context) error {
+					return rec.Refresh()
+				},
+			})
+			slog.Info("Recommendations feature enabled")
+		}
 	}
 
 	// Start scheduler

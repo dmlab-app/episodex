@@ -121,8 +121,8 @@ The refresh runs on container startup and once every 24 hours via the existing s
 - [x] run tests — must pass before Task 6
 
 ### Task 6: Register scheduler task in main.go
-- [ ] in `cmd/server/main.go`, after existing tracker/processor tasks: if `cfg.TMDBApiKey != ""`, initialize `tmdbClient := tmdb.NewClient(cfg.TMDBApiKey)`, get kinozal searcher from `trackerRegistry.Clients()` (same pattern as `WithSeasonSearcher`), create `rec := recommender.New(db, tmdbClient, kinozalSearcher)`
-- [ ] register scheduler task:
+- [x] in `cmd/server/main.go`, after existing tracker/processor tasks: if `cfg.TMDBApiKey != ""`, initialize `tmdbClient := tmdb.NewClient(cfg.TMDBApiKey)`, get kinozal searcher from `trackerRegistry.Clients()` (same pattern as `WithSeasonSearcher`), create `rec := recommender.New(db, tmdbClient, kinozalSearcher)`
+- [x] register scheduler task:
   ```go
   sch.AddTask(scheduler.Task{
       Name:     "recommendation_refresh",
@@ -130,9 +130,9 @@ The refresh runs on container startup and once every 24 hours via the existing s
       Handler:  func(_ context.Context) error { return rec.Refresh() },
   })
   ```
-- [ ] log info if feature is disabled due to missing TMDB key
-- [ ] no unit test for main.go; covered by manual verification
-- [ ] run `go build ./...` — must pass before Task 7
+- [x] log info if feature is disabled due to missing TMDB key
+- [x] no unit test for main.go; covered by manual verification
+- [x] run `go build ./...` — must pass before Task 7
 
 ### Task 7: Add API handlers and routes
 - [ ] add `*recommender.Recommender` field to `Server` struct in `internal/api/router.go`
