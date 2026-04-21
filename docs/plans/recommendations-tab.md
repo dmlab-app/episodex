@@ -155,17 +155,17 @@ The refresh runs on container startup and once every 24 hours via the existing s
 - [x] run tests — must pass before Task 8
 
 ### Task 8: Frontend — Recommendations tab
-- [ ] add nav link in `web/templates/index.html` next to Seasons: `<a href="#/recommendations" data-page="recommendations">` with icon + label
-- [ ] add `<section id="page-recommendations" class="page">` block with header (title, Refresh button, "Manage Blacklist" link), container `<div id="recommendations-list" class="recommendations-grid"></div>`, empty-state message
-- [ ] in `web/static/app.js`:
-  - [ ] add `/recommendations` and `/recommendations/blacklist` handlers in `router()`
-  - [ ] implement `showRecommendationsPage()` and `loadRecommendations()` — fetch `/api/recommendations`, render cards
-  - [ ] each card: poster, title, year, rating badge, genres list, anchor wrapping the card that opens `tracker_url` in new tab (`target="_blank" rel="noopener"`), × button on corner calling `blacklistRecommendation(tvdbID, title)`
-  - [ ] `blacklistRecommendation`: POST `/api/recommendations/blacklist`, optimistic DOM removal, toast
-  - [ ] `refreshRecommendations`: POST `/api/recommendations/refresh`, show spinner on button, toast after
-- [ ] add CSS in `web/static/style.css`: reuse `.series-card` where possible, add `.recommendation-card` with `position: relative` for × button, `.btn-blacklist` icon button in top-right
-- [ ] write small JS test? No JS test framework in project — rely on manual verification
-- [ ] run all Go tests — must pass before Task 9
+- [x] add nav link in `web/templates/index.html` next to Seasons: `<a href="#/recommendations" data-page="recommendations">` with icon + label
+- [x] add `<section id="page-recommendations" class="page">` block with header (title, Refresh button, "Manage Blacklist" link), container `<div id="recommendations-list" class="recommendations-grid"></div>`, empty-state message
+- [x] in `web/static/app.js`:
+  - [x] add `/recommendations` and `/recommendations/blacklist` handlers in `router()` (blacklist route handled in Task 9)
+  - [x] implement `showRecommendationsPage()` and `loadRecommendations()` — fetch `/api/recommendations`, render cards
+  - [x] each card: poster, title, year, rating badge, genres list, anchor wrapping the card that opens `tracker_url` in new tab (`target="_blank" rel="noopener"`), × button on corner calling `blacklistRecommendation(tvdbID, title)`
+  - [x] `blacklistRecommendation`: POST `/api/recommendations/blacklist`, optimistic DOM removal, toast
+  - [x] `refreshRecommendations`: POST `/api/recommendations/refresh`, show spinner on button, toast after
+- [x] add CSS in `web/static/style.css`: reuse `.series-card` where possible, add `.recommendation-card` with `position: relative` for × button, `.btn-blacklist` icon button in top-right
+- [x] write small JS test? No JS test framework in project — rely on manual verification
+- [x] run all Go tests — must pass before Task 9
 
 ### Task 9: Frontend — Blacklist management page
 - [ ] add `<section id="page-blacklist" class="page">` block in index.html with heading "Blacklisted Shows" and `<div id="blacklist-list"></div>`, back link to recommendations

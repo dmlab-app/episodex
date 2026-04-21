@@ -6,9 +6,30 @@
 const state = {
     series: [],
     updates: [],
+    recommendations: [],
     currentView: null,
     currentSeriesId: null,
     currentSeasonNum: null,
+};
+
+// TMDB TV genre IDs → human-readable names. Recommendations API returns raw IDs.
+const TMDB_TV_GENRES = {
+    10759: 'Action & Adventure',
+    16: 'Animation',
+    35: 'Comedy',
+    80: 'Crime',
+    99: 'Documentary',
+    18: 'Drama',
+    10751: 'Family',
+    10762: 'Kids',
+    9648: 'Mystery',
+    10763: 'News',
+    10764: 'Reality',
+    10765: 'Sci-Fi & Fantasy',
+    10766: 'Soap',
+    10767: 'Talk',
+    10768: 'War & Politics',
+    37: 'Western',
 };
 
 // Inline SVG placeholder for series without posters
@@ -106,6 +127,8 @@ function router() {
         showUpdatesPage();
     } else if (hash === '/seasons') {
         showSeasonsPage();
+    } else if (hash === '/recommendations') {
+        showRecommendationsPage();
     } else if (hash === '/add-series') {
         showAddSeriesPage();
     }
@@ -1025,6 +1048,132 @@ function updateSeasonsBadge(count) {
 }
 
 // ==============================================================================
+// Recommendations Page
+// ==============================================================================
+async function showRecommendationsPage() {
+    state.currentView = 'recommendations';
+    hideAllPages();
+    document.getElementById('page-recommendations').classList.add('active');
+    updateNav('recommendations');
+    await loadRecommendations();
+}
+
+async function loadRecommendations() {
+    const list = document.getElementById('recommendations-list');
+    const empty = document.getElementById('recommendations-empty');
+    const loading = document.getElementById('recommendations-loading');
+
+    list.innerHTML = '';
+    empty.style.display = 'none';
+    loading.style.display = 'flex';
+
+    try {
+        state.recommendations = await api.get('/api/recommendations');
+        loading.style.display = 'none';
+
+        if (state.recommendations.length === 0) {
+            empty.style.display = 'flex';
+            return;
+        }
+
+        renderRecommendations();
+    } catch (e) {
+        loading.style.display = 'none';
+        showToast(`Failed to load recommendations: ${e.message || e}`, 'error');
+    }
+}
+
+function renderRecommendations() {
+    const list = document.getElementById('recommendations-list');
+
+    // Attach delegated click handler once
+    if (!list._blacklistHandlerAttached) {
+        list.addEventListener('click', e => {
+            const btn = e.target.closest('.btn-blacklist');
+            if (!btn) return;
+            e.preventDefault();
+            e.stopPropagation();
+            const tvdbID = parseInt(btn.dataset.tvdbId, 10);
+            const title = btn.dataset.title || '';
+            if (tvdbID > 0) blacklistRecommendation(tvdbID, title);
+        });
+        list._blacklistHandlerAttached = true;
+    }
+
+    list.innerHTML = state.recommendations.map(r => {
+        const safeUrl = r.tracker_url && (r.tracker_url.startsWith('http://') || r.tracker_url.startsWith('https://')) ? r.tracker_url : '';
+        const rating = typeof r.rating === 'number' && r.rating > 0 ? r.rating.toFixed(1) : null;
+        const genreNames = (r.genres || [])
+            .map(id => TMDB_TV_GENRES[id])
+            .filter(Boolean)
+            .slice(0, 3);
+
+        return `
+        <div class="recommendation-card" data-tvdb-id="${parseInt(r.tvdb_id, 10)}">
+            <a href="${esc(safeUrl)}" class="recommendation-link" target="_blank" rel="noopener noreferrer">
+                <div class="recommendation-poster">
+                    <img src="${esc(posterSrc(r.poster_url))}" alt="${esc(r.title)}" loading="lazy">
+                    ${rating ? `<span class="recommendation-rating">★ ${rating}</span>` : ''}
+                </div>
+                <div class="recommendation-info">
+                    <h4 class="recommendation-title">${esc(r.title)}</h4>
+                    <div class="recommendation-meta">
+                        ${r.year ? `<span>${esc(r.year)}</span>` : ''}
+                        ${r.torrent_size ? `<span class="recommendation-size">${esc(r.torrent_size)}</span>` : ''}
+                    </div>
+                    ${genreNames.length > 0 ? `
+                        <div class="recommendation-genres">
+                            ${genreNames.map(g => `<span class="recommendation-genre">${esc(g)}</span>`).join('')}
+                        </div>
+                    ` : ''}
+                </div>
+            </a>
+            <button class="btn-blacklist" title="Blacklist this show" data-tvdb-id="${parseInt(r.tvdb_id, 10)}" data-title="${esc(r.title || '')}">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <line x1="18" y1="6" x2="6" y2="18"/>
+                    <line x1="6" y1="6" x2="18" y2="18"/>
+                </svg>
+            </button>
+        </div>
+        `;
+    }).join('');
+}
+
+async function blacklistRecommendation(tvdbID, title) {
+    try {
+        await api.post('/api/recommendations/blacklist', { tvdb_id: tvdbID, title });
+        state.recommendations = state.recommendations.filter(r => r.tvdb_id !== tvdbID);
+        const card = document.querySelector(`.recommendation-card[data-tvdb-id="${tvdbID}"]`);
+        if (card) card.remove();
+        if (state.recommendations.length === 0) {
+            document.getElementById('recommendations-empty').style.display = 'flex';
+        }
+        showToast('Show blacklisted');
+    } catch (e) {
+        showToast(`Failed to blacklist: ${e.message || e}`, 'error');
+    }
+}
+
+async function refreshRecommendations() {
+    const btn = document.getElementById('refresh-recommendations-btn');
+    if (btn) {
+        btn.disabled = true;
+        btn.classList.add('spinning');
+    }
+    try {
+        await api.post('/api/recommendations/refresh', {});
+        showToast('Refresh started — this may take a minute');
+    } catch (e) {
+        showToast(`Refresh failed: ${e.message || e}`, 'error');
+    } finally {
+        if (btn) {
+            btn.disabled = false;
+            btn.classList.remove('spinning');
+        }
+    }
+}
+
+// ==============================================================================
 // Add Series Page
 // ==============================================================================
 async function showAddSeriesPage() {
@@ -1282,6 +1431,7 @@ document.addEventListener('DOMContentLoaded', () => {
     document.getElementById('empty-add-btn')?.addEventListener('click', () => navigate('/add-series'));
     document.getElementById('scan-trigger')?.addEventListener('click', triggerScan);
     document.getElementById('check-updates-btn')?.addEventListener('click', checkUpdates);
+    document.getElementById('refresh-recommendations-btn')?.addEventListener('click', refreshRecommendations);
     document.getElementById('delete-series-btn')?.addEventListener('click', deleteSeries);
     document.getElementById('fix-match-btn')?.addEventListener('click', () => {
         if (state.currentSeriesId) openMatchModal(state.currentSeriesId);
@@ -1324,3 +1474,5 @@ window.openMatchModal = openMatchModal;
 window.closeMatchModal = closeMatchModal;
 window.matchSeries = matchSeries;
 window.updateSeasonVoice = updateSeasonVoice;
+window.blacklistRecommendation = blacklistRecommendation;
+window.refreshRecommendations = refreshRecommendations;
