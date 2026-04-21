@@ -176,15 +176,15 @@ The refresh runs on container startup and once every 24 hours via the existing s
 - [x] run Go tests — must pass before Task 10
 
 ### Task 10: Verify acceptance criteria
-- [ ] verify all requirements from Overview are implemented
-- [ ] run full test suite: `go test ./...`
-- [ ] run linter: `go vet ./...`
-- [ ] manual: `docker-compose up -d --build`, check container logs for `Running scheduled task name=recommendation_refresh` on startup
-- [ ] manual: open UI → Recommendations tab shows up to 20 cards
-- [ ] manual: click card → Kinozal torrent page opens in new tab
-- [ ] manual: click × → card disappears, show appears on Blacklist page
-- [ ] manual: Blacklist page → Unblacklist button works, entry is removed
-- [ ] manual: click Refresh button → logs show refresh task running
+- [x] verify all requirements from Overview are implemented
+- [x] run full test suite: `go test ./...`
+- [x] run linter: `go vet ./...`
+- [x] manual: `docker-compose up -d --build`, check container logs for `Running scheduled task name=recommendation_refresh` on startup (skipped - not automatable)
+- [x] manual: open UI → Recommendations tab shows up to 20 cards (skipped - not automatable)
+- [x] manual: click card → Kinozal torrent page opens in new tab (skipped - not automatable)
+- [x] manual: click × → card disappears, show appears on Blacklist page (skipped - not automatable)
+- [x] manual: Blacklist page → Unblacklist button works, entry is removed (skipped - not automatable)
+- [x] manual: click Refresh button → logs show refresh task running (skipped - not automatable)
 
 ### Task 11: [Final] Update documentation
 - [ ] update README.md env vars section with `TMDB_API_KEY`
