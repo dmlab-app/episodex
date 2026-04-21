@@ -1,6 +1,7 @@
 package api
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -13,6 +14,8 @@ import (
 
 	"github.com/episodex/episodex/internal/database"
 	"github.com/episodex/episodex/internal/qbittorrent"
+	"github.com/episodex/episodex/internal/recommender"
+	"github.com/episodex/episodex/internal/tmdb"
 	"github.com/episodex/episodex/internal/tracker"
 	"github.com/episodex/episodex/internal/tvdb"
 )
@@ -1953,5 +1956,288 @@ func TestHandleGetNextSeasons_DoesNotCacheOnError(t *testing.T) {
 	}
 	if cached != nil {
 		t.Errorf("expected no cache entry on search error, but found one: %+v", cached)
+	}
+}
+
+// Recommendations handlers tests
+
+// setupTestServerWithRecommender returns a server wired with a Recommender
+// backed by a no-op TMDB client + searcher. Real Refresh won't call TMDB
+// because no series with tvdb_id are seeded unless the test does so itself.
+func setupTestServerWithRecommender(t *testing.T) (*Server, *database.DB) {
+	t.Helper()
+
+	tmpDir := t.TempDir()
+	dbPath := filepath.Join(tmpDir, "test.db")
+
+	db, err := database.New(dbPath)
+	if err != nil {
+		t.Fatalf("failed to create test database: %v", err)
+	}
+	t.Cleanup(func() {
+		db.Close()
+		os.Remove(dbPath)
+	})
+
+	rec := recommender.New(db, tmdb.NewClient(""), &mockSeasonSearcher{})
+	srv := NewServer(db, nil, nil, nil, "", WithRecommender(rec))
+	return srv, db
+}
+
+func TestHandleGetRecommendations_Empty(t *testing.T) {
+	srv, _ := setupTestServer(t)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/recommendations", http.NoBody)
+	w := httptest.NewRecorder()
+	srv.router.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+	var result []map[string]interface{}
+	if err := json.NewDecoder(w.Body).Decode(&result); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if len(result) != 0 {
+		t.Errorf("expected empty array, got %d entries", len(result))
+	}
+}
+
+func TestHandleGetRecommendations_ReturnsSeededEntries(t *testing.T) {
+	srv, db := setupTestServer(t)
+
+	if err := db.ReplaceRecommendations([]database.Recommendation{
+		{
+			TVDBID: 1001, TMDBID: 2001, Title: "Top Show", OriginalTitle: "Top Show Orig",
+			Overview: "A great show", PosterURL: "https://img/1.jpg", Year: 2020, Rating: 8.5,
+			Genres: "[18,10765]", Score: 42, TrackerURL: "https://kinozal.tv/details.php?id=1",
+			TorrentTitle: "Top Show S01", TorrentSize: "10 GB",
+		},
+		{
+			TVDBID: 1002, TMDBID: 2002, Title: "Lower Show",
+			Score: 10, TrackerURL: "https://kinozal.tv/details.php?id=2",
+			Rating: 7.5,
+		},
+	}); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/api/recommendations", http.NoBody)
+	w := httptest.NewRecorder()
+	srv.router.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+	var result []map[string]interface{}
+	if err := json.NewDecoder(w.Body).Decode(&result); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if len(result) != 2 {
+		t.Fatalf("expected 2 entries, got %d", len(result))
+	}
+	// Ordered by score DESC
+	first := result[0]
+	if int(first["tvdb_id"].(float64)) != 1001 {
+		t.Errorf("expected tvdb_id=1001 first, got %v", first["tvdb_id"])
+	}
+	if first["title"] != "Top Show" {
+		t.Errorf("expected title Top Show, got %v", first["title"])
+	}
+	if first["original_title"] != "Top Show Orig" {
+		t.Errorf("expected original_title, got %v", first["original_title"])
+	}
+	if first["tracker_url"] != "https://kinozal.tv/details.php?id=1" {
+		t.Errorf("expected tracker_url, got %v", first["tracker_url"])
+	}
+	if first["poster_url"] != "https://img/1.jpg" {
+		t.Errorf("expected poster_url, got %v", first["poster_url"])
+	}
+	if int(first["year"].(float64)) != 2020 {
+		t.Errorf("expected year=2020, got %v", first["year"])
+	}
+	genres, ok := first["genres"].([]interface{})
+	if !ok {
+		t.Fatalf("expected genres array, got %T", first["genres"])
+	}
+	if len(genres) != 2 || int(genres[0].(float64)) != 18 {
+		t.Errorf("expected genres [18,10765], got %v", genres)
+	}
+}
+
+func TestHandleRefreshRecommendations_NotConfigured(t *testing.T) {
+	srv, _ := setupTestServer(t)
+
+	req := httptest.NewRequest(http.MethodPost, "/api/recommendations/refresh", http.NoBody)
+	w := httptest.NewRecorder()
+	srv.router.ServeHTTP(w, req)
+
+	if w.Code != http.StatusServiceUnavailable {
+		t.Errorf("expected 503, got %d: %s", w.Code, w.Body.String())
+	}
+}
+
+func TestHandleRefreshRecommendations_Accepted(t *testing.T) {
+	srv, _ := setupTestServerWithRecommender(t)
+
+	req := httptest.NewRequest(http.MethodPost, "/api/recommendations/refresh", http.NoBody)
+	w := httptest.NewRecorder()
+	srv.router.ServeHTTP(w, req)
+
+	if w.Code != http.StatusAccepted {
+		t.Errorf("expected 202, got %d: %s", w.Code, w.Body.String())
+	}
+}
+
+func TestHandleGetBlacklist_Empty(t *testing.T) {
+	srv, _ := setupTestServer(t)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/recommendations/blacklist", http.NoBody)
+	w := httptest.NewRecorder()
+	srv.router.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+	var result []map[string]interface{}
+	if err := json.NewDecoder(w.Body).Decode(&result); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if len(result) != 0 {
+		t.Errorf("expected empty array, got %d entries", len(result))
+	}
+}
+
+func TestHandleGetBlacklist_WithEntries(t *testing.T) {
+	srv, db := setupTestServer(t)
+
+	if err := db.AddToBlacklist(555, "Unwanted Show"); err != nil {
+		t.Fatalf("seed blacklist: %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/api/recommendations/blacklist", http.NoBody)
+	w := httptest.NewRecorder()
+	srv.router.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", w.Code)
+	}
+	var result []map[string]interface{}
+	if err := json.NewDecoder(w.Body).Decode(&result); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if len(result) != 1 {
+		t.Fatalf("expected 1 entry, got %d", len(result))
+	}
+	if int(result[0]["tvdb_id"].(float64)) != 555 {
+		t.Errorf("expected tvdb_id=555, got %v", result[0]["tvdb_id"])
+	}
+	if result[0]["title"] != "Unwanted Show" {
+		t.Errorf("expected title=Unwanted Show, got %v", result[0]["title"])
+	}
+}
+
+func TestHandleAddBlacklist_Success(t *testing.T) {
+	srv, db := setupTestServer(t)
+
+	body, _ := json.Marshal(map[string]interface{}{"tvdb_id": 777, "title": "Drop This"})
+	req := httptest.NewRequest(http.MethodPost, "/api/recommendations/blacklist", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	srv.router.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+	ids, err := db.GetBlacklistedIDs()
+	if err != nil {
+		t.Fatalf("get ids: %v", err)
+	}
+	if !ids[777] {
+		t.Errorf("expected 777 blacklisted, got %v", ids)
+	}
+}
+
+func TestHandleAddBlacklist_AlsoRemovesRecommendation(t *testing.T) {
+	srv, db := setupTestServer(t)
+	if err := db.ReplaceRecommendations([]database.Recommendation{
+		{TVDBID: 888, Title: "Pending", Score: 5, TrackerURL: "x"},
+	}); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+
+	body, _ := json.Marshal(map[string]interface{}{"tvdb_id": 888, "title": "Pending"})
+	req := httptest.NewRequest(http.MethodPost, "/api/recommendations/blacklist", bytes.NewReader(body))
+	w := httptest.NewRecorder()
+	srv.router.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+	recs, err := db.GetRecommendations()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(recs) != 0 {
+		t.Errorf("expected recommendation removed, got %d entries", len(recs))
+	}
+}
+
+func TestHandleAddBlacklist_InvalidBody(t *testing.T) {
+	srv, _ := setupTestServer(t)
+
+	req := httptest.NewRequest(http.MethodPost, "/api/recommendations/blacklist", strings.NewReader("not json"))
+	w := httptest.NewRecorder()
+	srv.router.ServeHTTP(w, req)
+
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("expected 400, got %d", w.Code)
+	}
+}
+
+func TestHandleAddBlacklist_MissingTVDBID(t *testing.T) {
+	srv, _ := setupTestServer(t)
+
+	body, _ := json.Marshal(map[string]interface{}{"title": "No ID"})
+	req := httptest.NewRequest(http.MethodPost, "/api/recommendations/blacklist", bytes.NewReader(body))
+	w := httptest.NewRecorder()
+	srv.router.ServeHTTP(w, req)
+
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("expected 400, got %d: %s", w.Code, w.Body.String())
+	}
+}
+
+func TestHandleRemoveBlacklist_Success(t *testing.T) {
+	srv, db := setupTestServer(t)
+	if err := db.AddToBlacklist(444, "Will Unban"); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodDelete, "/api/recommendations/blacklist/444", http.NoBody)
+	w := httptest.NewRecorder()
+	srv.router.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+	ids, err := db.GetBlacklistedIDs()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ids[444] {
+		t.Errorf("expected 444 removed, still present")
+	}
+}
+
+func TestHandleRemoveBlacklist_InvalidID(t *testing.T) {
+	srv, _ := setupTestServer(t)
+
+	req := httptest.NewRequest(http.MethodDelete, "/api/recommendations/blacklist/notanumber", http.NoBody)
+	w := httptest.NewRecorder()
+	srv.router.ServeHTTP(w, req)
+
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("expected 400, got %d", w.Code)
 	}
 }

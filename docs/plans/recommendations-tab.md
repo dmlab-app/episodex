@@ -135,10 +135,10 @@ The refresh runs on container startup and once every 24 hours via the existing s
 - [x] run `go build ./...` — must pass before Task 7
 
 ### Task 7: Add API handlers and routes
-- [ ] add `*recommender.Recommender` field to `Server` struct in `internal/api/router.go`
-- [ ] add `WithRecommender(*recommender.Recommender) ServerOption`
-- [ ] pass recommender via option in `cmd/server/main.go`
-- [ ] add routes inside existing `/api` group:
+- [x] add `*recommender.Recommender` field to `Server` struct in `internal/api/router.go`
+- [x] add `WithRecommender(*recommender.Recommender) ServerOption`
+- [x] pass recommender via option in `cmd/server/main.go`
+- [x] add routes inside existing `/api` group:
   ```go
   r.Get("/recommendations", s.handleGetRecommendations)
   r.Post("/recommendations/refresh", s.handleRefreshRecommendations)
@@ -146,13 +146,13 @@ The refresh runs on container startup and once every 24 hours via the existing s
   r.Post("/recommendations/blacklist", s.handleAddBlacklist)
   r.Delete("/recommendations/blacklist/{tvdb_id}", s.handleRemoveBlacklist)
   ```
-- [ ] implement `handleGetRecommendations` — return `db.GetRecommendations()` as JSON array; return empty array if feature disabled
-- [ ] implement `handleRefreshRecommendations` — 202 Accepted, run `rec.Refresh()` in goroutine; return 503 if recommender is nil
-- [ ] implement `handleAddBlacklist` — body `{"tvdb_id": int, "title": string}`, call `db.AddToBlacklist`
-- [ ] implement `handleRemoveBlacklist` — parse URL param tvdb_id, call `db.RemoveFromBlacklist`
-- [ ] implement `handleGetBlacklist` — return `db.GetBlacklist()`
-- [ ] write tests in `internal/api/router_test.go` for each new handler (happy path + validation errors + feature-disabled case)
-- [ ] run tests — must pass before Task 8
+- [x] implement `handleGetRecommendations` — return `db.GetRecommendations()` as JSON array; return empty array if feature disabled
+- [x] implement `handleRefreshRecommendations` — 202 Accepted, run `rec.Refresh()` in goroutine; return 503 if recommender is nil
+- [x] implement `handleAddBlacklist` — body `{"tvdb_id": int, "title": string}`, call `db.AddToBlacklist`
+- [x] implement `handleRemoveBlacklist` — parse URL param tvdb_id, call `db.RemoveFromBlacklist`
+- [x] implement `handleGetBlacklist` — return `db.GetBlacklist()`
+- [x] write tests in `internal/api/router_test.go` for each new handler (happy path + validation errors + feature-disabled case)
+- [x] run tests — must pass before Task 8
 
 ### Task 8: Frontend — Recommendations tab
 - [ ] add nav link in `web/templates/index.html` next to Seasons: `<a href="#/recommendations" data-page="recommendations">` with icon + label

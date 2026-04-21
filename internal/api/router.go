@@ -21,6 +21,7 @@ import (
 	"github.com/episodex/episodex/internal/audio"
 	"github.com/episodex/episodex/internal/database"
 	"github.com/episodex/episodex/internal/qbittorrent"
+	"github.com/episodex/episodex/internal/recommender"
 	"github.com/episodex/episodex/internal/scanner"
 	"github.com/episodex/episodex/internal/tracker"
 	"github.com/episodex/episodex/internal/tvdb"
@@ -34,6 +35,7 @@ type Server struct {
 	qbitClient     *qbittorrent.Client
 	audioCutter    *audio.AudioCutter
 	seasonSearcher tracker.SeasonSearcher
+	recommender    *recommender.Recommender
 	router         *chi.Mux
 	mediaPath      string
 	procLock *database.ProcessingLock
@@ -78,6 +80,13 @@ func WithSeasonSearcher(ss tracker.SeasonSearcher) ServerOption {
 func WithProcessingLock(pl *database.ProcessingLock) ServerOption {
 	return func(s *Server) {
 		s.procLock = pl
+	}
+}
+
+// WithRecommender sets the recommender used by the recommendations endpoints.
+func WithRecommender(rec *recommender.Recommender) ServerOption {
+	return func(s *Server) {
+		s.recommender = rec
 	}
 }
 
@@ -161,6 +170,13 @@ func (s *Server) setupRoutes() {
 
 		// Next seasons endpoint
 		r.Get("/next-seasons", s.handleGetNextSeasons) // GET /api/next-seasons
+
+		// Recommendations endpoints
+		r.Get("/recommendations", s.handleGetRecommendations)
+		r.Post("/recommendations/refresh", s.handleRefreshRecommendations)
+		r.Get("/recommendations/blacklist", s.handleGetBlacklist)
+		r.Post("/recommendations/blacklist", s.handleAddBlacklist)
+		r.Delete("/recommendations/blacklist/{tvdb_id}", s.handleRemoveBlacklist)
 
 		// Search endpoint
 		r.Get("/search", s.handleSearch) // GET /api/search
@@ -2336,4 +2352,122 @@ func mustJSON(v interface{}) string {
 		panic(err)
 	}
 	return string(b)
+}
+
+// Recommendations handlers
+
+// handleGetRecommendations returns current recommendations. Returns an empty
+// array (not 503) when the feature is disabled so the UI degrades gracefully.
+func (s *Server) handleGetRecommendations(w http.ResponseWriter, _ *http.Request) {
+	recs, err := s.db.GetRecommendations()
+	if err != nil {
+		slog.Error("Failed to fetch recommendations", "error", err)
+		s.respondError(w, http.StatusInternalServerError, "failed to fetch recommendations")
+		return
+	}
+	out := make([]map[string]interface{}, 0, len(recs))
+	for _, r := range recs {
+		entry := map[string]interface{}{
+			"tvdb_id":       r.TVDBID,
+			"tmdb_id":       r.TMDBID,
+			"title":         r.Title,
+			"score":         r.Score,
+			"rating":        r.Rating,
+			"tracker_url":   r.TrackerURL,
+			"torrent_title": r.TorrentTitle,
+			"torrent_size":  r.TorrentSize,
+			"created_at":    r.CreatedAt,
+		}
+		if r.OriginalTitle != "" {
+			entry["original_title"] = r.OriginalTitle
+		}
+		if r.Overview != "" {
+			entry["overview"] = r.Overview
+		}
+		if r.PosterURL != "" {
+			entry["poster_url"] = r.PosterURL
+		}
+		if r.Year != 0 {
+			entry["year"] = r.Year
+		}
+		if r.Genres != "" {
+			var ids []int
+			if jsonErr := json.Unmarshal([]byte(r.Genres), &ids); jsonErr == nil {
+				entry["genres"] = ids
+			}
+		}
+		out = append(out, entry)
+	}
+	s.respondJSON(w, http.StatusOK, out)
+}
+
+// handleRefreshRecommendations triggers a background refresh of recommendations.
+// Returns 503 if the feature is disabled, 202 Accepted on success.
+func (s *Server) handleRefreshRecommendations(w http.ResponseWriter, _ *http.Request) {
+	if s.recommender == nil {
+		s.respondError(w, http.StatusServiceUnavailable, "recommendations feature not configured")
+		return
+	}
+	go func() {
+		if err := s.recommender.Refresh(); err != nil {
+			slog.Error("Recommendation refresh failed", "error", err)
+		}
+	}()
+	s.respondJSON(w, http.StatusAccepted, map[string]interface{}{"status": "accepted"})
+}
+
+// handleGetBlacklist returns all blacklisted shows.
+func (s *Server) handleGetBlacklist(w http.ResponseWriter, _ *http.Request) {
+	entries, err := s.db.GetBlacklist()
+	if err != nil {
+		slog.Error("Failed to fetch blacklist", "error", err)
+		s.respondError(w, http.StatusInternalServerError, "failed to fetch blacklist")
+		return
+	}
+	out := make([]map[string]interface{}, 0, len(entries))
+	for _, e := range entries {
+		out = append(out, map[string]interface{}{
+			"tvdb_id":        e.TVDBID,
+			"title":          e.Title,
+			"blacklisted_at": e.BlacklistedAt,
+		})
+	}
+	s.respondJSON(w, http.StatusOK, out)
+}
+
+// handleAddBlacklist adds a show to the blacklist.
+func (s *Server) handleAddBlacklist(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		TVDBID int    `json:"tvdb_id"`
+		Title  string `json:"title"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		s.respondError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	if body.TVDBID <= 0 {
+		s.respondError(w, http.StatusBadRequest, "tvdb_id required")
+		return
+	}
+	if err := s.db.AddToBlacklist(body.TVDBID, body.Title); err != nil {
+		slog.Error("Failed to add to blacklist", "tvdb_id", body.TVDBID, "error", err)
+		s.respondError(w, http.StatusInternalServerError, "failed to add to blacklist")
+		return
+	}
+	s.respondJSON(w, http.StatusOK, map[string]interface{}{"status": "ok"})
+}
+
+// handleRemoveBlacklist removes a show from the blacklist.
+func (s *Server) handleRemoveBlacklist(w http.ResponseWriter, r *http.Request) {
+	tvdbID, err := strconv.Atoi(chi.URLParam(r, "tvdb_id"))
+	if err != nil || tvdbID <= 0 {
+		s.respondError(w, http.StatusBadRequest, "invalid tvdb_id")
+		return
+	}
+	if err := s.db.RemoveFromBlacklist(tvdbID); err != nil {
+		slog.Error("Failed to remove from blacklist", "tvdb_id", tvdbID, "error", err)
+		s.respondError(w, http.StatusInternalServerError, "failed to remove from blacklist")
+		return
+	}
+	s.respondJSON(w, http.StatusOK, map[string]interface{}{"status": "ok"})
 }

@@ -190,6 +190,7 @@ func main() {
 	}
 
 	// Initialize recommendation refresh (optional — requires TMDB key + Kinozal searcher)
+	var rec *recommender.Recommender
 	if cfg.TMDBApiKey == "" {
 		slog.Info("TMDB API key not configured, recommendations feature disabled")
 	} else {
@@ -204,7 +205,7 @@ func main() {
 			slog.Info("Kinozal client not configured, recommendations feature disabled")
 		} else {
 			tmdbClient := tmdb.NewClient(cfg.TMDBApiKey)
-			rec := recommender.New(db, tmdbClient, kzSearcher)
+			rec = recommender.New(db, tmdbClient, kzSearcher)
 			sch.AddTask(scheduler.Task{
 				Name:     "recommendation_refresh",
 				Schedule: &scheduler.IntervalSchedule{Interval: 24 * time.Hour},
@@ -241,6 +242,9 @@ func main() {
 		}
 	}
 	serverOpts = append(serverOpts, api.WithProcessingLock(procLock))
+	if rec != nil {
+		serverOpts = append(serverOpts, api.WithRecommender(rec))
+	}
 	apiServer := api.NewServer(db, mediaScanner, tvdbClient, qbitClient, cfg.MediaPath, serverOpts...)
 	httpServer := &http.Server{
 		Addr:         cfg.Host + ":" + cfg.Port,
