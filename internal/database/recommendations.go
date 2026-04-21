@@ -74,6 +74,9 @@ func (db *DB) GetRecommendations() ([]Recommendation, error) {
 }
 
 // ReplaceRecommendations atomically deletes all existing recommendations and inserts the new batch.
+// The insert skips any tvdb_id that is present in recommendation_blacklist at
+// commit time, so a concurrent AddToBlacklist during a refresh cannot race
+// a freshly computed (and already blacklisted) row back into the table.
 func (db *DB) ReplaceRecommendations(recs []Recommendation) error {
 	tx, err := db.Begin()
 	if err != nil {
@@ -89,7 +92,9 @@ func (db *DB) ReplaceRecommendations(recs []Recommendation) error {
 		INSERT INTO recommendations (
 			tvdb_id, tmdb_id, title, original_title, overview, poster_url,
 			year, rating, genres, score, tracker_url, torrent_title, torrent_size
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		)
+		SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+		WHERE NOT EXISTS (SELECT 1 FROM recommendation_blacklist WHERE tvdb_id = ?)
 	`)
 	if err != nil {
 		return fmt.Errorf("failed to prepare insert: %w", err)
@@ -100,6 +105,7 @@ func (db *DB) ReplaceRecommendations(recs []Recommendation) error {
 		if _, err := stmt.Exec(
 			r.TVDBID, r.TMDBID, r.Title, r.OriginalTitle, r.Overview, r.PosterURL,
 			r.Year, r.Rating, r.Genres, r.Score, r.TrackerURL, r.TorrentTitle, r.TorrentSize,
+			r.TVDBID,
 		); err != nil {
 			return fmt.Errorf("failed to insert recommendation %d: %w", r.TVDBID, err)
 		}

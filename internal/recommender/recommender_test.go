@@ -57,14 +57,15 @@ type fakeSearcher struct {
 	byQuery map[string]*tracker.SeasonSearchResult
 	errFor  map[string]error
 	calls   []string
+	seasons []int
 }
 
 func (s *fakeSearcher) FindSeasonTorrent(query string, season int) (*tracker.SeasonSearchResult, error) {
 	s.calls = append(s.calls, query)
+	s.seasons = append(s.seasons, season)
 	if err, ok := s.errFor[query]; ok {
 		return nil, err
 	}
-	_ = season
 	return s.byQuery[query], nil
 }
 
@@ -219,9 +220,9 @@ func TestRefresh_ExcludesOwnedAndBlacklisted(t *testing.T) {
 		},
 		recommendations: map[int][]tmdb.TMDBShow{
 			501: {
-				{ID: 600, Name: "Already Owned", VoteAverage: 9.0},  // resolves to owned tvdb
-				{ID: 601, Name: "Blacklisted", VoteAverage: 8.5},    // resolves to blacklisted tvdb
-				{ID: 602, Name: "Good Show", VoteAverage: 8.0},      // survives
+				{ID: 600, Name: "Already Owned", VoteAverage: 9.0}, // resolves to owned tvdb
+				{ID: 601, Name: "Blacklisted", VoteAverage: 8.5},   // resolves to blacklisted tvdb
+				{ID: 602, Name: "Good Show", VoteAverage: 8.0},     // survives
 			},
 		},
 		externalIDs: map[int]*tmdb.ExternalIDs{
@@ -323,6 +324,55 @@ func TestRefresh_KinozalOriginalNameFallback(t *testing.T) {
 	if len(fs.calls) != 2 {
 		t.Errorf("expected 2 searcher calls (primary + fallback), got %d: %v", len(fs.calls), fs.calls)
 	}
+	// Season 1 must be requested for both the primary and the fallback call.
+	for i, s := range fs.seasons {
+		if s != 1 {
+			t.Errorf("call %d asked for season %d, want 1", i, s)
+		}
+	}
+}
+
+func TestRefresh_KinozalPrimaryErrorFallsBackToOriginalName(t *testing.T) {
+	db := newTestDB(t)
+	seedSeries(t, db, map[int]string{1001: "Owned A"})
+
+	ft := &fakeTMDB{
+		findByTVDB: map[int]*tmdb.TMDBShow{
+			1001: {ID: 501, Name: "Owned A"},
+		},
+		recommendations: map[int][]tmdb.TMDBShow{
+			501: {
+				{ID: 600, Name: "Localized", OriginalName: "OriginalTitle", VoteAverage: 8.0},
+			},
+		},
+		externalIDs: map[int]*tmdb.ExternalIDs{
+			600: {TVDBId: 6000},
+		},
+	}
+	// Primary name errors transiently; original name succeeds.
+	fs := &fakeSearcher{
+		byQuery: map[string]*tracker.SeasonSearchResult{
+			"OriginalTitle": {DetailsURL: "https://kinozal.tv/o", Title: "O.S01", Size: "8 GB"},
+		},
+		errFor: map[string]error{
+			"Localized": errors.New("kinozal transient error"),
+		},
+	}
+
+	r := newRecommender(db, ft, fs)
+	if err := r.Refresh(); err != nil {
+		t.Fatalf("refresh: %v", err)
+	}
+	got, _ := db.GetRecommendations()
+	if len(got) != 1 {
+		t.Fatalf("expected 1 result (fallback after primary error), got %d: %+v", len(got), got)
+	}
+	if got[0].TrackerURL != "https://kinozal.tv/o" {
+		t.Errorf("tracker url = %q; want fallback URL", got[0].TrackerURL)
+	}
+	if len(fs.calls) != 2 {
+		t.Errorf("expected primary+fallback calls, got %d: %v", len(fs.calls), fs.calls)
+	}
 }
 
 func TestRefresh_TopCutoffAt20(t *testing.T) {
@@ -409,6 +459,43 @@ func TestRefresh_FindErrorSkipsSeries(t *testing.T) {
 	}
 }
 
+func TestRefresh_AllTMDBCallsFailedPreservesExisting(t *testing.T) {
+	db := newTestDB(t)
+	seedSeries(t, db, map[int]string{
+		1001: "Owned A",
+		1002: "Owned B",
+	})
+	// Pre-seed existing recommendations that must survive a total TMDB outage.
+	if err := db.ReplaceRecommendations([]database.Recommendation{
+		{TVDBID: 9001, Title: "Existing 1", Score: 10, TrackerURL: "u1"},
+		{TVDBID: 9002, Title: "Existing 2", Score: 5, TrackerURL: "u2"},
+	}); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+
+	ft := &fakeTMDB{
+		findErr: map[int]error{
+			1001: errors.New("tmdb down"),
+			1002: errors.New("tmdb down"),
+		},
+	}
+	fs := &fakeSearcher{}
+
+	r := newRecommender(db, ft, fs)
+	if err := r.Refresh(); err == nil {
+		t.Fatal("expected refresh to return error when all TMDB lookups failed")
+	}
+
+	// Existing recommendations must still be present — outage must not wipe.
+	got, err := db.GetRecommendations()
+	if err != nil {
+		t.Fatalf("get: %v", err)
+	}
+	if len(got) != 2 {
+		t.Errorf("expected 2 preserved recommendations, got %d: %+v", len(got), got)
+	}
+}
+
 func TestRefresh_UnresolvedTVDBIDSkipped(t *testing.T) {
 	db := newTestDB(t)
 	seedSeries(t, db, map[int]string{1001: "Owned A"})
@@ -441,6 +528,362 @@ func TestRefresh_UnresolvedTVDBIDSkipped(t *testing.T) {
 	got, _ := db.GetRecommendations()
 	if len(got) != 1 || got[0].TVDBID != 6001 {
 		t.Errorf("expected only HasTVDB, got %+v", got)
+	}
+}
+
+func TestRefresh_DedupsDuplicateTVDBIDs(t *testing.T) {
+	db := newTestDB(t)
+	seedSeries(t, db, map[int]string{1001: "Owned A"})
+
+	// Two different TMDB IDs resolve to the same TVDB ID (TMDB can have
+	// duplicate show entries pointing at the same TVDB series). Without
+	// dedup, the second INSERT fails with UNIQUE constraint violation and
+	// the whole refresh transaction rolls back.
+	ft := &fakeTMDB{
+		findByTVDB: map[int]*tmdb.TMDBShow{
+			1001: {ID: 501, Name: "Owned A"},
+		},
+		recommendations: map[int][]tmdb.TMDBShow{
+			501: {
+				{ID: 600, Name: "Primary Entry", VoteAverage: 9.0},
+				{ID: 601, Name: "Duplicate Entry", VoteAverage: 8.0},
+				{ID: 602, Name: "Distinct Show", VoteAverage: 7.5},
+			},
+		},
+		externalIDs: map[int]*tmdb.ExternalIDs{
+			600: {TVDBId: 6000},
+			601: {TVDBId: 6000}, // same TVDB ID as 600
+			602: {TVDBId: 6002},
+		},
+	}
+	fs := &fakeSearcher{
+		byQuery: map[string]*tracker.SeasonSearchResult{
+			"Primary Entry":   {DetailsURL: "https://kinozal.tv/p", Title: "P.S01", Size: "4 GB"},
+			"Duplicate Entry": {DetailsURL: "https://kinozal.tv/d", Title: "D.S01", Size: "5 GB"},
+			"Distinct Show":   {DetailsURL: "https://kinozal.tv/x", Title: "X.S01", Size: "2 GB"},
+		},
+	}
+
+	r := newRecommender(db, ft, fs)
+	if err := r.Refresh(); err != nil {
+		t.Fatalf("refresh: %v", err)
+	}
+	got, err := db.GetRecommendations()
+	if err != nil {
+		t.Fatalf("get: %v", err)
+	}
+	if len(got) != 2 {
+		t.Fatalf("expected 2 recommendations (dup collapsed), got %d: %+v", len(got), got)
+	}
+	// First entry wins for TVDB 6000 — it came from the higher-scored candidate.
+	if got[0].TVDBID != 6000 || got[0].TMDBID != 600 {
+		t.Errorf("top result = TVDB %d/TMDB %d, want 6000/600", got[0].TVDBID, got[0].TMDBID)
+	}
+	if got[1].TVDBID != 6002 {
+		t.Errorf("second result TVDB = %d, want 6002", got[1].TVDBID)
+	}
+}
+
+// Partial TMDB outage: /find returns no match for some shows (legitimate)
+// while /recommendations fails for the shows that DO match. With the old
+// guard this would have bypassed preservation (processedOK incremented from
+// the no-match path) and silently wiped the table.
+func TestRefresh_PartialOutage_RecommendationsEndpointFailing_PreservesExisting(t *testing.T) {
+	db := newTestDB(t)
+	seedSeries(t, db, map[int]string{
+		1001: "Unknown to TMDB",
+		1002: "Known but Rec Endpoint Fails",
+	})
+	if err := db.ReplaceRecommendations([]database.Recommendation{
+		{TVDBID: 9001, Title: "Existing", Score: 10, TrackerURL: "u"},
+	}); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+
+	ft := &fakeTMDB{
+		// 1001 -> no TMDB match. 1002 -> match, but /recommendations fails.
+		findByTVDB: map[int]*tmdb.TMDBShow{
+			1002: {ID: 502, Name: "Known"},
+		},
+		recommendErr: map[int]error{
+			502: errors.New("tmdb /recommendations down"),
+		},
+	}
+	fs := &fakeSearcher{}
+
+	r := newRecommender(db, ft, fs)
+	if err := r.Refresh(); err == nil {
+		t.Fatal("expected error when all recommendation fetches fail during partial outage")
+	}
+
+	got, err := db.GetRecommendations()
+	if err != nil {
+		t.Fatalf("get: %v", err)
+	}
+	if len(got) != 1 || got[0].TVDBID != 9001 {
+		t.Errorf("expected existing recommendation preserved, got %+v", got)
+	}
+}
+
+// Partial TMDB outage on /external_ids: aggregation succeeds but every
+// external_ids probe errors. The existing table must be preserved rather
+// than overwritten with an empty slice.
+func TestRefresh_ExternalIDsAllFail_PreservesExisting(t *testing.T) {
+	db := newTestDB(t)
+	seedSeries(t, db, map[int]string{1001: "Owned A"})
+	if err := db.ReplaceRecommendations([]database.Recommendation{
+		{TVDBID: 9001, Title: "Existing", Score: 10, TrackerURL: "u"},
+	}); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+
+	ft := &fakeTMDB{
+		findByTVDB: map[int]*tmdb.TMDBShow{
+			1001: {ID: 501, Name: "Owned A"},
+		},
+		recommendations: map[int][]tmdb.TMDBShow{
+			501: {
+				{ID: 600, Name: "Candidate 1", VoteAverage: 8.0},
+				{ID: 601, Name: "Candidate 2", VoteAverage: 7.5},
+			},
+		},
+		externalErr: map[int]error{
+			600: errors.New("external_ids down"),
+			601: errors.New("external_ids down"),
+		},
+	}
+	fs := &fakeSearcher{}
+
+	r := newRecommender(db, ft, fs)
+	if err := r.Refresh(); err == nil {
+		t.Fatal("expected error when all external_ids probes fail")
+	}
+
+	got, err := db.GetRecommendations()
+	if err != nil {
+		t.Fatalf("get: %v", err)
+	}
+	if len(got) != 1 || got[0].TVDBID != 9001 {
+		t.Errorf("expected existing recommendation preserved, got %+v", got)
+	}
+}
+
+// Partial Kinozal outage: every Kinozal search errors. Existing table must
+// be preserved rather than overwritten with an empty slice.
+func TestRefresh_KinozalAllFail_PreservesExisting(t *testing.T) {
+	db := newTestDB(t)
+	seedSeries(t, db, map[int]string{1001: "Owned A"})
+	if err := db.ReplaceRecommendations([]database.Recommendation{
+		{TVDBID: 9001, Title: "Existing", Score: 10, TrackerURL: "u"},
+	}); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+
+	ft := &fakeTMDB{
+		findByTVDB: map[int]*tmdb.TMDBShow{
+			1001: {ID: 501, Name: "Owned A"},
+		},
+		recommendations: map[int][]tmdb.TMDBShow{
+			501: {
+				{ID: 600, Name: "Candidate 1", VoteAverage: 8.0},
+				{ID: 601, Name: "Candidate 2", OriginalName: "Original 2", VoteAverage: 7.5},
+			},
+		},
+		externalIDs: map[int]*tmdb.ExternalIDs{
+			600: {TVDBId: 6000},
+			601: {TVDBId: 6001},
+		},
+	}
+	fs := &fakeSearcher{
+		errFor: map[string]error{
+			"Candidate 1": errors.New("kinozal down"),
+			"Candidate 2": errors.New("kinozal down"),
+			"Original 2":  errors.New("kinozal down"),
+		},
+	}
+
+	r := newRecommender(db, ft, fs)
+	if err := r.Refresh(); err == nil {
+		t.Fatal("expected error when all Kinozal searches fail")
+	}
+
+	got, err := db.GetRecommendations()
+	if err != nil {
+		t.Fatalf("get: %v", err)
+	}
+	if len(got) != 1 || got[0].TVDBID != 9001 {
+		t.Errorf("expected existing recommendation preserved, got %+v", got)
+	}
+}
+
+// One /recommendations call succeeds with an empty list while the other errors.
+// Candidates is empty but the outage was real — existing rows must survive
+// rather than being wiped as if the refresh legitimately produced no results.
+func TestRefresh_PartialOutage_OneEmptyOneErrored_PreservesExisting(t *testing.T) {
+	db := newTestDB(t)
+	seedSeries(t, db, map[int]string{
+		1001: "Owned A",
+		1002: "Owned B",
+	})
+	if err := db.ReplaceRecommendations([]database.Recommendation{
+		{TVDBID: 9001, Title: "Existing", Score: 10, TrackerURL: "u"},
+	}); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+
+	ft := &fakeTMDB{
+		findByTVDB: map[int]*tmdb.TMDBShow{
+			1001: {ID: 501, Name: "Owned A"},
+			1002: {ID: 502, Name: "Owned B"},
+		},
+		// 501 succeeds with empty recs; 502 errors. recsSucceeded=1, tmdbErrors=1.
+		recommendations: map[int][]tmdb.TMDBShow{
+			501: {},
+		},
+		recommendErr: map[int]error{
+			502: errors.New("tmdb down"),
+		},
+	}
+	fs := &fakeSearcher{}
+
+	r := newRecommender(db, ft, fs)
+	if err := r.Refresh(); err != nil {
+		t.Fatalf("refresh: %v", err)
+	}
+
+	got, err := db.GetRecommendations()
+	if err != nil {
+		t.Fatalf("get: %v", err)
+	}
+	if len(got) != 1 || got[0].TVDBID != 9001 {
+		t.Errorf("expected existing recommendation preserved, got %+v", got)
+	}
+}
+
+// One external_ids probe succeeds but yields no usable candidate (tvdb_id=0);
+// a subsequent probe errors. recs ends up empty but the outage was real —
+// existing rows must be preserved rather than wiped.
+func TestRefresh_PartialOutage_ExternalIDsMixedOutcome_PreservesExisting(t *testing.T) {
+	db := newTestDB(t)
+	seedSeries(t, db, map[int]string{1001: "Owned A"})
+	if err := db.ReplaceRecommendations([]database.Recommendation{
+		{TVDBID: 9001, Title: "Existing", Score: 10, TrackerURL: "u"},
+	}); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+
+	ft := &fakeTMDB{
+		findByTVDB: map[int]*tmdb.TMDBShow{
+			1001: {ID: 501, Name: "Owned A"},
+		},
+		recommendations: map[int][]tmdb.TMDBShow{
+			501: {
+				{ID: 600, Name: "Unresolved", VoteAverage: 9.0},
+				{ID: 601, Name: "Errored", VoteAverage: 8.0},
+			},
+		},
+		externalIDs: map[int]*tmdb.ExternalIDs{
+			// 600 succeeds with no tvdb mapping — extSucceeded=1 but unusable.
+			600: {TVDBId: 0},
+		},
+		externalErr: map[int]error{
+			601: errors.New("external_ids down"),
+		},
+	}
+	fs := &fakeSearcher{}
+
+	r := newRecommender(db, ft, fs)
+	if err := r.Refresh(); err != nil {
+		t.Fatalf("refresh: %v", err)
+	}
+
+	got, err := db.GetRecommendations()
+	if err != nil {
+		t.Fatalf("get: %v", err)
+	}
+	if len(got) != 1 || got[0].TVDBID != 9001 {
+		t.Errorf("expected existing recommendation preserved, got %+v", got)
+	}
+}
+
+// Primary Kinozal search returns (nil, nil) — a clean miss, not an error —
+// and the original-name fallback errors. The overall result is empty but the
+// fallback error means upstream Kinozal is partially degraded; existing
+// recommendations must survive rather than being wiped.
+func TestRefresh_KinozalPrimaryMissAndFallbackError_PreservesExisting(t *testing.T) {
+	db := newTestDB(t)
+	seedSeries(t, db, map[int]string{1001: "Owned A"})
+	if err := db.ReplaceRecommendations([]database.Recommendation{
+		{TVDBID: 9001, Title: "Existing", Score: 10, TrackerURL: "u"},
+	}); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+
+	ft := &fakeTMDB{
+		findByTVDB: map[int]*tmdb.TMDBShow{
+			1001: {ID: 501, Name: "Owned A"},
+		},
+		recommendations: map[int][]tmdb.TMDBShow{
+			501: {
+				{ID: 600, Name: "Localized", OriginalName: "OriginalTitle", VoteAverage: 8.0},
+			},
+		},
+		externalIDs: map[int]*tmdb.ExternalIDs{
+			600: {TVDBId: 6000},
+		},
+	}
+	// Primary returns (nil, nil) — not in byQuery, no error registered.
+	// Fallback errors. No torrent produced; upstream had a real error.
+	fs := &fakeSearcher{
+		errFor: map[string]error{
+			"OriginalTitle": errors.New("kinozal fallback down"),
+		},
+	}
+
+	r := newRecommender(db, ft, fs)
+	if err := r.Refresh(); err != nil {
+		t.Fatalf("refresh: %v", err)
+	}
+
+	got, err := db.GetRecommendations()
+	if err != nil {
+		t.Fatalf("get: %v", err)
+	}
+	if len(got) != 1 || got[0].TVDBID != 9001 {
+		t.Errorf("expected existing recommendation preserved, got %+v", got)
+	}
+}
+
+// All owned shows legitimately unknown to TMDB (no errors, just no match).
+// This is a valid zero-state — recommendations should be cleared, not
+// preserved as an "outage".
+func TestRefresh_AllOwnedUnknownToTMDB_ClearsRecommendations(t *testing.T) {
+	db := newTestDB(t)
+	seedSeries(t, db, map[int]string{
+		1001: "Obscure A",
+		1002: "Obscure B",
+	})
+	if err := db.ReplaceRecommendations([]database.Recommendation{
+		{TVDBID: 9001, Title: "Stale", Score: 10, TrackerURL: "u"},
+	}); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+
+	// No errors, no matches — legitimate "none of your shows are on TMDB".
+	ft := &fakeTMDB{}
+	fs := &fakeSearcher{}
+
+	r := newRecommender(db, ft, fs)
+	if err := r.Refresh(); err != nil {
+		t.Fatalf("refresh: %v", err)
+	}
+
+	got, err := db.GetRecommendations()
+	if err != nil {
+		t.Fatalf("get: %v", err)
+	}
+	if len(got) != 0 {
+		t.Errorf("expected recommendations cleared, got %d: %+v", len(got), got)
 	}
 }
 

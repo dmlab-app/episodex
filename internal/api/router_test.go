@@ -92,7 +92,6 @@ func seedSeasonWithEpisodes(t *testing.T, db *database.DB, seriesID int64, seaso
 	}
 }
 
-
 func TestHandleListSeries_ReturnsCorrectSeasonCounts(t *testing.T) {
 	srv, db := setupTestServer(t)
 
@@ -1985,7 +1984,7 @@ func setupTestServerWithRecommender(t *testing.T) (*Server, *database.DB) {
 }
 
 func TestHandleGetRecommendations_Empty(t *testing.T) {
-	srv, _ := setupTestServer(t)
+	srv, _ := setupTestServerWithRecommender(t)
 
 	req := httptest.NewRequest(http.MethodGet, "/api/recommendations", http.NoBody)
 	w := httptest.NewRecorder()
@@ -2003,8 +2002,37 @@ func TestHandleGetRecommendations_Empty(t *testing.T) {
 	}
 }
 
-func TestHandleGetRecommendations_ReturnsSeededEntries(t *testing.T) {
+// When the feature is disabled (no recommender configured) the handler must
+// return an empty array even if the recommendations table has stale rows, so
+// the UI degrades gracefully and does not display results for a feature that
+// can no longer be refreshed.
+func TestHandleGetRecommendations_FeatureDisabled_IgnoresStaleRows(t *testing.T) {
 	srv, db := setupTestServer(t)
+
+	if err := db.ReplaceRecommendations([]database.Recommendation{
+		{TVDBID: 1001, Title: "Stale", Score: 10, TrackerURL: "https://kinozal.tv/stale"},
+	}); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/api/recommendations", http.NoBody)
+	w := httptest.NewRecorder()
+	srv.router.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+	var result []map[string]interface{}
+	if err := json.NewDecoder(w.Body).Decode(&result); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if len(result) != 0 {
+		t.Errorf("expected empty array when feature disabled, got %d entries", len(result))
+	}
+}
+
+func TestHandleGetRecommendations_ReturnsSeededEntries(t *testing.T) {
+	srv, db := setupTestServerWithRecommender(t)
 
 	if err := db.ReplaceRecommendations([]database.Recommendation{
 		{

@@ -15,9 +15,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/go-chi/chi/v5"
-	"github.com/go-chi/chi/v5/middleware"
-	"github.com/go-chi/cors"
 	"github.com/episodex/episodex/internal/audio"
 	"github.com/episodex/episodex/internal/database"
 	"github.com/episodex/episodex/internal/qbittorrent"
@@ -25,6 +22,9 @@ import (
 	"github.com/episodex/episodex/internal/scanner"
 	"github.com/episodex/episodex/internal/tracker"
 	"github.com/episodex/episodex/internal/tvdb"
+	"github.com/go-chi/chi/v5"
+	"github.com/go-chi/chi/v5/middleware"
+	"github.com/go-chi/cors"
 )
 
 // Server represents the API server
@@ -38,7 +38,7 @@ type Server struct {
 	recommender    *recommender.Recommender
 	router         *chi.Mux
 	mediaPath      string
-	procLock *database.ProcessingLock
+	procLock       *database.ProcessingLock
 }
 
 // NewServer creates a new API server.
@@ -2359,6 +2359,10 @@ func mustJSON(v interface{}) string {
 // handleGetRecommendations returns current recommendations. Returns an empty
 // array (not 503) when the feature is disabled so the UI degrades gracefully.
 func (s *Server) handleGetRecommendations(w http.ResponseWriter, _ *http.Request) {
+	if s.recommender == nil {
+		s.respondJSON(w, http.StatusOK, []map[string]interface{}{})
+		return
+	}
 	recs, err := s.db.GetRecommendations()
 	if err != nil {
 		slog.Error("Failed to fetch recommendations", "error", err)

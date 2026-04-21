@@ -17,10 +17,10 @@ import (
 )
 
 const (
-	ratingThreshold      = 7.0
-	maxFinal             = 20
-	candidateBufferSize  = 40
-	interCallDelay       = 100 * time.Millisecond
+	ratingThreshold     = 7.0
+	maxFinal            = 20
+	candidateBufferSize = 40
+	interCallDelay      = 100 * time.Millisecond
 )
 
 // tmdbClient is the subset of the TMDB client used by the recommender.
@@ -92,15 +92,30 @@ func (r *Recommender) Refresh() error {
 		return fmt.Errorf("load blacklist: %w", err)
 	}
 
-	candidates := r.aggregateCandidates(ownedTVDB, ownedTitles)
+	candidates, aggHadErrors, err := r.aggregateCandidates(ownedTVDB, ownedTitles)
+	if err != nil {
+		return fmt.Errorf("aggregate candidates: %w", err)
+	}
 	if len(candidates) == 0 {
+		if aggHadErrors {
+			slog.Warn("Recommendation refresh: no candidates and partial TMDB errors; preserving existing recommendations")
+			return nil
+		}
 		slog.Info("Recommendation refresh: no candidates after aggregation")
 		return r.db.ReplaceRecommendations(nil)
 	}
 
 	ranked := rankCandidates(candidates)
 
-	recs := r.filterAndBuild(ranked, ownedTVDB, blacklist)
+	recs, filterHadErrors, err := r.filterAndBuild(ranked, ownedTVDB, blacklist)
+	if err != nil {
+		return fmt.Errorf("filter candidates: %w", err)
+	}
+
+	if len(recs) == 0 && (aggHadErrors || filterHadErrors) {
+		slog.Warn("Recommendation refresh: empty result with upstream errors; preserving existing recommendations")
+		return nil
+	}
 
 	if err := r.db.ReplaceRecommendations(recs); err != nil {
 		return fmt.Errorf("replace recommendations: %w", err)
@@ -136,13 +151,23 @@ func (r *Recommender) loadOwnedSeries() (map[int]bool, map[int]string, error) {
 }
 
 // aggregateCandidates fans out over owned series, calling TMDB to gather
-// recommendation candidates, keyed by TMDB id.
-func (r *Recommender) aggregateCandidates(owned map[int]bool, titles map[int]string) map[int]*candidate {
+// recommendation candidates, keyed by TMDB id. Returns an error if any TMDB
+// call failed and no recommendations endpoint succeeded — this prevents a
+// partial TMDB outage from silently wiping the existing recommendations
+// table. A successful /find returning no TMDB match does not count as a
+// successful recommendation fetch, because it does not exercise the
+// /recommendations endpoint. The second return value indicates whether any
+// TMDB call errored, so the caller can preserve existing rows when the
+// final result is empty and any upstream dependency was partially degraded.
+func (r *Recommender) aggregateCandidates(owned map[int]bool, titles map[int]string) (map[int]*candidate, bool, error) {
 	candidates := make(map[int]*candidate)
+	tmdbErrors := 0
+	recsSucceeded := 0
 	for tvdbID := range owned {
 		show, err := r.tmdb.FindByTVDBID(tvdbID)
 		r.sleep(interCallDelay)
 		if err != nil {
+			tmdbErrors++
 			slog.Warn("TMDB find failed", "tvdb_id", tvdbID, "title", titles[tvdbID], "error", err)
 			continue
 		}
@@ -153,9 +178,11 @@ func (r *Recommender) aggregateCandidates(owned map[int]bool, titles map[int]str
 		recs, err := r.tmdb.GetRecommendations(show.ID)
 		r.sleep(interCallDelay)
 		if err != nil {
+			tmdbErrors++
 			slog.Warn("TMDB recommendations failed", "tmdb_id", show.ID, "title", titles[tvdbID], "error", err)
 			continue
 		}
+		recsSucceeded++
 
 		for _, rec := range recs {
 			c, ok := candidates[rec.ID]
@@ -175,7 +202,10 @@ func (r *Recommender) aggregateCandidates(owned map[int]bool, titles map[int]str
 			c.frequency++
 		}
 	}
-	return candidates
+	if tmdbErrors > 0 && recsSucceeded == 0 {
+		return nil, true, fmt.Errorf("all TMDB lookups with errors; %d errors, 0 successful recommendation fetches", tmdbErrors)
+	}
+	return candidates, tmdbErrors > 0, nil
 }
 
 // rankedCandidate pairs a candidate with its computed score.
@@ -208,9 +238,21 @@ func rankCandidates(candidates map[int]*candidate) []rankedCandidate {
 // filterAndBuild walks ranked candidates in order, resolves TVDB ids,
 // excludes owned/blacklisted shows, requires a Kinozal S01 torrent,
 // and stops once maxFinal entries are collected or candidateBufferSize probed.
-func (r *Recommender) filterAndBuild(ranked []rankedCandidate, owned, blacklist map[int]bool) []database.Recommendation {
+// Returns an error if every external_ids probe failed or every Kinozal
+// search errored, so a partial outage on either dependency does not silently
+// wipe the recommendations table. The second return value indicates whether
+// any external_ids or Kinozal call errored, so the caller can preserve
+// existing rows when the final result is empty and any upstream dependency
+// was partially degraded.
+func (r *Recommender) filterAndBuild(ranked []rankedCandidate, owned, blacklist map[int]bool) ([]database.Recommendation, bool, error) {
 	recs := make([]database.Recommendation, 0, maxFinal)
+	seenTVDB := make(map[int]bool)
 	probed := 0
+	extErrors := 0
+	extSucceeded := 0
+	kinozalAttempts := 0
+	kinozalErrors := 0
+	kinozalSucceeded := 0
 	for _, rc := range ranked {
 		if len(recs) >= maxFinal || probed >= candidateBufferSize {
 			break
@@ -220,35 +262,62 @@ func (r *Recommender) filterAndBuild(ranked []rankedCandidate, owned, blacklist 
 		ext, err := r.tmdb.GetExternalIDs(rc.c.tmdbID)
 		r.sleep(interCallDelay)
 		if err != nil {
+			extErrors++
 			slog.Warn("TMDB external_ids failed", "tmdb_id", rc.c.tmdbID, "error", err)
 			continue
 		}
+		extSucceeded++
 		if ext == nil || ext.TVDBId == 0 {
 			continue
 		}
 		if owned[ext.TVDBId] || blacklist[ext.TVDBId] {
 			continue
 		}
+		if seenTVDB[ext.TVDBId] {
+			continue
+		}
 
+		kinozalAttempts++
+		anyOK := false
+		anyErr := false
 		torrent, err := r.kinozal.FindSeasonTorrent(rc.c.name, 1)
 		if err != nil {
 			slog.Warn("Kinozal search failed", "title", rc.c.name, "error", err)
-			continue
+			torrent = nil
+			anyErr = true
+		} else {
+			anyOK = true
 		}
 		if torrent == nil && rc.c.originalName != "" && rc.c.originalName != rc.c.name {
-			torrent, err = r.kinozal.FindSeasonTorrent(rc.c.originalName, 1)
-			if err != nil {
-				slog.Warn("Kinozal search (fallback) failed", "title", rc.c.originalName, "error", err)
-				continue
+			fallback, fallbackErr := r.kinozal.FindSeasonTorrent(rc.c.originalName, 1)
+			if fallbackErr != nil {
+				slog.Warn("Kinozal search (fallback) failed", "title", rc.c.originalName, "error", fallbackErr)
+				anyErr = true
+			} else {
+				anyOK = true
+				torrent = fallback
 			}
+		}
+		if anyOK {
+			kinozalSucceeded++
+		}
+		if anyErr {
+			kinozalErrors++
 		}
 		if torrent == nil {
 			continue
 		}
 
+		seenTVDB[ext.TVDBId] = true
 		recs = append(recs, buildRecommendation(rc, ext.TVDBId, torrent))
 	}
-	return recs
+	if probed > 0 && extErrors > 0 && extSucceeded == 0 {
+		return nil, true, fmt.Errorf("all %d TMDB external_ids lookups failed", extErrors)
+	}
+	if kinozalAttempts > 0 && kinozalErrors > 0 && kinozalSucceeded == 0 {
+		return nil, true, fmt.Errorf("all %d Kinozal searches failed", kinozalErrors)
+	}
+	return recs, extErrors > 0 || kinozalErrors > 0, nil
 }
 
 // buildRecommendation materializes a DB row from a ranked candidate + torrent.

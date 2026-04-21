@@ -233,3 +233,30 @@ func TestGetBlacklistedIDs_Empty(t *testing.T) {
 		t.Errorf("expected empty map, got %d entries", len(ids))
 	}
 }
+
+// If a show gets blacklisted between a refresh's blacklist snapshot and the
+// final ReplaceRecommendations call, the insert must still skip it so the
+// blacklisted entry does not race back into the table.
+func TestReplaceRecommendations_SkipsBlacklistedAtCommit(t *testing.T) {
+	db := newTestDB(t)
+
+	if err := db.AddToBlacklist(42, "Banned"); err != nil {
+		t.Fatalf("blacklist: %v", err)
+	}
+
+	recs := []Recommendation{
+		{TVDBID: 42, Title: "Banned", Score: 10, TrackerURL: "https://kinozal.tv/42"},
+		{TVDBID: 43, Title: "Allowed", Score: 8, TrackerURL: "https://kinozal.tv/43"},
+	}
+	if err := db.ReplaceRecommendations(recs); err != nil {
+		t.Fatalf("replace: %v", err)
+	}
+
+	got, err := db.GetRecommendations()
+	if err != nil {
+		t.Fatalf("get: %v", err)
+	}
+	if len(got) != 1 || got[0].TVDBID != 43 {
+		t.Errorf("expected only tvdb 43, got %+v", got)
+	}
+}

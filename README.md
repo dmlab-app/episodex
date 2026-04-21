@@ -69,6 +69,8 @@ episodex/
 │   ├── scheduler/      # Task scheduler
 │   ├── scanner/        # Media folder scanning
 │   ├── tvdb/           # TVDB API client
+│   ├── tmdb/           # TMDB API client
+│   ├── recommender/    # Recommendations aggregation engine
 │   ├── hash/           # File hashing utilities
 │   ├── audio/          # AudioCutter (mkvmerge/ffmpeg)
 │   ├── qbittorrent/    # qBittorrent Web API client
