@@ -2480,6 +2480,62 @@ h4 { font-size: 1rem; }
 }
 
 /* ============================================
+   Blacklist Page
+   ============================================ */
+.blacklist-list {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-sm);
+}
+
+.blacklist-item {
+    display: flex;
+    align-items: center;
+    gap: var(--space-lg);
+    padding: var(--space-md) var(--space-lg);
+    background: var(--bg-surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-md);
+    transition: all var(--transition-fast);
+}
+
+.blacklist-item:hover {
+    background: var(--bg-hover);
+    border-color: var(--border-accent);
+}
+
+.blacklist-info {
+    flex: 1;
+    min-width: 0;
+}
+
+.blacklist-title {
+    font-weight: 600;
+    color: var(--text-primary);
+    margin-bottom: 2px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.blacklist-date {
+    color: var(--text-muted);
+    font-size: 0.8rem;
+}
+
+.btn-unblacklist {
+    flex-shrink: 0;
+    display: inline-flex;
+    align-items: center;
+    gap: var(--space-xs);
+}
+
+.btn-unblacklist svg {
+    width: 16px;
+    height: 16px;
+}
+
+/* ============================================
    Toast Notifications
    ============================================ */
 .toast-container {

@@ -168,12 +168,12 @@ The refresh runs on container startup and once every 24 hours via the existing s
 - [x] run all Go tests — must pass before Task 9
 
 ### Task 9: Frontend — Blacklist management page
-- [ ] add `<section id="page-blacklist" class="page">` block in index.html with heading "Blacklisted Shows" and `<div id="blacklist-list"></div>`, back link to recommendations
-- [ ] in `app.js` add `showBlacklistPage()` + `loadBlacklist()` fetching `/api/recommendations/blacklist`
-- [ ] render rows: title + date + "Unblacklist" button
-- [ ] `unblacklistShow(tvdbID)`: DELETE `/api/recommendations/blacklist/{tvdb_id}`, reload list
-- [ ] style rows using existing list/table patterns
-- [ ] run Go tests — must pass before Task 10
+- [x] add `<section id="page-blacklist" class="page">` block in index.html with heading "Blacklisted Shows" and `<div id="blacklist-list"></div>`, back link to recommendations
+- [x] in `app.js` add `showBlacklistPage()` + `loadBlacklist()` fetching `/api/recommendations/blacklist`
+- [x] render rows: title + date + "Unblacklist" button
+- [x] `unblacklistShow(tvdbID)`: DELETE `/api/recommendations/blacklist/{tvdb_id}`, reload list
+- [x] style rows using existing list/table patterns
+- [x] run Go tests — must pass before Task 10
 
 ### Task 10: Verify acceptance criteria
 - [ ] verify all requirements from Overview are implemented

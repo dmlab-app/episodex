@@ -129,6 +129,8 @@ function router() {
         showSeasonsPage();
     } else if (hash === '/recommendations') {
         showRecommendationsPage();
+    } else if (hash === '/recommendations/blacklist') {
+        showBlacklistPage();
     } else if (hash === '/add-series') {
         showAddSeriesPage();
     }
@@ -1174,6 +1176,93 @@ async function refreshRecommendations() {
 }
 
 // ==============================================================================
+// Blacklist Page
+// ==============================================================================
+async function showBlacklistPage() {
+    state.currentView = 'blacklist';
+    hideAllPages();
+    document.getElementById('page-blacklist').classList.add('active');
+    updateNav('recommendations');
+    await loadBlacklist();
+}
+
+async function loadBlacklist() {
+    const list = document.getElementById('blacklist-list');
+    const empty = document.getElementById('blacklist-empty');
+    const loading = document.getElementById('blacklist-loading');
+
+    list.innerHTML = '';
+    empty.style.display = 'none';
+    loading.style.display = 'flex';
+
+    try {
+        const entries = await api.get('/api/recommendations/blacklist');
+        loading.style.display = 'none';
+
+        if (!Array.isArray(entries) || entries.length === 0) {
+            empty.style.display = 'flex';
+            return;
+        }
+        renderBlacklist(entries);
+    } catch (e) {
+        loading.style.display = 'none';
+        showToast(`Failed to load blacklist: ${e.message || e}`, 'error');
+    }
+}
+
+function renderBlacklist(entries) {
+    const list = document.getElementById('blacklist-list');
+
+    if (!list._unblacklistHandlerAttached) {
+        list.addEventListener('click', e => {
+            const btn = e.target.closest('.btn-unblacklist');
+            if (!btn) return;
+            e.preventDefault();
+            const tvdbID = parseInt(btn.dataset.tvdbId, 10);
+            if (tvdbID > 0) unblacklistShow(tvdbID);
+        });
+        list._unblacklistHandlerAttached = true;
+    }
+
+    list.innerHTML = entries.map(e => {
+        const date = e.blacklisted_at ? new Date(e.blacklisted_at).toLocaleDateString() : '';
+        const title = e.title || `TVDB #${parseInt(e.tvdb_id, 10)}`;
+        return `
+        <div class="blacklist-item" data-tvdb-id="${parseInt(e.tvdb_id, 10)}">
+            <div class="blacklist-info">
+                <div class="blacklist-title">${esc(title)}</div>
+                ${date ? `<div class="blacklist-date">Blacklisted ${esc(date)}</div>` : ''}
+            </div>
+            <button class="btn btn-secondary btn-unblacklist" data-tvdb-id="${parseInt(e.tvdb_id, 10)}">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <polyline points="3 6 5 6 21 6"/>
+                    <path d="M19 6l-2 14a2 2 0 0 1-2 2H9a2 2 0 0 1-2-2L5 6"/>
+                    <path d="M10 11v6"/>
+                    <path d="M14 11v6"/>
+                </svg>
+                Unblacklist
+            </button>
+        </div>
+        `;
+    }).join('');
+}
+
+async function unblacklistShow(tvdbID) {
+    try {
+        await api.delete(`/api/recommendations/blacklist/${tvdbID}`);
+        const item = document.querySelector(`.blacklist-item[data-tvdb-id="${tvdbID}"]`);
+        if (item) item.remove();
+        const list = document.getElementById('blacklist-list');
+        if (list && list.children.length === 0) {
+            document.getElementById('blacklist-empty').style.display = 'flex';
+        }
+        showToast('Removed from blacklist');
+    } catch (e) {
+        showToast(`Failed to unblacklist: ${e.message || e}`, 'error');
+    }
+}
+
+// ==============================================================================
 // Add Series Page
 // ==============================================================================
 async function showAddSeriesPage() {
@@ -1447,6 +1536,7 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     });
     document.getElementById('back-from-add')?.addEventListener('click', () => navigate('/series'));
+    document.getElementById('back-to-recommendations')?.addEventListener('click', () => navigate('/recommendations'));
 
     // Process audio buttons
     document.getElementById('process-audio-btn')?.addEventListener('click', processSeasonAudio);
@@ -1476,3 +1566,4 @@ window.matchSeries = matchSeries;
 window.updateSeasonVoice = updateSeasonVoice;
 window.blacklistRecommendation = blacklistRecommendation;
 window.refreshRecommendations = refreshRecommendations;
+window.unblacklistShow = unblacklistShow;
