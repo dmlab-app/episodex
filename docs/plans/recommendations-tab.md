@@ -50,11 +50,11 @@ The refresh runs on container startup and once every 24 hours via the existing s
 - [x] run `go build ./... && go test ./...` — must pass before Task 2
 
 ### Task 2: Add TMDB config var
-- [ ] add `TMDBApiKey string` field to `Config` struct in `internal/config/config.go`
-- [ ] load via `getEnv("TMDB_API_KEY", "")` in `Load()`
-- [ ] no validation required (optional — feature disables if empty)
-- [ ] write test case in `internal/config/config_test.go` verifying TMDB_API_KEY env var is loaded
-- [ ] run tests — must pass before Task 3
+- [x] add `TMDBApiKey string` field to `Config` struct in `internal/config/config.go`
+- [x] load via `getEnv("TMDB_API_KEY", "")` in `Load()`
+- [x] no validation required (optional — feature disables if empty)
+- [x] write test case in `internal/config/config_test.go` verifying TMDB_API_KEY env var is loaded
+- [x] run tests — must pass before Task 3
 
 ### Task 3: Create TMDB client package
 - [ ] create `internal/tmdb/client.go` with `Client` struct (mutex, httpClient, apiKey, baseURL) mirroring `internal/tvdb/client.go`

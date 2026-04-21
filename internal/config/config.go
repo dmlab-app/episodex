@@ -29,6 +29,9 @@ type Config struct {
 	// TVDB API
 	TVDBApiKey string
 
+	// TMDB API
+	TMDBApiKey string
+
 	// Scanning settings
 	ScanIntervalHours int
 	TVDBCheckHour     int
@@ -60,6 +63,7 @@ func Load() (*Config, error) {
 		BackupHour:                getEnvAsInt("BACKUP_HOUR", 3),
 		MediaPath:                 getEnv("MEDIA_PATH", "/Volumes/Plex/TV Show"),
 		TVDBApiKey:                getEnv("TVDB_API_KEY", ""),
+		TMDBApiKey:                getEnv("TMDB_API_KEY", ""),
 		ScanIntervalHours:         getEnvAsInt("SCAN_INTERVAL_HOURS", 1),
 		TVDBCheckHour:             getEnvAsInt("TVDB_CHECK_HOUR", 5),
 		QbitURL:                   getEnv("QBIT_URL", ""),

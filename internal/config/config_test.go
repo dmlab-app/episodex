@@ -91,6 +91,33 @@ func TestLoadKinozalNotConfigured(t *testing.T) {
 	}
 }
 
+func TestLoadTMDBApiKey(t *testing.T) {
+	t.Setenv("MEDIA_PATH", "/test/path")
+	t.Setenv("TMDB_API_KEY", "test-tmdb-key")
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load() failed: %v", err)
+	}
+
+	if cfg.TMDBApiKey != "test-tmdb-key" {
+		t.Errorf("Expected TMDBApiKey=test-tmdb-key, got %s", cfg.TMDBApiKey)
+	}
+}
+
+func TestLoadTMDBApiKeyNotConfigured(t *testing.T) {
+	t.Setenv("MEDIA_PATH", "/test/path")
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load() failed: %v", err)
+	}
+
+	if cfg.TMDBApiKey != "" {
+		t.Errorf("Expected empty TMDBApiKey, got %s", cfg.TMDBApiKey)
+	}
+}
+
 func TestValidate(t *testing.T) {
 	tests := []struct {
 		name    string
