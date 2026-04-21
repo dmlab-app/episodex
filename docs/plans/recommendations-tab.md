@@ -57,15 +57,15 @@ The refresh runs on container startup and once every 24 hours via the existing s
 - [x] run tests — must pass before Task 3
 
 ### Task 3: Create TMDB client package
-- [ ] create `internal/tmdb/client.go` with `Client` struct (mutex, httpClient, apiKey, baseURL) mirroring `internal/tvdb/client.go`
-- [ ] implement `NewClient(apiKey string) *Client` and `NewClientWithBaseURL(apiKey, base string) *Client` for test injection
-- [ ] implement `makeRequest(method, path string, params url.Values)` helper — TMDB v3 uses `api_key` as query param OR `Authorization: Bearer <token>` header (use Bearer — cleaner)
-- [ ] add typed response structs: `FindResult` (with `TVResults []TMDBShow`), `TMDBShow` (id, name, original_name, overview, poster_path, first_air_date, vote_average, genre_ids), `RecommendationsResponse` (with `Results []TMDBShow`)
-- [ ] implement `FindByTVDBID(tvdbID int) (*TMDBShow, error)` — GET `/find/{tvdb_id}?external_source=tvdb_id`, returns first `tv_results` entry or nil
-- [ ] implement `GetRecommendations(tmdbID int) ([]TMDBShow, error)` — GET `/tv/{tmdb_id}/recommendations`
-- [ ] handle 429 rate limit: sleep 1s and retry once
-- [ ] write tests using `httptest.Server` for all methods (success, 404, 429 retry, malformed JSON)
-- [ ] run tests — must pass before Task 4
+- [x] create `internal/tmdb/client.go` with `Client` struct (mutex, httpClient, apiKey, baseURL) mirroring `internal/tvdb/client.go`
+- [x] implement `NewClient(apiKey string) *Client` and `NewClientWithBaseURL(apiKey, base string) *Client` for test injection
+- [x] implement `makeRequest(method, path string, params url.Values)` helper — TMDB v3 uses `api_key` as query param OR `Authorization: Bearer <token>` header (use Bearer — cleaner)
+- [x] add typed response structs: `FindResult` (with `TVResults []TMDBShow`), `TMDBShow` (id, name, original_name, overview, poster_path, first_air_date, vote_average, genre_ids), `RecommendationsResponse` (with `Results []TMDBShow`)
+- [x] implement `FindByTVDBID(tvdbID int) (*TMDBShow, error)` — GET `/find/{tvdb_id}?external_source=tvdb_id`, returns first `tv_results` entry or nil
+- [x] implement `GetRecommendations(tmdbID int) ([]TMDBShow, error)` — GET `/tv/{tmdb_id}/recommendations`
+- [x] handle 429 rate limit: sleep 1s and retry once
+- [x] write tests using `httptest.Server` for all methods (success, 404, 429 retry, malformed JSON)
+- [x] run tests — must pass before Task 4
 
 ### Task 4: Add recommendations DB schema and CRUD
 - [ ] add `recommendations` and `recommendation_blacklist` tables in `initTables()` in `internal/database/db.go`:
