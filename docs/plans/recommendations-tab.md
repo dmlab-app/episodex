@@ -103,9 +103,9 @@ The refresh runs on container startup and once every 24 hours via the existing s
 - [x] run tests — must pass before Task 5
 
 ### Task 5: Create recommender package
-- [ ] create `internal/recommender/recommender.go` with `Recommender` struct (fields: db, tmdb, kinozal `tracker.SeasonSearcher`)
-- [ ] implement `New(db, tmdb, kinozal) *Recommender` constructor
-- [ ] implement `Refresh() error` algorithm:
+- [x] create `internal/recommender/recommender.go` with `Recommender` struct (fields: db, tmdb, kinozal `tracker.SeasonSearcher`)
+- [x] implement `New(db, tmdb, kinozal) *Recommender` constructor
+- [x] implement `Refresh() error` algorithm:
   1. Get all owned series with non-null tvdb_id via `SELECT id, tvdb_id, title FROM series WHERE tvdb_id IS NOT NULL`
   2. Load owned set: `map[int]bool` of all owned tvdb_ids
   3. Load blacklist via `db.GetBlacklistedIDs()`
@@ -116,9 +116,9 @@ The refresh runs on container startup and once every 24 hours via the existing s
   8. Skip if resolved tvdb_id is in owned set or blacklist
   9. `kinozal.FindSeasonTorrent(title, 1)` — skip if nil
   10. Collect until 20 found; call `db.ReplaceRecommendations(...)`
-- [ ] ➕ add TMDB `GetExternalIDs(tmdbID int) (*ExternalIDs, error)` method to `internal/tmdb/client.go` — GET `/tv/{id}/external_ids`, returns struct with `tvdb_id`
-- [ ] write tests in `internal/recommender/recommender_test.go`: mock TMDB + mock kinozal (implement `tracker.SeasonSearcher` as test fake), verify aggregation, filtering, blacklist exclusion, Kinozal filter, top-20 cutoff
-- [ ] run tests — must pass before Task 6
+- [x] ➕ add TMDB `GetExternalIDs(tmdbID int) (*ExternalIDs, error)` method to `internal/tmdb/client.go` — GET `/tv/{id}/external_ids`, returns struct with `tvdb_id` (done in Task 3)
+- [x] write tests in `internal/recommender/recommender_test.go`: mock TMDB + mock kinozal (implement `tracker.SeasonSearcher` as test fake), verify aggregation, filtering, blacklist exclusion, Kinozal filter, top-20 cutoff
+- [x] run tests — must pass before Task 6
 
 ### Task 6: Register scheduler task in main.go
 - [ ] in `cmd/server/main.go`, after existing tracker/processor tasks: if `cfg.TMDBApiKey != ""`, initialize `tmdbClient := tmdb.NewClient(cfg.TMDBApiKey)`, get kinozal searcher from `trackerRegistry.Clients()` (same pattern as `WithSeasonSearcher`), create `rec := recommender.New(db, tmdbClient, kinozalSearcher)`
