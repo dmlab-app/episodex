@@ -161,6 +161,31 @@ func (db *DB) initTables() error {
 		UNIQUE(series_id, season_number)
 	);
 
+	-- Рекомендации (из TMDB, отфильтрованные по Kinozal)
+	CREATE TABLE IF NOT EXISTS recommendations (
+		tvdb_id INTEGER PRIMARY KEY,
+		tmdb_id INTEGER,
+		title TEXT NOT NULL,
+		original_title TEXT,
+		overview TEXT,
+		poster_url TEXT,
+		year INTEGER,
+		rating REAL,
+		genres TEXT,
+		score REAL NOT NULL,
+		tracker_url TEXT NOT NULL,
+		torrent_title TEXT,
+		torrent_size TEXT,
+		created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+	);
+
+	-- Чёрный список рекомендаций
+	CREATE TABLE IF NOT EXISTS recommendation_blacklist (
+		tvdb_id INTEGER PRIMARY KEY,
+		title TEXT,
+		blacklisted_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+	);
+
 	-- Индексы для производительности
 	CREATE INDEX IF NOT EXISTS idx_series_tvdb_id ON series(tvdb_id);
 	CREATE INDEX IF NOT EXISTS idx_series_status ON series(status);

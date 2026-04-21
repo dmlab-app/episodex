@@ -68,7 +68,7 @@ The refresh runs on container startup and once every 24 hours via the existing s
 - [x] run tests — must pass before Task 4
 
 ### Task 4: Add recommendations DB schema and CRUD
-- [ ] add `recommendations` and `recommendation_blacklist` tables in `initTables()` in `internal/database/db.go`:
+- [x] add `recommendations` and `recommendation_blacklist` tables in `initTables()` in `internal/database/db.go`:
   ```sql
   CREATE TABLE IF NOT EXISTS recommendations (
       tvdb_id INTEGER PRIMARY KEY,
@@ -92,15 +92,15 @@ The refresh runs on container startup and once every 24 hours via the existing s
       blacklisted_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
   );
   ```
-- [ ] create `internal/database/recommendations.go` with struct `Recommendation` (all DB fields) and `BlacklistEntry` (tvdb_id, title, blacklisted_at)
-- [ ] implement `GetRecommendations() ([]Recommendation, error)` — ordered by score DESC
-- [ ] implement `ReplaceRecommendations(recs []Recommendation) error` — wrap in transaction: DELETE all, INSERT new batch
-- [ ] implement `AddToBlacklist(tvdbID int, title string) error` — also DELETE from recommendations
-- [ ] implement `RemoveFromBlacklist(tvdbID int) error`
-- [ ] implement `GetBlacklist() ([]BlacklistEntry, error)` — ordered by blacklisted_at DESC
-- [ ] implement `GetBlacklistedIDs() (map[int]bool, error)` — fast lookup set
-- [ ] write tests in `internal/database/recommendations_test.go` using `setupTestDB` helper: CRUD happy paths, blacklist interaction (adding to blacklist removes from recommendations), GetBlacklistedIDs correctness
-- [ ] run tests — must pass before Task 5
+- [x] create `internal/database/recommendations.go` with struct `Recommendation` (all DB fields) and `BlacklistEntry` (tvdb_id, title, blacklisted_at)
+- [x] implement `GetRecommendations() ([]Recommendation, error)` — ordered by score DESC
+- [x] implement `ReplaceRecommendations(recs []Recommendation) error` — wrap in transaction: DELETE all, INSERT new batch
+- [x] implement `AddToBlacklist(tvdbID int, title string) error` — also DELETE from recommendations
+- [x] implement `RemoveFromBlacklist(tvdbID int) error`
+- [x] implement `GetBlacklist() ([]BlacklistEntry, error)` — ordered by blacklisted_at DESC
+- [x] implement `GetBlacklistedIDs() (map[int]bool, error)` — fast lookup set
+- [x] write tests in `internal/database/recommendations_test.go` using `setupTestDB` helper: CRUD happy paths, blacklist interaction (adding to blacklist removes from recommendations), GetBlacklistedIDs correctness
+- [x] run tests — must pass before Task 5
 
 ### Task 5: Create recommender package
 - [ ] create `internal/recommender/recommender.go` with `Recommender` struct (fields: db, tmdb, kinozal `tracker.SeasonSearcher`)
