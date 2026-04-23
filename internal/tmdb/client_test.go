@@ -19,8 +19,8 @@ func newTestClient(t *testing.T, handler http.Handler) *Client {
 func TestFindByTVDBID_Success(t *testing.T) {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/find/12345", func(w http.ResponseWriter, r *http.Request) {
-		if got := r.Header.Get("Authorization"); got != "Bearer test-token" {
-			t.Errorf("expected Bearer auth header, got %q", got)
+		if got := r.URL.Query().Get("api_key"); got != "test-token" {
+			t.Errorf("expected api_key query param, got %q", got)
 		}
 		if got := r.URL.Query().Get("external_source"); got != "tvdb_id" {
 			t.Errorf("expected external_source=tvdb_id, got %q", got)

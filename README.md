@@ -115,7 +115,7 @@ All settings are configured via environment variables (`.env` file):
 - `KINOZAL_USER` - Kinozal username (optional, enables tracker auto-redownload)
 - `KINOZAL_PASSWORD` - Kinozal password (required when KINOZAL_USER is set)
 - `TRACKER_CHECK_INTERVAL_HOURS` - how often to check trackers for new episodes (default 6)
-- `TMDB_API_KEY` - TMDB v3 Bearer token (optional, enables Recommendations tab)
+- `TMDB_API_KEY` - TMDB v3 API key (optional, enables Recommendations tab)
 
 ## API Endpoints
 

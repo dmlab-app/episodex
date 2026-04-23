@@ -25,7 +25,7 @@ type Client struct {
 	baseURL    string
 }
 
-// NewClient creates a new TMDB API client using the Bearer token (v4 read access token).
+// NewClient creates a new TMDB API client using the v3 API key.
 func NewClient(apiKey string) *Client {
 	return &Client{
 		apiKey:  apiKey,
@@ -87,17 +87,18 @@ func (c *Client) makeRequest(method, path string, params url.Values) (*http.Resp
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
-	fullURL := c.baseURL + path
-	if len(params) > 0 {
-		fullURL += "?" + params.Encode()
+	if params == nil {
+		params = url.Values{}
 	}
+	params.Set("api_key", c.apiKey)
+	params.Set("language", "ru-RU")
+	fullURL := c.baseURL + path + "?" + params.Encode()
 
 	doRequest := func() (*http.Response, error) {
 		req, err := http.NewRequest(method, fullURL, nil)
 		if err != nil {
 			return nil, fmt.Errorf("failed to create request: %w", err)
 		}
-		req.Header.Set("Authorization", "Bearer "+c.apiKey)
 		req.Header.Set("Accept", "application/json")
 		return c.httpClient.Do(req)
 	}
