@@ -16,7 +16,7 @@ import (
 type QbitClient interface {
 	ListTorrents() ([]qbittorrent.Torrent, error)
 	DeleteTorrent(hash string) error
-	AddTorrent(torrentData []byte, category, savePath string) (string, error)
+	AddTorrent(torrentData []byte, category string) (string, error)
 	GetTorrentFiles(hash string) ([]qbittorrent.TorrentFile, error)
 	SetFilePriority(hash string, fileIndexes []int, priority int) error
 }
@@ -199,24 +199,38 @@ func (c *Checker) redownload(season *database.Season, client Client) (bool, erro
 		return false, nil
 	}
 
-	// Get category from existing torrent in qBit (if available)
+	// Carry the category from the existing qBit torrent so the new one lands
+	// in the same category-configured save path. qBit derives the save path
+	// from the category, so we must not pass savepath explicitly.
 	var category string
-	var savePath string
-	if season.TorrentHash != nil && *season.TorrentHash != "" {
-		torrents, err := c.qbit.ListTorrents()
-		if err == nil {
+	switch {
+	case season.TorrentHash == nil || *season.TorrentHash == "":
+		slog.Warn("Tracker check: no stored torrent_hash, category will be empty on redownload",
+			"season_id", season.ID)
+	default:
+		torrents, listErr := c.qbit.ListTorrents()
+		switch {
+		case listErr != nil:
+			slog.Warn("Tracker check: failed to list qBit torrents, category will be empty on redownload",
+				"season_id", season.ID, "error", listErr)
+		default:
+			found := false
 			for _, t := range torrents {
 				if t.Hash == *season.TorrentHash {
 					category = t.Category
-					savePath = t.SavePath
+					found = true
 					break
 				}
+			}
+			if !found {
+				slog.Warn("Tracker check: old torrent not found in qBit, category will be empty on redownload",
+					"season_id", season.ID, "old_hash", *season.TorrentHash)
 			}
 		}
 	}
 
 	// Add new torrent to qBit first (before deleting old one, so we don't lose the torrent on failure)
-	if _, err := c.qbit.AddTorrent(torrentData, category, savePath); err != nil {
+	if _, err := c.qbit.AddTorrent(torrentData, category); err != nil {
 		return false, fmt.Errorf("add torrent: %w", err)
 	}
 

@@ -355,8 +355,8 @@ func TestAddTorrent_Success(t *testing.T) {
 		if r.FormValue("category") != "tv" {
 			t.Errorf("expected category=tv, got %s", r.FormValue("category"))
 		}
-		if r.FormValue("savepath") != "/downloads/shows" {
-			t.Errorf("expected savepath=/downloads/shows, got %s", r.FormValue("savepath"))
+		if r.FormValue("savepath") != "" {
+			t.Errorf("expected no savepath, got %s", r.FormValue("savepath"))
 		}
 		w.WriteHeader(http.StatusOK)
 		w.Write([]byte("Ok."))
@@ -366,7 +366,7 @@ func TestAddTorrent_Success(t *testing.T) {
 	c := NewClient(srv.URL, "admin", "secret")
 	c.cookie = &http.Cookie{Name: "SID", Value: "sess"}
 
-	hash, err := c.AddTorrent(torrentData, "tv", "/downloads/shows")
+	hash, err := c.AddTorrent(torrentData, "tv")
 	if err != nil {
 		t.Fatalf("expected no error, got %v", err)
 	}
@@ -389,7 +389,7 @@ func TestAddTorrent_ServerError(t *testing.T) {
 	c := NewClient(srv.URL, "admin", "secret")
 	c.cookie = &http.Cookie{Name: "SID", Value: "sess"}
 
-	_, err := c.AddTorrent(validTorrentData(), "tv", "/downloads")
+	_, err := c.AddTorrent(validTorrentData(), "tv")
 	if err == nil {
 		t.Fatal("expected error on server error")
 	}
@@ -397,7 +397,7 @@ func TestAddTorrent_ServerError(t *testing.T) {
 
 func TestAddTorrent_InvalidTorrentData(t *testing.T) {
 	c := NewClient("http://localhost", "admin", "secret")
-	_, err := c.AddTorrent([]byte("not a torrent"), "", "")
+	_, err := c.AddTorrent([]byte("not a torrent"), "")
 	if err == nil {
 		t.Fatal("expected error for invalid torrent data")
 	}
@@ -424,7 +424,7 @@ func TestAddTorrent_ReloginOn403(t *testing.T) {
 	c := NewClient(srv.URL, "admin", "secret")
 	c.cookie = &http.Cookie{Name: "SID", Value: "expired"}
 
-	hash, err := c.AddTorrent(validTorrentData(), "", "")
+	hash, err := c.AddTorrent(validTorrentData(), "")
 	if err != nil {
 		t.Fatalf("expected success after relogin, got %v", err)
 	}

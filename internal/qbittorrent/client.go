@@ -190,7 +190,9 @@ func (c *Client) DeleteTorrent(hash string) error {
 }
 
 // AddTorrent uploads a .torrent file to qBittorrent and returns the info_hash.
-func (c *Client) AddTorrent(torrentData []byte, category, savePath string) (string, error) {
+// Save path is determined by qBittorrent from the category's configured path;
+// callers must not pass savepath explicitly.
+func (c *Client) AddTorrent(torrentData []byte, category string) (string, error) {
 	infoHash, err := ComputeInfoHash(torrentData)
 	if err != nil {
 		return "", fmt.Errorf("add torrent: %w", err)
@@ -209,11 +211,6 @@ func (c *Client) AddTorrent(torrentData []byte, category, savePath string) (stri
 
 	if category != "" {
 		if err := writer.WriteField("category", category); err != nil {
-			return "", fmt.Errorf("add torrent: %w", err)
-		}
-	}
-	if savePath != "" {
-		if err := writer.WriteField("savepath", savePath); err != nil {
 			return "", fmt.Errorf("add torrent: %w", err)
 		}
 	}

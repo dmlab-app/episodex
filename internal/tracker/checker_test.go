@@ -45,7 +45,6 @@ type mockQbitClient struct {
 type addTorrentCall struct {
 	data     []byte
 	category string
-	savePath string
 }
 
 type priorityCall struct {
@@ -63,8 +62,8 @@ func (m *mockQbitClient) DeleteTorrent(hash string) error {
 	return m.deleteErr
 }
 
-func (m *mockQbitClient) AddTorrent(data []byte, category, savePath string) (string, error) {
-	m.addedTorrents = append(m.addedTorrents, addTorrentCall{data, category, savePath})
+func (m *mockQbitClient) AddTorrent(data []byte, category string) (string, error) {
+	m.addedTorrents = append(m.addedTorrents, addTorrentCall{data, category})
 	return m.addHash, m.addErr
 }
 
@@ -238,15 +237,12 @@ func TestChecker_NewEpisodesTriggersRedownload(t *testing.T) {
 		t.Errorf("expected old hash deleted, got %v", qbit.deletedHashes)
 	}
 
-	// Check new torrent was added with correct category and save path
+	// Check new torrent was added with correct category (save path comes from category in qBit)
 	if len(qbit.addedTorrents) != 1 {
 		t.Fatalf("expected 1 add call, got %d", len(qbit.addedTorrents))
 	}
 	if qbit.addedTorrents[0].category != "tv-shows" {
 		t.Errorf("expected category=tv-shows, got %s", qbit.addedTorrents[0].category)
-	}
-	if qbit.addedTorrents[0].savePath != "/downloads/shows" {
-		t.Errorf("expected savePath=/downloads/shows, got %s", qbit.addedTorrents[0].savePath)
 	}
 
 	// Check torrent hash updated in DB
