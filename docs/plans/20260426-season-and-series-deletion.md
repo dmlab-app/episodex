@@ -80,8 +80,8 @@ Add small, focused DB functions used by both handlers. Keep them in the existing
 
 Implement `DELETE /api/series/{id}/seasons/{num}` in `internal/api/router.go`.
 
-- [ ] register route inside the existing chi setup (next to other season routes; e.g., near `handleUpdateSeason`).
-- [ ] implement `handleDeleteSeason(w, r)`:
+- [x] register route inside the existing chi setup (next to other season routes; e.g., near `handleUpdateSeason`).
+- [x] implement `handleDeleteSeason(w, r)`:
   - parse `id` (int64) and `num` (int) from URL params; 400 on parse error.
   - load season via `GetSeasonByNumber`; 404 if not found.
   - if `season.TorrentHash != nil && *season.TorrentHash != ""`, call `s.qbitClient.DeleteTorrent(*season.TorrentHash)`; ignore `ErrTorrentNotFound`; on any other error log and continue (do not block disk/DB cleanup — torrent stays in qBit but we surface a warning in the response).
@@ -92,14 +92,14 @@ Implement `DELETE /api/series/{id}/seasons/{num}` in `internal/api/router.go`.
   - call `DeleteNextSeasonCacheBySeason(seriesID, seasonNumber)`; log-and-continue on error (non-fatal).
   - log summary `slog.Info("Deleted season", "series_id", id, "season", num, "files_removed", N, "torrent_removed", bool)`.
   - respond `{ "success": true, "files_removed": N, "folder_removed": bool, "torrent_removed": bool }`.
-- [ ] write unit tests `handleDeleteSeason` in `internal/api/*_test.go`:
+- [x] write unit tests `handleDeleteSeason` in `internal/api/*_test.go`:
   - happy path with torrent_hash set (verify qBit DELETE called).
   - happy path with `torrent_hash = NULL` (no qBit call).
   - season not found (404).
   - bad path params (400).
   - qBit returns `ErrTorrentNotFound` — request still succeeds.
   - file outside `MEDIA_PATH` — skipped, no error.
-- [ ] run `go test ./internal/api/...` — must pass before next task.
+- [x] run `go test ./internal/api/...` — must pass before next task.
 
 ### Task 3: Extend handleDeleteSeries with qBit cleanup and cache cleanup
 

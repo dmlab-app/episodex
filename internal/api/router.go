@@ -4,6 +4,7 @@ package api
 import (
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -146,6 +147,7 @@ func (s *Server) setupRoutes() {
 				r.Get("/", s.handleListSeasons)                              // GET /api/series/:id/seasons
 				r.Get("/{num}", s.handleGetSeason)                           // GET /api/series/:id/seasons/:num
 				r.Put("/{num}", s.handleUpdateSeason)                        // PUT /api/series/:id/seasons/:num
+				r.Delete("/{num}", s.handleDeleteSeason)                     // DELETE /api/series/:id/seasons/:num
 				r.Get("/{num}/audio", s.handleGetAudioTracks)                // GET /api/series/:id/seasons/:num/audio
 				r.Post("/{num}/audio/preview", s.handleGenerateAudioPreview) // POST /api/series/:id/seasons/:num/audio/preview
 				r.Get("/{num}/tracker", s.handleGetSeasonTracker)            // GET /api/series/:id/seasons/:num/tracker
@@ -1889,6 +1891,118 @@ func (s *Server) handleUpdateSeason(w http.ResponseWriter, r *http.Request) {
 
 	s.respondJSON(w, http.StatusOK, map[string]interface{}{
 		"success": true,
+	})
+}
+
+// handleDeleteSeason removes a single season: qBit torrent (if any), media files
+// and folder inside MEDIA_PATH, season DB row (CASCADE removes media_files), and
+// next_season_cache row.
+func (s *Server) handleDeleteSeason(w http.ResponseWriter, r *http.Request) {
+	sid, err := strconv.ParseInt(chi.URLParam(r, "id"), 10, 64)
+	if err != nil {
+		s.respondError(w, http.StatusBadRequest, "invalid series ID")
+		return
+	}
+	snum, err := strconv.Atoi(chi.URLParam(r, "num"))
+	if err != nil {
+		s.respondError(w, http.StatusBadRequest, "invalid season number")
+		return
+	}
+
+	season, err := s.db.GetSeasonBySeriesAndNumber(sid, snum)
+	if err != nil {
+		slog.Error("Failed to fetch season for deletion", "series_id", sid, "season", snum, "error", err)
+		s.respondError(w, http.StatusInternalServerError, "failed to look up season")
+		return
+	}
+	if season == nil {
+		s.respondError(w, http.StatusNotFound, "season not found")
+		return
+	}
+
+	// 1. Remove qBit torrent (best-effort).
+	torrentRemoved := false
+	if season.TorrentHash != nil && *season.TorrentHash != "" && s.qbitClient != nil {
+		if err := s.qbitClient.DeleteTorrent(*season.TorrentHash); err != nil {
+			if errors.Is(err, qbittorrent.ErrTorrentNotFound) {
+				slog.Info("Torrent already gone from qBit", "hash", *season.TorrentHash)
+				torrentRemoved = true
+			} else {
+				slog.Warn("Failed to delete torrent from qBit", "hash", *season.TorrentHash, "error", err)
+			}
+		} else {
+			torrentRemoved = true
+			slog.Info("Removed torrent from qBit", "hash", *season.TorrentHash)
+		}
+	}
+
+	// 2. Remove media files inside MEDIA_PATH (best-effort).
+	filePaths, err := s.db.GetMediaFilePathsBySeason(sid, snum)
+	if err != nil {
+		slog.Error("Failed to get media file paths for season", "series_id", sid, "season", snum, "error", err)
+		s.respondError(w, http.StatusInternalServerError, "failed to look up media files for deletion")
+		return
+	}
+	filesRemoved := 0
+	for _, fp := range filePaths {
+		if !s.isWithinMediaPath(fp) {
+			slog.Warn("Skipping file outside media path", "path", fp, "media_path", s.mediaPath)
+			continue
+		}
+		if err := os.Remove(fp); err != nil {
+			if !os.IsNotExist(err) {
+				slog.Warn("Failed to remove media file", "path", fp, "error", err)
+			}
+		} else {
+			filesRemoved++
+			slog.Info("Removed media file", "path", fp)
+		}
+	}
+
+	// 3. Remove the season folder recursively (folder may contain non-tracked files).
+	folderRemoved := false
+	if season.FolderPath != nil && *season.FolderPath != "" {
+		fp := *season.FolderPath
+		if !s.isWithinMediaPath(fp) {
+			slog.Warn("Skipping folder outside media path", "path", fp, "media_path", s.mediaPath)
+		} else {
+			if err := os.RemoveAll(fp); err != nil {
+				slog.Warn("Failed to remove season folder", "path", fp, "error", err)
+			} else {
+				folderRemoved = true
+				slog.Info("Removed season folder", "path", fp)
+			}
+		}
+	}
+
+	// 4. DB delete (CASCADE removes media_files via composite FK).
+	rows, err := s.db.DeleteSeason(sid, snum)
+	if err != nil {
+		slog.Error("Failed to delete season from DB", "series_id", sid, "season", snum, "error", err)
+		s.respondError(w, http.StatusInternalServerError, "failed to delete season")
+		return
+	}
+	if rows == 0 {
+		s.respondError(w, http.StatusNotFound, "season not found")
+		return
+	}
+
+	// 5. Clear next_season_cache row (non-fatal).
+	if err := s.db.DeleteNextSeasonCacheBySeason(sid, snum); err != nil {
+		slog.Warn("Failed to clear next_season_cache", "series_id", sid, "season", snum, "error", err)
+	}
+
+	slog.Info("Deleted season",
+		"series_id", sid, "season", snum,
+		"files_removed", filesRemoved,
+		"folder_removed", folderRemoved,
+		"torrent_removed", torrentRemoved,
+	)
+	s.respondJSON(w, http.StatusOK, map[string]interface{}{
+		"success":         true,
+		"files_removed":   filesRemoved,
+		"folder_removed":  folderRemoved,
+		"torrent_removed": torrentRemoved,
 	})
 }
 
