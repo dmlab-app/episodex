@@ -210,6 +210,196 @@ func TestGetSeasonFolderPaths(t *testing.T) {
 	}
 }
 
+func TestGetTorrentHashesBySeries(t *testing.T) {
+	tests := []struct {
+		name       string
+		setup      func(t *testing.T, db *DB) int64
+		wantHashes []string
+	}{
+		{
+			name: "no seasons",
+			setup: func(t *testing.T, db *DB) int64 {
+				t.Helper()
+				return createTestSeries(t, db)
+			},
+			wantHashes: nil,
+		},
+		{
+			name: "one season with hash",
+			setup: func(t *testing.T, db *DB) int64 {
+				t.Helper()
+				seriesID := createTestSeries(t, db)
+				if _, err := db.UpsertSeason(&Season{SeriesID: seriesID, SeasonNumber: 1}); err != nil {
+					t.Fatalf("upsert: %v", err)
+				}
+				if _, err := db.Exec(`UPDATE seasons SET torrent_hash = ? WHERE series_id = ? AND season_number = ?`, "hashA", seriesID, 1); err != nil {
+					t.Fatalf("set hash: %v", err)
+				}
+				return seriesID
+			},
+			wantHashes: []string{"hashA"},
+		},
+		{
+			name: "multiple seasons with hashes ordered by season_number",
+			setup: func(t *testing.T, db *DB) int64 {
+				t.Helper()
+				seriesID := createTestSeries(t, db)
+				for _, n := range []int{1, 2, 3} {
+					if _, err := db.UpsertSeason(&Season{SeriesID: seriesID, SeasonNumber: n}); err != nil {
+						t.Fatalf("upsert: %v", err)
+					}
+				}
+				if _, err := db.Exec(`UPDATE seasons SET torrent_hash = ? WHERE series_id = ? AND season_number = ?`, "hashC", seriesID, 3); err != nil {
+					t.Fatalf("set hash: %v", err)
+				}
+				if _, err := db.Exec(`UPDATE seasons SET torrent_hash = ? WHERE series_id = ? AND season_number = ?`, "hashA", seriesID, 1); err != nil {
+					t.Fatalf("set hash: %v", err)
+				}
+				if _, err := db.Exec(`UPDATE seasons SET torrent_hash = ? WHERE series_id = ? AND season_number = ?`, "hashB", seriesID, 2); err != nil {
+					t.Fatalf("set hash: %v", err)
+				}
+				return seriesID
+			},
+			wantHashes: []string{"hashA", "hashB", "hashC"},
+		},
+		{
+			name: "null and empty hashes filtered out",
+			setup: func(t *testing.T, db *DB) int64 {
+				t.Helper()
+				seriesID := createTestSeries(t, db)
+				for _, n := range []int{1, 2, 3} {
+					if _, err := db.UpsertSeason(&Season{SeriesID: seriesID, SeasonNumber: n}); err != nil {
+						t.Fatalf("upsert: %v", err)
+					}
+				}
+				if _, err := db.Exec(`UPDATE seasons SET torrent_hash = ? WHERE series_id = ? AND season_number = ?`, "", seriesID, 2); err != nil {
+					t.Fatalf("set hash: %v", err)
+				}
+				if _, err := db.Exec(`UPDATE seasons SET torrent_hash = ? WHERE series_id = ? AND season_number = ?`, "hashA", seriesID, 3); err != nil {
+					t.Fatalf("set hash: %v", err)
+				}
+				return seriesID
+			},
+			wantHashes: []string{"hashA"},
+		},
+		{
+			name: "non-existent series",
+			setup: func(t *testing.T, _ *DB) int64 {
+				t.Helper()
+				return 99999
+			},
+			wantHashes: nil,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			db := newTestDB(t)
+			seriesID := tt.setup(t, db)
+
+			hashes, err := db.GetTorrentHashesBySeries(seriesID)
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if len(hashes) != len(tt.wantHashes) {
+				t.Fatalf("expected %d hashes, got %d (%v)", len(tt.wantHashes), len(hashes), hashes)
+			}
+			for i, want := range tt.wantHashes {
+				if hashes[i] != want {
+					t.Errorf("hash[%d]: expected %q, got %q", i, want, hashes[i])
+				}
+			}
+		})
+	}
+}
+
+func TestDeleteSeason(t *testing.T) {
+	t.Run("deletes season and cascades media_files", func(t *testing.T) {
+		db := newTestDB(t)
+		seriesID := createTestSeries(t, db)
+
+		if _, err := db.UpsertSeason(&Season{SeriesID: seriesID, SeasonNumber: 1}); err != nil {
+			t.Fatalf("upsert: %v", err)
+		}
+		if _, err := db.UpsertSeason(&Season{SeriesID: seriesID, SeasonNumber: 2}); err != nil {
+			t.Fatalf("upsert: %v", err)
+		}
+		if _, err := db.Exec(`
+			INSERT INTO media_files (series_id, season_number, file_path, file_name, file_size, file_hash)
+			VALUES (?, 1, '/tmp/s1e1.mkv', 's1e1.mkv', 100, 'h1'),
+			       (?, 1, '/tmp/s1e2.mkv', 's1e2.mkv', 200, 'h2'),
+			       (?, 2, '/tmp/s2e1.mkv', 's2e1.mkv', 300, 'h3')
+		`, seriesID, seriesID, seriesID); err != nil {
+			t.Fatalf("insert media files: %v", err)
+		}
+
+		affected, err := db.DeleteSeason(seriesID, 1)
+		if err != nil {
+			t.Fatalf("delete season: %v", err)
+		}
+		if affected != 1 {
+			t.Errorf("expected 1 row affected, got %d", affected)
+		}
+
+		got, err := db.GetSeasonBySeriesAndNumber(seriesID, 1)
+		if err != nil {
+			t.Fatalf("get deleted season: %v", err)
+		}
+		if got != nil {
+			t.Error("expected season 1 to be deleted")
+		}
+
+		var s2Count int
+		if err := db.QueryRow(`SELECT COUNT(*) FROM seasons WHERE series_id = ? AND season_number = ?`, seriesID, 2).Scan(&s2Count); err != nil {
+			t.Fatalf("count season 2: %v", err)
+		}
+		if s2Count != 1 {
+			t.Errorf("expected season 2 to remain, got count %d", s2Count)
+		}
+
+		var mfCount int
+		if err := db.QueryRow(`SELECT COUNT(*) FROM media_files WHERE series_id = ? AND season_number = ?`, seriesID, 1).Scan(&mfCount); err != nil {
+			t.Fatalf("count media files season 1: %v", err)
+		}
+		if mfCount != 0 {
+			t.Errorf("expected media_files for season 1 to cascade-delete, got %d", mfCount)
+		}
+
+		var mfCount2 int
+		if err := db.QueryRow(`SELECT COUNT(*) FROM media_files WHERE series_id = ? AND season_number = ?`, seriesID, 2).Scan(&mfCount2); err != nil {
+			t.Fatalf("count media files season 2: %v", err)
+		}
+		if mfCount2 != 1 {
+			t.Errorf("expected season 2 media_files to remain, got %d", mfCount2)
+		}
+	})
+
+	t.Run("missing season returns 0 rows", func(t *testing.T) {
+		db := newTestDB(t)
+		seriesID := createTestSeries(t, db)
+
+		affected, err := db.DeleteSeason(seriesID, 99)
+		if err != nil {
+			t.Fatalf("delete missing season: %v", err)
+		}
+		if affected != 0 {
+			t.Errorf("expected 0 rows affected, got %d", affected)
+		}
+	})
+
+	t.Run("missing series returns 0 rows", func(t *testing.T) {
+		db := newTestDB(t)
+
+		affected, err := db.DeleteSeason(99999, 1)
+		if err != nil {
+			t.Fatalf("delete from missing series: %v", err)
+		}
+		if affected != 0 {
+			t.Errorf("expected 0 rows affected, got %d", affected)
+		}
+	})
+}
+
 func TestSeasonAiredEpisodes_WithEpisodes(t *testing.T) {
 	db := newTestDB(t)
 	seriesID := createTestSeries(t, db)

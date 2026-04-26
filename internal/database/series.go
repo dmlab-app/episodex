@@ -222,6 +222,49 @@ func (db *DB) GetSeasonsWithTrackerURL() ([]Season, error) {
 	return seasons, nil
 }
 
+// GetTorrentHashesBySeries returns all non-empty torrent_hash values
+// for the seasons of a series.
+func (db *DB) GetTorrentHashesBySeries(seriesID int64) ([]string, error) {
+	rows, err := db.Query(`
+		SELECT torrent_hash FROM seasons
+		WHERE series_id = ? AND torrent_hash IS NOT NULL AND torrent_hash != ''
+		ORDER BY season_number
+	`, seriesID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to query torrent hashes: %w", err)
+	}
+	defer rows.Close() //nolint:errcheck
+
+	var hashes []string
+	for rows.Next() {
+		var h string
+		if err := rows.Scan(&h); err != nil {
+			return nil, fmt.Errorf("failed to scan torrent hash: %w", err)
+		}
+		hashes = append(hashes, h)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("failed to iterate torrent hashes: %w", err)
+	}
+	return hashes, nil
+}
+
+// DeleteSeason removes a season row by (series_id, season_number).
+// Returns rows affected. CASCADE deletes related media_files via the composite FK.
+func (db *DB) DeleteSeason(seriesID int64, seasonNumber int) (int64, error) {
+	result, err := db.Exec(`
+		DELETE FROM seasons WHERE series_id = ? AND season_number = ?
+	`, seriesID, seasonNumber)
+	if err != nil {
+		return 0, fmt.Errorf("failed to delete season: %w", err)
+	}
+	affected, err := result.RowsAffected()
+	if err != nil {
+		return 0, fmt.Errorf("failed to get rows affected: %w", err)
+	}
+	return affected, nil
+}
+
 // UpdateTorrentHash updates the torrent_hash for a season.
 func (db *DB) UpdateTorrentHash(seasonID int64, hash string) error {
 	_, err := db.Exec(`UPDATE seasons SET torrent_hash = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?`, hash, seasonID)

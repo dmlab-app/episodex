@@ -168,6 +168,158 @@ func TestClearExpiredCache_RemovesOld(t *testing.T) {
 	}
 }
 
+func TestDeleteNextSeasonCacheBySeries(t *testing.T) {
+	tests := []struct {
+		name      string
+		seed      []NextSeasonCache
+		seriesID  int64
+		wantAfter map[int64]map[int]bool // remaining (series,season) entries
+	}{
+		{
+			name:      "no rows",
+			seed:      nil,
+			seriesID:  1,
+			wantAfter: map[int64]map[int]bool{},
+		},
+		{
+			name: "one row deleted",
+			seed: []NextSeasonCache{
+				{SeriesID: 1, SeasonNumber: 5, TrackerURL: "u", Title: "t", Size: "s"},
+			},
+			seriesID:  1,
+			wantAfter: map[int64]map[int]bool{},
+		},
+		{
+			name: "multiple seasons of same series deleted",
+			seed: []NextSeasonCache{
+				{SeriesID: 1, SeasonNumber: 1, TrackerURL: "u", Title: "t", Size: "s"},
+				{SeriesID: 1, SeasonNumber: 2, TrackerURL: "u", Title: "t", Size: "s"},
+				{SeriesID: 1, SeasonNumber: 3, TrackerURL: "u", Title: "t", Size: "s"},
+			},
+			seriesID:  1,
+			wantAfter: map[int64]map[int]bool{},
+		},
+		{
+			name: "other series untouched",
+			seed: []NextSeasonCache{
+				{SeriesID: 1, SeasonNumber: 1, TrackerURL: "u", Title: "t", Size: "s"},
+				{SeriesID: 2, SeasonNumber: 1, TrackerURL: "u", Title: "t", Size: "s"},
+				{SeriesID: 2, SeasonNumber: 2, TrackerURL: "u", Title: "t", Size: "s"},
+			},
+			seriesID: 1,
+			wantAfter: map[int64]map[int]bool{
+				2: {1: true, 2: true},
+			},
+		},
+		{
+			name:      "missing series no error",
+			seed:      nil,
+			seriesID:  99999,
+			wantAfter: map[int64]map[int]bool{},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			db := newTestDB(t)
+			for _, c := range tt.seed {
+				c := c
+				if err := db.SaveCachedNextSeason(&c); err != nil {
+					t.Fatalf("seed: %v", err)
+				}
+			}
+
+			if err := db.DeleteNextSeasonCacheBySeries(tt.seriesID); err != nil {
+				t.Fatalf("delete: %v", err)
+			}
+
+			rows, err := db.Query(`SELECT series_id, season_number FROM next_season_cache`)
+			if err != nil {
+				t.Fatalf("query: %v", err)
+			}
+			defer rows.Close() //nolint:errcheck
+			got := map[int64]map[int]bool{}
+			for rows.Next() {
+				var sid int64
+				var n int
+				if err := rows.Scan(&sid, &n); err != nil {
+					t.Fatalf("scan: %v", err)
+				}
+				if got[sid] == nil {
+					got[sid] = map[int]bool{}
+				}
+				got[sid][n] = true
+			}
+
+			if len(got) != len(tt.wantAfter) {
+				t.Fatalf("series count: got %d, want %d", len(got), len(tt.wantAfter))
+			}
+			for sid, seasons := range tt.wantAfter {
+				if len(got[sid]) != len(seasons) {
+					t.Errorf("series %d: got %d seasons, want %d", sid, len(got[sid]), len(seasons))
+				}
+				for n := range seasons {
+					if !got[sid][n] {
+						t.Errorf("series %d season %d missing", sid, n)
+					}
+				}
+			}
+		})
+	}
+}
+
+func TestDeleteNextSeasonCacheBySeason(t *testing.T) {
+	t.Run("deletes target row, leaves siblings", func(t *testing.T) {
+		db := newTestDB(t)
+		seed := []NextSeasonCache{
+			{SeriesID: 1, SeasonNumber: 1, TrackerURL: "u", Title: "t", Size: "s"},
+			{SeriesID: 1, SeasonNumber: 2, TrackerURL: "u", Title: "t", Size: "s"},
+			{SeriesID: 2, SeasonNumber: 1, TrackerURL: "u", Title: "t", Size: "s"},
+		}
+		for _, c := range seed {
+			c := c
+			if err := db.SaveCachedNextSeason(&c); err != nil {
+				t.Fatalf("seed: %v", err)
+			}
+		}
+
+		if err := db.DeleteNextSeasonCacheBySeason(1, 2); err != nil {
+			t.Fatalf("delete: %v", err)
+		}
+
+		s1, err := db.GetCachedNextSeason(1, 1)
+		if err != nil {
+			t.Fatalf("get s1: %v", err)
+		}
+		if s1 == nil {
+			t.Error("series 1 season 1 should remain")
+		}
+
+		s2, err := db.GetCachedNextSeason(1, 2)
+		if err != nil {
+			t.Fatalf("get s2: %v", err)
+		}
+		if s2 != nil {
+			t.Error("series 1 season 2 should be gone")
+		}
+
+		other, err := db.GetCachedNextSeason(2, 1)
+		if err != nil {
+			t.Fatalf("get other: %v", err)
+		}
+		if other == nil {
+			t.Error("series 2 season 1 should remain")
+		}
+	})
+
+	t.Run("missing row no error", func(t *testing.T) {
+		db := newTestDB(t)
+		if err := db.DeleteNextSeasonCacheBySeason(999, 7); err != nil {
+			t.Fatalf("delete missing: %v", err)
+		}
+	})
+}
+
 func TestClearExpiredCache_NothingToDelete(t *testing.T) {
 	db := newTestDB(t)
 

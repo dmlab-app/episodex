@@ -56,6 +56,26 @@ func (db *DB) SaveCachedNextSeason(c *NextSeasonCache) error {
 	return nil
 }
 
+// DeleteNextSeasonCacheBySeries removes all cache rows for a series.
+func (db *DB) DeleteNextSeasonCacheBySeries(seriesID int64) error {
+	_, err := db.Exec(`DELETE FROM next_season_cache WHERE series_id = ?`, seriesID)
+	if err != nil {
+		return fmt.Errorf("failed to delete next_season_cache by series: %w", err)
+	}
+	return nil
+}
+
+// DeleteNextSeasonCacheBySeason removes the cache row for a specific season.
+func (db *DB) DeleteNextSeasonCacheBySeason(seriesID int64, seasonNumber int) error {
+	_, err := db.Exec(`
+		DELETE FROM next_season_cache WHERE series_id = ? AND season_number = ?
+	`, seriesID, seasonNumber)
+	if err != nil {
+		return fmt.Errorf("failed to delete next_season_cache by season: %w", err)
+	}
+	return nil
+}
+
 // ClearExpiredCache deletes cache entries older than the given duration.
 func (db *DB) ClearExpiredCache(maxAge time.Duration) (int64, error) {
 	cutoff := time.Now().Add(-maxAge)
