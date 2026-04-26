@@ -237,7 +237,7 @@ func TestDeleteNextSeasonCacheBySeries(t *testing.T) {
 			if err != nil {
 				t.Fatalf("query: %v", err)
 			}
-			defer rows.Close() //nolint:errcheck
+			defer rows.Close()
 			got := map[int64]map[int]bool{}
 			for rows.Next() {
 				var sid int64

@@ -302,4 +302,3 @@ func (db *DB) InsertProcessedFile(filePath string, seriesID int64, seasonNumber 
 	}
 	return nil
 }
-

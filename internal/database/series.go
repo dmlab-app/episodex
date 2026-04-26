@@ -31,7 +31,7 @@ type Season struct {
 	Name             *string
 	PosterURL        *string
 	FolderPath       *string
-	TrackName     *string
+	TrackName        *string
 	TrackerURL       *string
 	TorrentHash      *string
 	TrackerUpdatedAt *string

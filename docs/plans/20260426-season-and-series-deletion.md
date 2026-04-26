@@ -128,17 +128,17 @@ Update existing `handleDeleteSeries` at `internal/api/router.go:625` so series d
 
 ### Task 5: Verify acceptance criteria
 
-- [ ] verify all requirements from Overview are implemented end-to-end.
-- [ ] verify edge cases:
-  - season with `torrent_hash = NULL` deletes cleanly.
-  - season whose torrent was already removed in qBit (returns `ErrTorrentNotFound`) deletes cleanly.
-  - file path outside `MEDIA_PATH` is skipped with a warning, not an error.
-  - series delete still works if qBit is unreachable (warns, continues with disk + DB).
-  - 404 for non-existent series id / season number.
-- [ ] run full test suite: `go test ./...` — must pass.
-- [ ] run linter (`make lint` if defined; otherwise `go vet ./...`) — fix any issues.
-- [ ] verify CASCADE: after season delete, no rows in `seasons` or `media_files` for that key; `processed_files.series_id` may remain (SET NULL is fine).
-- [ ] verify `next_season_cache` is empty for the deleted scope.
+- [x] verify all requirements from Overview are implemented end-to-end.
+- [x] verify edge cases:
+  - [x] season with `torrent_hash = NULL` deletes cleanly. (TestHandleDeleteSeason_NoTorrentHash)
+  - [x] season whose torrent was already removed in qBit (returns `ErrTorrentNotFound`) deletes cleanly. (TestHandleDeleteSeason_QbitErrorContinues)
+  - [x] file path outside `MEDIA_PATH` is skipped with a warning, not an error. (TestHandleDeleteSeason_SkipsFilesOutsideMediaPath, TestHandleDeleteSeries_SkipsFilesOutsideMediaPath)
+  - [x] series delete still works if qBit is unreachable (warns, continues with disk + DB). (TestHandleDeleteSeries_QbitErrorOnOneContinues)
+  - [x] 404 for non-existent series id / season number. (TestHandleDeleteSeason_NotFound, TestHandleDeleteSeries_NotFound)
+- [x] run full test suite: `go test ./...` — must pass.
+- [x] run linter (`make lint` if defined; otherwise `go vet ./...`) — fix any issues. (`go vet` clean; fixed gofmt + unused nolint in my changes; remaining `make lint` issues are pre-existing in files outside this branch's scope)
+- [x] verify CASCADE: after season delete, no rows in `seasons` or `media_files` for that key; `processed_files.series_id` may remain (SET NULL is fine). (router_test.go:2605 asserts media_files row count == 0 after season delete)
+- [x] verify `next_season_cache` is empty for the deleted scope. (router_test.go:2610 for season scope; router_test.go:1351 for series scope)
 
 ### Task 6: Update documentation
 
