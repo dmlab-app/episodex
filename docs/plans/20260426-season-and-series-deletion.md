@@ -105,12 +105,12 @@ Implement `DELETE /api/series/{id}/seasons/{num}` in `internal/api/router.go`.
 
 Update existing `handleDeleteSeries` at `internal/api/router.go:625` so series deletion also removes torrents and orphaned cache rows.
 
-- [ ] before the `DELETE FROM series` query, call `s.db.GetTorrentHashesBySeries(id)`; for each hash call `s.qbitClient.DeleteTorrent(hash)`; ignore `ErrTorrentNotFound`; warn-and-continue on others; track `torrentsRemoved` count.
-- [ ] replace `os.Remove(folderPath)` with `os.RemoveAll(folderPath)` for season folders (folders may have leftover files; series-delete should not silently leave them).
-- [ ] after successful `DELETE FROM series`, call `DeleteNextSeasonCacheBySeries(id)`; log-and-continue on error.
-- [ ] update final `slog.Info` and JSON response to include `torrents_removed` count.
-- [ ] update existing tests for `handleDeleteSeries` (if any) and add cases for: series with multiple seasons each with torrent_hash (verify each is deleted), series with no torrents, qBit error on one torrent doesn't abort the rest.
-- [ ] run `go test ./internal/api/...` — must pass before next task.
+- [x] before the `DELETE FROM series` query, call `s.db.GetTorrentHashesBySeries(id)`; for each hash call `s.qbitClient.DeleteTorrent(hash)`; ignore `ErrTorrentNotFound`; warn-and-continue on others; track `torrentsRemoved` count.
+- [x] replace `os.Remove(folderPath)` with `os.RemoveAll(folderPath)` for season folders (folders may have leftover files; series-delete should not silently leave them).
+- [x] after successful `DELETE FROM series`, call `DeleteNextSeasonCacheBySeries(id)`; log-and-continue on error.
+- [x] update final `slog.Info` and JSON response to include `torrents_removed` count.
+- [x] update existing tests for `handleDeleteSeries` (if any) and add cases for: series with multiple seasons each with torrent_hash (verify each is deleted), series with no torrents, qBit error on one torrent doesn't abort the rest.
+- [x] run `go test ./internal/api/...` — must pass before next task.
 
 ### Task 4: Frontend — Delete Season button on season detail page
 

@@ -631,8 +631,9 @@ func (s *Server) handleDeleteSeries(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Collect file paths and folder paths before DB deletion (CASCADE will remove records).
-	// Fail if lookups error — proceeding would orphan files on disk.
+	// Collect file paths, folder paths, and torrent hashes before DB deletion
+	// (CASCADE will remove records). Fail if lookups error — proceeding would
+	// orphan files on disk.
 	filePaths, err := s.db.GetMediaFilePathsBySeriesID(id)
 	if err != nil {
 		slog.Error("Failed to get media file paths for series", "id", id, "error", err)
@@ -645,6 +646,30 @@ func (s *Server) handleDeleteSeries(w http.ResponseWriter, r *http.Request) {
 		s.respondError(w, http.StatusInternalServerError, "failed to look up season folders for deletion")
 		return
 	}
+	torrentHashes, err := s.db.GetTorrentHashesBySeries(id)
+	if err != nil {
+		slog.Error("Failed to get torrent hashes for series", "id", id, "error", err)
+		s.respondError(w, http.StatusInternalServerError, "failed to look up torrents for deletion")
+		return
+	}
+
+	// Remove qBit torrents (best-effort). Failures don't block disk/DB cleanup.
+	torrentsRemoved := 0
+	if s.qbitClient != nil {
+		for _, hash := range torrentHashes {
+			if err := s.qbitClient.DeleteTorrent(hash); err != nil {
+				if errors.Is(err, qbittorrent.ErrTorrentNotFound) {
+					slog.Info("Torrent already gone from qBit", "hash", hash)
+					torrentsRemoved++
+				} else {
+					slog.Warn("Failed to delete torrent from qBit", "hash", hash, "error", err)
+				}
+			} else {
+				torrentsRemoved++
+				slog.Info("Removed torrent from qBit", "hash", hash)
+			}
+		}
+	}
 
 	// Delete media files from disk (only within media library boundary)
 	var filesRemoved, foldersRemoved int
@@ -654,20 +679,23 @@ func (s *Server) handleDeleteSeries(w http.ResponseWriter, r *http.Request) {
 			continue
 		}
 		if err := os.Remove(fp); err != nil {
-			slog.Warn("Failed to remove media file", "path", fp, "error", err)
+			if !os.IsNotExist(err) {
+				slog.Warn("Failed to remove media file", "path", fp, "error", err)
+			}
 		} else {
 			filesRemoved++
 			slog.Info("Removed media file", "path", fp)
 		}
 	}
 
-	// Remove empty season folders (only within media library boundary)
+	// Remove season folders recursively (only within media library boundary).
+	// RemoveAll handles non-tracked leftovers (e.g. .nfo, audio backups, .!qB).
 	for _, fp := range folderPaths {
 		if !s.isWithinMediaPath(fp) {
 			slog.Warn("Skipping folder outside media path", "path", fp, "media_path", s.mediaPath)
 			continue
 		}
-		if err := os.Remove(fp); err != nil {
+		if err := os.RemoveAll(fp); err != nil {
 			slog.Warn("Failed to remove season folder", "path", fp, "error", err)
 		} else {
 			foldersRemoved++
@@ -692,9 +720,22 @@ func (s *Server) handleDeleteSeries(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	slog.Info("Deleted series", "id", id, "files_removed", filesRemoved, "folders_removed", foldersRemoved)
+	// Clear orphaned next_season_cache rows (no FK; non-fatal).
+	if err := s.db.DeleteNextSeasonCacheBySeries(id); err != nil {
+		slog.Warn("Failed to clear next_season_cache for series", "id", id, "error", err)
+	}
+
+	slog.Info("Deleted series",
+		"id", id,
+		"files_removed", filesRemoved,
+		"folders_removed", foldersRemoved,
+		"torrents_removed", torrentsRemoved,
+	)
 	s.respondJSON(w, http.StatusOK, map[string]interface{}{
-		"success": true,
+		"success":          true,
+		"files_removed":    filesRemoved,
+		"folders_removed":  foldersRemoved,
+		"torrents_removed": torrentsRemoved,
 	})
 }
 

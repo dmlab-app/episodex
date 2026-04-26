@@ -1268,6 +1268,206 @@ func TestHandleDeleteSeries_NotFound(t *testing.T) {
 	}
 }
 
+func TestHandleDeleteSeries_RemovesTorrentsAndCache(t *testing.T) {
+	var deleted []string
+	qbit := setupQbitMockWithDelete(t, http.StatusOK, &deleted)
+	srv, db := setupTestServerWithQbit(t, qbit)
+
+	mediaDir := t.TempDir()
+	srv.mediaPath = mediaDir
+	s01 := filepath.Join(mediaDir, "Show.S01")
+	s02 := filepath.Join(mediaDir, "Show.S02")
+	s03 := filepath.Join(mediaDir, "Show.S03")
+	for _, d := range []string{s01, s02, s03} {
+		if err := os.Mkdir(d, 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// Tracked file plus a non-tracked leftover that only RemoveAll would clear.
+	ep1 := filepath.Join(s01, "ep1.mkv")
+	leftover := filepath.Join(s02, "leftover.nfo")
+	for _, p := range []string{ep1, leftover} {
+		if err := os.WriteFile(p, []byte("x"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	seriesID := seedSeries(t, db, "Show", 3)
+	seedSeasonWithHash(t, db, seriesID, 1, s01, "hashS01")
+	seedSeasonWithHash(t, db, seriesID, 2, s02, "hashS02")
+	seedSeason(t, db, seriesID, 3, s03, true, nil) // no torrent_hash
+	seedMediaFile(t, db, seriesID, 1, ep1)
+
+	// Seed next_season_cache rows that should be cleared.
+	if _, err := db.Exec(`
+		INSERT INTO next_season_cache (series_id, season_number, tracker_url, title, size, cached_at)
+		VALUES (?, 1, 'http://t/1', 'S01', '1G', CURRENT_TIMESTAMP),
+		       (?, 2, 'http://t/2', 'S02', '1G', CURRENT_TIMESTAMP)
+	`, seriesID, seriesID); err != nil {
+		t.Fatalf("seed cache: %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodDelete, fmt.Sprintf("/api/series/%d", seriesID), http.NoBody)
+	w := httptest.NewRecorder()
+	srv.router.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+
+	var resp map[string]interface{}
+	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+		t.Fatal(err)
+	}
+	if resp["success"] != true {
+		t.Errorf("expected success=true, got %v", resp["success"])
+	}
+	if resp["torrents_removed"].(float64) != 2 {
+		t.Errorf("expected torrents_removed=2, got %v", resp["torrents_removed"])
+	}
+	if resp["folders_removed"].(float64) != 3 {
+		t.Errorf("expected folders_removed=3, got %v", resp["folders_removed"])
+	}
+
+	// Both hashes were sent to qBit.
+	if len(deleted) != 2 {
+		t.Fatalf("expected 2 qBit DELETE calls, got %v", deleted)
+	}
+	gotHashes := map[string]bool{}
+	for _, h := range deleted {
+		gotHashes[h] = true
+	}
+	if !gotHashes["hashS01"] || !gotHashes["hashS02"] {
+		t.Errorf("expected hashes hashS01 and hashS02 deleted, got %v", deleted)
+	}
+
+	// Folder with leftover non-tracked file is gone (RemoveAll, not Remove).
+	if _, err := os.Stat(s02); !os.IsNotExist(err) {
+		t.Errorf("expected folder %s removed by RemoveAll, err=%v", s02, err)
+	}
+
+	// next_season_cache cleared.
+	var cacheCount int
+	db.QueryRow(`SELECT COUNT(*) FROM next_season_cache WHERE series_id = ?`, seriesID).Scan(&cacheCount)
+	if cacheCount != 0 {
+		t.Errorf("expected next_season_cache cleared, got count=%d", cacheCount)
+	}
+
+	// DB row gone.
+	var seriesCount int
+	db.QueryRow(`SELECT COUNT(*) FROM series WHERE id = ?`, seriesID).Scan(&seriesCount)
+	if seriesCount != 0 {
+		t.Errorf("expected series row gone, got count=%d", seriesCount)
+	}
+}
+
+func TestHandleDeleteSeries_NoTorrents(t *testing.T) {
+	var deleted []string
+	qbit := setupQbitMockWithDelete(t, http.StatusOK, &deleted)
+	srv, db := setupTestServerWithQbit(t, qbit)
+
+	mediaDir := t.TempDir()
+	srv.mediaPath = mediaDir
+	s01 := filepath.Join(mediaDir, "Show.S01")
+	if err := os.Mkdir(s01, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	seriesID := seedSeries(t, db, "Show", 1)
+	seedSeason(t, db, seriesID, 1, s01, true, nil)
+
+	req := httptest.NewRequest(http.MethodDelete, fmt.Sprintf("/api/series/%d", seriesID), http.NoBody)
+	w := httptest.NewRecorder()
+	srv.router.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+	var resp map[string]interface{}
+	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+		t.Fatal(err)
+	}
+	if resp["torrents_removed"].(float64) != 0 {
+		t.Errorf("expected torrents_removed=0, got %v", resp["torrents_removed"])
+	}
+	if len(deleted) != 0 {
+		t.Errorf("expected no qBit DELETE call, got %v", deleted)
+	}
+}
+
+func TestHandleDeleteSeries_QbitErrorOnOneContinues(t *testing.T) {
+	var deleted []string
+	failHash := "failme"
+	mock := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/v2/auth/login":
+			http.SetCookie(w, &http.Cookie{Name: "SID", Value: "test-session"})
+			w.WriteHeader(http.StatusOK)
+		case "/api/v2/torrents/delete":
+			if err := r.ParseForm(); err == nil {
+				h := r.FormValue("hashes")
+				deleted = append(deleted, h)
+				if h == failHash {
+					w.WriteHeader(http.StatusInternalServerError)
+					return
+				}
+			}
+			w.WriteHeader(http.StatusOK)
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	t.Cleanup(mock.Close)
+
+	qbit := qbittorrent.NewClient(mock.URL, "admin", "pass")
+	if err := qbit.Login(); err != nil {
+		t.Fatalf("failed to login to mock qbit: %v", err)
+	}
+	srv, db := setupTestServerWithQbit(t, qbit)
+
+	mediaDir := t.TempDir()
+	srv.mediaPath = mediaDir
+	s01 := filepath.Join(mediaDir, "Show.S01")
+	s02 := filepath.Join(mediaDir, "Show.S02")
+	for _, d := range []string{s01, s02} {
+		if err := os.Mkdir(d, 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	seriesID := seedSeries(t, db, "Show", 2)
+	seedSeasonWithHash(t, db, seriesID, 1, s01, failHash)
+	seedSeasonWithHash(t, db, seriesID, 2, s02, "okhash")
+
+	req := httptest.NewRequest(http.MethodDelete, fmt.Sprintf("/api/series/%d", seriesID), http.NoBody)
+	w := httptest.NewRecorder()
+	srv.router.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200 even when one qBit DELETE fails, got %d: %s", w.Code, w.Body.String())
+	}
+
+	var resp map[string]interface{}
+	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+		t.Fatal(err)
+	}
+	// Only the successful one counts.
+	if resp["torrents_removed"].(float64) != 1 {
+		t.Errorf("expected torrents_removed=1, got %v", resp["torrents_removed"])
+	}
+	// Both hashes were attempted.
+	if len(deleted) != 2 {
+		t.Errorf("expected 2 attempted DELETE calls, got %v", deleted)
+	}
+
+	// DB row still gone (qBit failure must not abort series delete).
+	var count int
+	db.QueryRow(`SELECT COUNT(*) FROM series WHERE id = ?`, seriesID).Scan(&count)
+	if count != 0 {
+		t.Errorf("expected series row gone despite qBit error, count=%d", count)
+	}
+}
+
 func TestIsWithinMediaPath(t *testing.T) {
 	srv := &Server{}
 
