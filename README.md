@@ -131,7 +131,7 @@ All settings are configured via environment variables (`.env` file):
 - `GET /api/series` - list series with season counts
 - `POST /api/series` - create series
 - `GET /api/series/:id` - series detail with metadata, characters, artwork
-- `DELETE /api/series/:id` - delete series with all media files from disk
+- `DELETE /api/series/:id` - delete series with all media files from disk and remove linked qBittorrent torrents
 - `POST /api/series/:id/match` - match series to TVDB
 - `GET /api/search` - search TVDB for series
 
@@ -140,6 +140,7 @@ All settings are configured via environment variables (`.env` file):
 - `GET /api/series/:id/seasons` - list seasons (owned vs locked)
 - `GET /api/series/:id/seasons/:num` - season detail
 - `PUT /api/series/:id/seasons/:num` - update season (voice actor)
+- `DELETE /api/series/:id/seasons/:num` - delete a single season: removes media files, season folder, qBittorrent torrent, and DB rows
 
 ### Audio
 

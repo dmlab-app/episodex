@@ -142,8 +142,8 @@ Update existing `handleDeleteSeries` at `internal/api/router.go:625` so series d
 
 ### Task 6: Update documentation
 
-- [ ] update `README.md` if it documents the API surface — add the new `DELETE /api/series/{id}/seasons/{num}` route and clarify that series delete now also removes torrents.
-- [ ] update CLAUDE.md only if a new pattern is introduced (none expected — handlers and DB helpers follow existing conventions).
+- [x] update `README.md` if it documents the API surface — add the new `DELETE /api/series/{id}/seasons/{num}` route and clarify that series delete now also removes torrents.
+- [x] update CLAUDE.md only if a new pattern is introduced (none expected — handlers and DB helpers follow existing conventions). (no CLAUDE.md file in repo; nothing to update)
 
 *Note: ralphex automatically moves completed plans to `docs/plans/completed/`*
 
