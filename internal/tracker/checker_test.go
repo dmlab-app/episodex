@@ -148,7 +148,7 @@ func TestChecker_NoSeasonsWithTrackerURL(t *testing.T) {
 	db := setupTestDB(t)
 	registry := NewRegistry()
 	qbit := &mockQbitClient{}
-	checker := NewChecker(db, registry, qbit)
+	checker := NewChecker(db, registry, qbit, database.NewProcessingLock())
 
 	results := checker.Check()
 	if len(results) != 0 {
@@ -170,7 +170,7 @@ func TestChecker_NoNewEpisodes(t *testing.T) {
 	registry.Register(mock)
 
 	qbit := &mockQbitClient{}
-	checker := NewChecker(db, registry, qbit)
+	checker := NewChecker(db, registry, qbit, database.NewProcessingLock())
 
 	results := checker.Check()
 	if len(results) != 1 {
@@ -218,7 +218,7 @@ func TestChecker_NewEpisodesTriggersRedownload(t *testing.T) {
 			{Index: 2, Name: "Test.Show.S01E06.mkv"},
 		},
 	}
-	checker := NewChecker(db, registry, qbit)
+	checker := NewChecker(db, registry, qbit, database.NewProcessingLock())
 
 	results := checker.Check()
 	if len(results) != 1 {
@@ -257,6 +257,72 @@ func TestChecker_NewEpisodesTriggersRedownload(t *testing.T) {
 	_ = seasonID
 }
 
+// TestChecker_SkipsRedownloadWhenSeasonLocked verifies that the checker honors
+// the shared procLock — if a delete handler (or audio processor) holds the lock
+// for a season, redownload is skipped and torrent_hash is left untouched. This
+// prevents a race where the checker installs a new torrent and overwrites
+// torrent_hash while a delete handler is mid-flight, leaving the new torrent
+// orphaned in qBit.
+func TestChecker_SkipsRedownloadWhenSeasonLocked(t *testing.T) {
+	db := setupTestDB(t)
+	seriesID := insertTestSeries(t, db, "Test Show")
+	insertTestSeason(t, db, seriesID, 1,
+		strPtr("https://kinozal.tv/details.php?id=123"),
+		strPtr("oldhash"),
+		strPtr("/media/TestShow/S01"))
+	// 5 episodes on disk so we'd normally trigger redownload (8 > 5)
+	for i := 1; i <= 5; i++ {
+		insertTestMediaFile(t, db, seriesID, 1, fmt.Sprintf("Test.Show.S01E%02d.mkv", i))
+	}
+
+	mock := &mockCheckerClient{
+		canHandle:    true,
+		episodeCount: 8,
+		torrentData:  fakeTorrent("locked"),
+	}
+	registry := NewRegistry()
+	registry.Register(mock)
+
+	qbit := &mockQbitClient{}
+	procLock := database.NewProcessingLock()
+	checker := NewChecker(db, registry, qbit, procLock)
+
+	// Simulate a concurrent holder of the lock (e.g. delete handler or audio processor).
+	if !procLock.TryLock(seriesID, 1) {
+		t.Fatal("failed to acquire test lock")
+	}
+	defer procLock.Unlock(seriesID, 1)
+
+	results := checker.Check()
+	if len(results) != 1 {
+		t.Fatalf("expected 1 result, got %d", len(results))
+	}
+	r := results[0]
+	if r.Redownloaded {
+		t.Fatal("expected redownload to be skipped while season is locked")
+	}
+	if r.Error != nil {
+		t.Fatalf("unexpected error: %v", r.Error)
+	}
+
+	// qBit must not have been touched.
+	if len(qbit.addedTorrents) != 0 {
+		t.Errorf("expected no AddTorrent calls, got %d", len(qbit.addedTorrents))
+	}
+	if len(qbit.deletedHashes) != 0 {
+		t.Errorf("expected no DeleteTorrent calls, got %v", qbit.deletedHashes)
+	}
+
+	// torrent_hash must still be the original.
+	season, err := db.GetSeasonBySeriesAndNumber(seriesID, 1)
+	if err != nil {
+		t.Fatalf("get season: %v", err)
+	}
+	if season.TorrentHash == nil || *season.TorrentHash != "oldhash" {
+		t.Errorf("expected torrent_hash unchanged (oldhash), got %v", season.TorrentHash)
+	}
+}
+
 func TestChecker_SkipsProcessedFiles(t *testing.T) {
 	db := setupTestDB(t)
 	seriesID := insertTestSeries(t, db, "Test Show")
@@ -291,7 +357,7 @@ func TestChecker_SkipsProcessedFiles(t *testing.T) {
 			{Index: 4, Name: "Test.Show.S01E05.mkv"},
 		},
 	}
-	checker := NewChecker(db, registry, qbit)
+	checker := NewChecker(db, registry, qbit, database.NewProcessingLock())
 
 	results := checker.Check()
 	if len(results) != 1 || !results[0].Redownloaded {
@@ -328,7 +394,7 @@ func TestChecker_ClientError(t *testing.T) {
 	registry.Register(mock)
 
 	qbit := &mockQbitClient{}
-	checker := NewChecker(db, registry, qbit)
+	checker := NewChecker(db, registry, qbit, database.NewProcessingLock())
 
 	results := checker.Check()
 	if len(results) != 1 {
@@ -349,7 +415,7 @@ func TestChecker_NoClient(t *testing.T) {
 
 	registry := NewRegistry() // empty registry
 	qbit := &mockQbitClient{}
-	checker := NewChecker(db, registry, qbit)
+	checker := NewChecker(db, registry, qbit, database.NewProcessingLock())
 
 	results := checker.Check()
 	if len(results) != 1 {
@@ -370,7 +436,7 @@ func TestChecker_ZeroEpisodesOnTracker(t *testing.T) {
 	registry.Register(mock)
 
 	qbit := &mockQbitClient{}
-	checker := NewChecker(db, registry, qbit)
+	checker := NewChecker(db, registry, qbit, database.NewProcessingLock())
 
 	results := checker.Check()
 	if len(results) != 1 {
@@ -405,7 +471,7 @@ func TestChecker_NoTorrentHashInSeason(t *testing.T) {
 		addHash: "newhash",
 		files:   []qbittorrent.TorrentFile{},
 	}
-	checker := NewChecker(db, registry, qbit)
+	checker := NewChecker(db, registry, qbit, database.NewProcessingLock())
 
 	results := checker.Check()
 	if len(results) != 1 {
@@ -464,7 +530,7 @@ func TestChecker_MultipleSeasons(t *testing.T) {
 		addHash: "newhash2",
 		files:   []qbittorrent.TorrentFile{},
 	}
-	checker := NewChecker(db, registry, qbit)
+	checker := NewChecker(db, registry, qbit, database.NewProcessingLock())
 
 	results := checker.Check()
 	if len(results) != 2 {
@@ -516,7 +582,7 @@ func TestChecker_DownloadTorrentError(t *testing.T) {
 	registry.Register(mock)
 
 	qbit := &mockQbitClient{}
-	checker := NewChecker(db, registry, qbit)
+	checker := NewChecker(db, registry, qbit, database.NewProcessingLock())
 
 	results := checker.Check()
 	if results[0].Error == nil {
@@ -543,7 +609,7 @@ func TestChecker_AddTorrentError(t *testing.T) {
 	registry.Register(mock)
 
 	qbit := &mockQbitClient{addErr: fmt.Errorf("qbit error")}
-	checker := NewChecker(db, registry, qbit)
+	checker := NewChecker(db, registry, qbit, database.NewProcessingLock())
 
 	results := checker.Check()
 	if results[0].Error == nil {
@@ -569,7 +635,7 @@ func TestChecker_SkipsSeasonWithNoEpisodesOnDisk(t *testing.T) {
 	registry.Register(mock)
 
 	qbit := &mockQbitClient{}
-	checker := NewChecker(db, registry, qbit)
+	checker := NewChecker(db, registry, qbit, database.NewProcessingLock())
 
 	results := checker.Check()
 	if len(results) != 1 {
@@ -620,7 +686,7 @@ func TestChecker_SkipsProcessedFilesByEpisodeNumber(t *testing.T) {
 			{Index: 4, Name: "Test.Show.S01E05.1080p.mkv"},
 		},
 	}
-	checker := NewChecker(db, registry, qbit)
+	checker := NewChecker(db, registry, qbit, database.NewProcessingLock())
 
 	results := checker.Check()
 	if len(results) != 1 || !results[0].Redownloaded {
@@ -665,7 +731,7 @@ func TestChecker_PriorityFailureCleansUp(t *testing.T) {
 		files:          []qbittorrent.TorrentFile{{Index: 0, Name: "Test.Show.S01E01.mkv"}},
 		setPriorityErr: fmt.Errorf("qbit priority error"),
 	}
-	checker := NewChecker(db, registry, qbit)
+	checker := NewChecker(db, registry, qbit, database.NewProcessingLock())
 
 	results := checker.Check()
 	if len(results) != 1 {
@@ -693,5 +759,161 @@ func TestChecker_PriorityFailureCleansUp(t *testing.T) {
 	}
 	if season.TorrentHash == nil || *season.TorrentHash != "oldhash" {
 		t.Errorf("expected torrent hash=oldhash (unchanged), got %v", season.TorrentHash)
+	}
+}
+
+// mockPageInfoClient implements both Client and PageInfoProvider.
+type mockPageInfoClient struct {
+	canHandle    bool
+	episodeCount int
+	lastUpdated  string
+	torrentData  []byte
+}
+
+func (m *mockPageInfoClient) CanHandle(_ string) bool { return m.canHandle }
+func (m *mockPageInfoClient) GetEpisodeCount(_ string) (int, error) {
+	return m.episodeCount, nil
+}
+func (m *mockPageInfoClient) DownloadTorrent(_ string) ([]byte, error) {
+	return m.torrentData, nil
+}
+func (m *mockPageInfoClient) GetPageInfo(_ string) (episodeCount int, lastUpdated string, err error) {
+	return m.episodeCount, m.lastUpdated, nil
+}
+
+// TestChecker_StaleSnapshot_SeasonDeletedBeforeRedownload verifies that a delete
+// completing between snapshot collection in checkSeason and lock acquisition in
+// redownload does not result in an orphan torrent. The fix re-fetches the
+// season after acquiring the procLock and aborts if the row is gone.
+func TestChecker_StaleSnapshot_SeasonDeletedBeforeRedownload(t *testing.T) {
+	db := setupTestDB(t)
+	seriesID := insertTestSeries(t, db, "Test Show")
+	seasonID := insertTestSeason(t, db, seriesID, 1,
+		strPtr("https://kinozal.tv/details.php?id=123"),
+		strPtr("oldhash"),
+		strPtr("/media/TestShow/S01"))
+
+	// Snapshot the season as checkSeason would have, *before* delete.
+	season := database.Season{
+		ID:           seasonID,
+		SeriesID:     seriesID,
+		SeasonNumber: 1,
+		TrackerURL:   strPtr("https://kinozal.tv/details.php?id=123"),
+		TorrentHash:  strPtr("oldhash"),
+	}
+
+	// Simulate a concurrent delete that finishes before redownload acquires the
+	// lock (e.g. handleDeleteSeason ran and released the lock between checkSeason
+	// taking its snapshot and redownload calling TryLock).
+	if _, err := db.Exec(`DELETE FROM seasons WHERE id = ?`, seasonID); err != nil {
+		t.Fatalf("delete season: %v", err)
+	}
+
+	mock := &mockCheckerClient{canHandle: true, torrentData: fakeTorrent("stale")}
+	qbit := &mockQbitClient{addHash: "newhash"}
+	checker := NewChecker(db, NewRegistry(), qbit, database.NewProcessingLock())
+
+	redownloaded, err := checker.redownload(&season, mock, "")
+	if err != nil {
+		t.Fatalf("expected no error from redownload, got %v", err)
+	}
+	if redownloaded {
+		t.Error("should not redownload a deleted season")
+	}
+	if len(qbit.addedTorrents) != 0 {
+		t.Errorf("must not call AddTorrent for deleted season (would orphan in qBit), got %d", len(qbit.addedTorrents))
+	}
+}
+
+// TestChecker_TrackerUpdatedAt_NotPersistedOnLockSkip verifies that the
+// tracker_updated_at timestamp is NOT persisted when redownload skips because
+// the season is locked. Persisting it would suppress retries on subsequent
+// runs (equal episode counts + matching timestamp = no action).
+func TestChecker_TrackerUpdatedAt_NotPersistedOnLockSkip(t *testing.T) {
+	db := setupTestDB(t)
+	seriesID := insertTestSeries(t, db, "Test Show")
+	seasonID := insertTestSeason(t, db, seriesID, 1,
+		strPtr("https://kinozal.tv/details.php?id=123"),
+		strPtr("oldhash"),
+		strPtr("/media/TestShow/S01"))
+	// Equal episode counts — only the timestamp change would trigger redownload.
+	for i := 1; i <= 5; i++ {
+		insertTestMediaFile(t, db, seriesID, 1, fmt.Sprintf("Test.Show.S01E%02d.mkv", i))
+	}
+	if _, err := db.Exec(`UPDATE seasons SET tracker_updated_at = ? WHERE id = ?`, "old-stamp", seasonID); err != nil {
+		t.Fatalf("set initial timestamp: %v", err)
+	}
+
+	mock := &mockPageInfoClient{
+		canHandle:    true,
+		episodeCount: 5,
+		lastUpdated:  "new-stamp",
+		torrentData:  fakeTorrent("locked-update"),
+	}
+	registry := NewRegistry()
+	registry.Register(mock)
+	qbit := &mockQbitClient{}
+	procLock := database.NewProcessingLock()
+	checker := NewChecker(db, registry, qbit, procLock)
+
+	// External holder of the lock (simulating a concurrent delete or audio processor).
+	if !procLock.TryLock(seriesID, 1) {
+		t.Fatal("failed to acquire test lock")
+	}
+	defer procLock.Unlock(seriesID, 1)
+
+	results := checker.Check()
+	if len(results) != 1 || results[0].Redownloaded {
+		t.Fatalf("expected redownload skipped while locked, got %+v", results)
+	}
+
+	season, err := db.GetSeasonBySeriesAndNumber(seriesID, 1)
+	if err != nil {
+		t.Fatalf("get season: %v", err)
+	}
+	if season.TrackerUpdatedAt == nil || *season.TrackerUpdatedAt != "old-stamp" {
+		t.Errorf("expected tracker_updated_at preserved as 'old-stamp' so retry happens next run, got %v", season.TrackerUpdatedAt)
+	}
+}
+
+// TestChecker_TrackerUpdatedAt_PersistedOnSuccess verifies that
+// tracker_updated_at IS persisted after a successful redownload.
+func TestChecker_TrackerUpdatedAt_PersistedOnSuccess(t *testing.T) {
+	db := setupTestDB(t)
+	seriesID := insertTestSeries(t, db, "Test Show")
+	insertTestSeason(t, db, seriesID, 1,
+		strPtr("https://kinozal.tv/details.php?id=123"),
+		strPtr("oldhash"),
+		strPtr("/media/TestShow/S01"))
+	for i := 1; i <= 5; i++ {
+		insertTestMediaFile(t, db, seriesID, 1, fmt.Sprintf("Test.Show.S01E%02d.mkv", i))
+	}
+
+	mock := &mockPageInfoClient{
+		canHandle:    true,
+		episodeCount: 8, // new episodes
+		lastUpdated:  "new-stamp",
+		torrentData:  fakeTorrent("success-stamp"),
+	}
+	registry := NewRegistry()
+	registry.Register(mock)
+	qbit := &mockQbitClient{
+		torrents: []qbittorrent.Torrent{{Hash: "oldhash", Category: "tv"}},
+		addHash:  "newhash",
+		files:    []qbittorrent.TorrentFile{},
+	}
+	checker := NewChecker(db, registry, qbit, database.NewProcessingLock())
+
+	results := checker.Check()
+	if len(results) != 1 || !results[0].Redownloaded {
+		t.Fatalf("expected successful redownload, got %+v", results)
+	}
+
+	season, err := db.GetSeasonBySeriesAndNumber(seriesID, 1)
+	if err != nil {
+		t.Fatalf("get season: %v", err)
+	}
+	if season.TrackerUpdatedAt == nil || *season.TrackerUpdatedAt != "new-stamp" {
+		t.Errorf("expected tracker_updated_at=new-stamp after success, got %v", season.TrackerUpdatedAt)
 	}
 }

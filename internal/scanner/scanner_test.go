@@ -86,7 +86,7 @@ func createVideoFile(t *testing.T, dir, name string) {
 
 func TestCleanupRemovedSeasons_FolderExists_KeepOwned(t *testing.T) {
 	db := setupTestDB(t)
-	sc := New(db, nil, t.TempDir())
+	sc := New(db, nil, t.TempDir(), nil)
 
 	seriesID := seedTestSeries(t, db, "Test Show")
 
@@ -126,7 +126,7 @@ func TestCleanupRemovedSeasons_FolderExists_KeepOwned(t *testing.T) {
 
 func TestCleanupRemovedSeasons_FolderGone_ClearOwned(t *testing.T) {
 	db := setupTestDB(t)
-	sc := New(db, nil, t.TempDir())
+	sc := New(db, nil, t.TempDir(), nil)
 
 	seriesID := seedTestSeries(t, db, "Test Show")
 
@@ -163,7 +163,7 @@ func TestCleanupRemovedSeasons_FolderGone_ClearOwned(t *testing.T) {
 
 func TestCleanupRemovedSeasons_FolderEmpty_ClearOwned(t *testing.T) {
 	db := setupTestDB(t)
-	sc := New(db, nil, t.TempDir())
+	sc := New(db, nil, t.TempDir(), nil)
 
 	seriesID := seedTestSeries(t, db, "Test Show")
 
@@ -205,7 +205,7 @@ func TestCleanupRemovedSeasons_FolderEmpty_ClearOwned(t *testing.T) {
 
 func TestCleanupRemovedSeasons_NonOwnedSeason_NotTouched(t *testing.T) {
 	db := setupTestDB(t)
-	sc := New(db, nil, t.TempDir())
+	sc := New(db, nil, t.TempDir(), nil)
 
 	seriesID := seedTestSeries(t, db, "Another Show")
 
@@ -227,7 +227,7 @@ func TestCleanupRemovedSeasons_NonOwnedSeason_NotTouched(t *testing.T) {
 
 func TestCleanupRemovedSeasons_PreservesTrackName(t *testing.T) {
 	db := setupTestDB(t)
-	sc := New(db, nil, t.TempDir())
+	sc := New(db, nil, t.TempDir(), nil)
 
 	seriesID := seedTestSeries(t, db, "Voice Show")
 
@@ -254,6 +254,171 @@ func TestCleanupRemovedSeasons_PreservesTrackName(t *testing.T) {
 	}
 	if savedTrackName == nil || *savedTrackName != "LostFilm" {
 		t.Errorf("expected track_name=LostFilm to be preserved, got %v", savedTrackName)
+	}
+}
+
+// TestProcessSeriesInfo_LockedSeasonSkipped verifies that the scanner does not
+// upsert a season whose procLock is held by another op (e.g. an in-flight
+// delete handler). Without this, the scanner would resurrect a row that's
+// about to be deleted.
+func TestProcessSeriesInfo_LockedSeasonSkipped(t *testing.T) {
+	db := setupTestDB(t)
+	procLock := database.NewProcessingLock()
+	sc := New(db, nil, t.TempDir(), procLock)
+
+	seriesID := seedTestSeries(t, db, "Locked Show")
+
+	seasonDir := filepath.Join(t.TempDir(), "Locked Show", "Season 1")
+	createVideoFile(t, seasonDir, "ep01.mkv")
+
+	// Hold the lock externally.
+	if !procLock.TryLock(seriesID, 1) {
+		t.Fatal("failed to acquire test lock")
+	}
+	defer procLock.Unlock(seriesID, 1)
+
+	info := SeriesInfo{Title: "Locked Show", Path: seasonDir, Season: 1}
+	if err := sc.processSeriesInfo(info); err != nil {
+		t.Fatalf("processSeriesInfo error: %v", err)
+	}
+
+	// No season row should have been upserted.
+	season, err := db.GetSeasonBySeriesAndNumber(seriesID, 1)
+	if err != nil {
+		t.Fatalf("get season: %v", err)
+	}
+	if season != nil {
+		t.Errorf("expected no season row when locked, got %+v", season)
+	}
+}
+
+// TestProcessSeriesInfo_FolderDeletedBeforeUpsert_NotResurrected verifies that
+// the scanner does not upsert a season whose folder has been removed between
+// the filesystem walk and the upsert (e.g. delete completed in the meantime).
+func TestProcessSeriesInfo_FolderDeletedBeforeUpsert_NotResurrected(t *testing.T) {
+	db := setupTestDB(t)
+	procLock := database.NewProcessingLock()
+	sc := New(db, nil, t.TempDir(), procLock)
+
+	seriesID := seedTestSeries(t, db, "Deleted Show")
+
+	// Path that does not exist on disk (delete already removed it).
+	missingDir := filepath.Join(t.TempDir(), "Deleted Show", "Season 1")
+
+	info := SeriesInfo{Title: "Deleted Show", Path: missingDir, Season: 1}
+	if err := sc.processSeriesInfo(info); err != nil {
+		t.Fatalf("processSeriesInfo error: %v", err)
+	}
+
+	season, err := db.GetSeasonBySeriesAndNumber(seriesID, 1)
+	if err != nil {
+		t.Fatalf("get season: %v", err)
+	}
+	if season != nil {
+		t.Errorf("expected no resurrected season row when folder gone, got %+v", season)
+	}
+}
+
+// TestProcessSeriesInfo_FolderGoneAtStart_NoSeriesCreated verifies that when
+// the folder is already gone before processSeriesInfo runs (delete handler
+// finished while the entry sat in the scanner's in-memory queue), no series
+// row is created. Without the early stat, the fallback path would INSERT a
+// series row before the post-lock stat returned, leaving an empty resurrected
+// metadata-only series.
+func TestProcessSeriesInfo_FolderGoneAtStart_NoSeriesCreated(t *testing.T) {
+	db := setupTestDB(t)
+	procLock := database.NewProcessingLock()
+	sc := New(db, nil, t.TempDir(), procLock)
+
+	missingDir := filepath.Join(t.TempDir(), "Ghost Show", "Season 1")
+
+	info := SeriesInfo{Title: "Ghost Show", Path: missingDir, Season: 1}
+	if err := sc.processSeriesInfo(info); err != nil {
+		t.Fatalf("processSeriesInfo error: %v", err)
+	}
+
+	var count int
+	if err := db.QueryRow(`SELECT COUNT(*) FROM series WHERE title = ?`, "Ghost Show").Scan(&count); err != nil {
+		t.Fatalf("count series: %v", err)
+	}
+	if count != 0 {
+		t.Errorf("expected no series row created when folder gone at start, got %d", count)
+	}
+}
+
+// TestProcessSeriesInfo_ClearsTombstoneOnRediscovery verifies that the scanner
+// clears the deleted_seasons tombstone when files for a previously-deleted
+// season reappear on disk, so subsequent TVDB syncs are allowed to populate
+// metadata again.
+func TestProcessSeriesInfo_ClearsTombstoneOnRediscovery(t *testing.T) {
+	db := setupTestDB(t)
+	procLock := database.NewProcessingLock()
+	sc := New(db, nil, t.TempDir(), procLock)
+
+	seriesID := seedTestSeries(t, db, "Rediscovered Show")
+
+	// Tombstone exists from a prior season delete.
+	if err := db.MarkSeasonDeleted(seriesID, 1); err != nil {
+		t.Fatalf("mark tombstone: %v", err)
+	}
+
+	// User puts files back on disk; scanner picks them up.
+	seasonDir := filepath.Join(t.TempDir(), "Rediscovered Show", "Season 1")
+	createVideoFile(t, seasonDir, "ep01.mkv")
+
+	info := SeriesInfo{Title: "Rediscovered Show", Path: seasonDir, Season: 1}
+	if err := sc.processSeriesInfo(info); err != nil {
+		t.Fatalf("processSeriesInfo error: %v", err)
+	}
+
+	// Tombstone must be gone.
+	tombstoned, err := db.IsSeasonDeleted(seriesID, 1)
+	if err != nil {
+		t.Fatalf("IsSeasonDeleted: %v", err)
+	}
+	if tombstoned {
+		t.Error("expected tombstone cleared after scanner re-discovery")
+	}
+
+	// Season row must exist.
+	season, err := db.GetSeasonBySeriesAndNumber(seriesID, 1)
+	if err != nil {
+		t.Fatalf("get season: %v", err)
+	}
+	if season == nil {
+		t.Error("expected season row after scanner upsert")
+	}
+}
+
+// TestProcessSeriesInfo_SeriesLocked_NoUpsert verifies that processSeriesInfo
+// skips when the series is series-locked (i.e. handleDeleteSeries is in
+// progress), even for a season that wasn't part of the original DB snapshot.
+func TestProcessSeriesInfo_SeriesLocked_NoUpsert(t *testing.T) {
+	db := setupTestDB(t)
+	procLock := database.NewProcessingLock()
+	sc := New(db, nil, t.TempDir(), procLock)
+
+	seriesID := seedTestSeries(t, db, "Series Locked Show")
+
+	seasonDir := filepath.Join(t.TempDir(), "Series Locked Show", "Season 2")
+	createVideoFile(t, seasonDir, "ep01.mkv")
+
+	if !procLock.TryLockSeries(seriesID) {
+		t.Fatal("failed to acquire series lock")
+	}
+	defer procLock.UnlockSeries(seriesID)
+
+	info := SeriesInfo{Title: "Series Locked Show", Path: seasonDir, Season: 2}
+	if err := sc.processSeriesInfo(info); err != nil {
+		t.Fatalf("processSeriesInfo error: %v", err)
+	}
+
+	season, err := db.GetSeasonBySeriesAndNumber(seriesID, 2)
+	if err != nil {
+		t.Fatalf("get season: %v", err)
+	}
+	if season != nil {
+		t.Errorf("expected no upsert when series-locked, got %+v", season)
 	}
 }
 

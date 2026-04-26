@@ -30,7 +30,7 @@ func NewPostDownloadProcessor(db *database.DB, qbit QbitClient, audio AudioProce
 		db:       db,
 		qbit:     qbit,
 		procLock: procLock,
-		audio: audio,
+		audio:    audio,
 	}
 }
 

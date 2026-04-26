@@ -222,6 +222,32 @@ func (db *DB) GetSeasonsWithTrackerURL() ([]Season, error) {
 	return seasons, nil
 }
 
+// GetSeasonNumbersBySeries returns all season_number values for a series.
+func (db *DB) GetSeasonNumbersBySeries(seriesID int64) ([]int, error) {
+	rows, err := db.Query(`
+		SELECT season_number FROM seasons
+		WHERE series_id = ?
+		ORDER BY season_number
+	`, seriesID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to query season numbers: %w", err)
+	}
+	defer rows.Close() //nolint:errcheck
+
+	var nums []int
+	for rows.Next() {
+		var n int
+		if err := rows.Scan(&n); err != nil {
+			return nil, fmt.Errorf("failed to scan season number: %w", err)
+		}
+		nums = append(nums, n)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("failed to iterate season numbers: %w", err)
+	}
+	return nums, nil
+}
+
 // GetTorrentHashesBySeries returns all non-empty torrent_hash values
 // for the seasons of a series.
 func (db *DB) GetTorrentHashesBySeries(seriesID int64) ([]string, error) {
@@ -263,6 +289,86 @@ func (db *DB) DeleteSeason(seriesID int64, seasonNumber int) (int64, error) {
 		return 0, fmt.Errorf("failed to get rows affected: %w", err)
 	}
 	return affected, nil
+}
+
+// DeleteSeasonAndTombstone atomically removes the season row and records a
+// tombstone in deleted_seasons. Both writes share a single transaction so the
+// season cannot be left without a tombstone — otherwise TVDB sync would
+// resurrect it as metadata-only and the user could not retry the delete.
+// Returns rows affected by the season delete. CASCADE removes media_files.
+func (db *DB) DeleteSeasonAndTombstone(seriesID int64, seasonNumber int) (int64, error) {
+	tx, err := db.Begin()
+	if err != nil {
+		return 0, fmt.Errorf("begin transaction: %w", err)
+	}
+	defer tx.Rollback() //nolint:errcheck
+
+	result, err := tx.Exec(`
+		DELETE FROM seasons WHERE series_id = ? AND season_number = ?
+	`, seriesID, seasonNumber)
+	if err != nil {
+		return 0, fmt.Errorf("failed to delete season: %w", err)
+	}
+	affected, err := result.RowsAffected()
+	if err != nil {
+		return 0, fmt.Errorf("failed to get rows affected: %w", err)
+	}
+	if affected == 0 {
+		return 0, nil
+	}
+
+	if _, err := tx.Exec(`
+		INSERT OR REPLACE INTO deleted_seasons (series_id, season_number, deleted_at)
+		VALUES (?, ?, CURRENT_TIMESTAMP)
+	`, seriesID, seasonNumber); err != nil {
+		return 0, fmt.Errorf("failed to mark season deleted: %w", err)
+	}
+
+	if err := tx.Commit(); err != nil {
+		return 0, fmt.Errorf("commit transaction: %w", err)
+	}
+	return affected, nil
+}
+
+// MarkSeasonDeleted records a tombstone so TVDB sync will not resurrect the
+// season. Idempotent (INSERT OR REPLACE refreshes deleted_at).
+func (db *DB) MarkSeasonDeleted(seriesID int64, seasonNumber int) error {
+	_, err := db.Exec(`
+		INSERT OR REPLACE INTO deleted_seasons (series_id, season_number, deleted_at)
+		VALUES (?, ?, CURRENT_TIMESTAMP)
+	`, seriesID, seasonNumber)
+	if err != nil {
+		return fmt.Errorf("failed to mark season deleted: %w", err)
+	}
+	return nil
+}
+
+// ClearSeasonTombstone removes the tombstone for a (series_id, season_number).
+// Called when files for the season reappear on disk (scanner) so future TVDB
+// syncs are allowed to populate metadata again.
+func (db *DB) ClearSeasonTombstone(seriesID int64, seasonNumber int) error {
+	_, err := db.Exec(`
+		DELETE FROM deleted_seasons WHERE series_id = ? AND season_number = ?
+	`, seriesID, seasonNumber)
+	if err != nil {
+		return fmt.Errorf("failed to clear season tombstone: %w", err)
+	}
+	return nil
+}
+
+// IsSeasonDeleted reports whether the season has an active tombstone.
+func (db *DB) IsSeasonDeleted(seriesID int64, seasonNumber int) (bool, error) {
+	var exists int
+	err := db.QueryRow(`
+		SELECT 1 FROM deleted_seasons WHERE series_id = ? AND season_number = ?
+	`, seriesID, seasonNumber).Scan(&exists)
+	if err == sql.ErrNoRows {
+		return false, nil
+	}
+	if err != nil {
+		return false, fmt.Errorf("failed to check season tombstone: %w", err)
+	}
+	return true, nil
 }
 
 // UpdateTorrentHash updates the torrent_hash for a season.
@@ -373,9 +479,24 @@ func (db *DB) SyncSeriesAndChildren(seriesID int64, expectedTVDBID int, series *
 }
 
 // upsertSeasonTx creates or updates a season within an existing transaction.
+// Skips both insert and update when the season has a tombstone in
+// deleted_seasons — the user explicitly deleted it and TVDB sync must not
+// resurrect or refresh metadata for it.
 func upsertSeasonTx(tx *sql.Tx, season *Season) error {
-	var existingID int64
+	var tombstoned int
 	err := tx.QueryRow(`
+		SELECT 1 FROM deleted_seasons
+		WHERE series_id = ? AND season_number = ?
+	`, season.SeriesID, season.SeasonNumber).Scan(&tombstoned)
+	if err != nil && err != sql.ErrNoRows {
+		return fmt.Errorf("failed to check season tombstone: %w", err)
+	}
+	if err == nil {
+		return nil
+	}
+
+	var existingID int64
+	err = tx.QueryRow(`
 		SELECT id FROM seasons
 		WHERE series_id = ? AND season_number = ?
 	`, season.SeriesID, season.SeasonNumber).Scan(&existingID)

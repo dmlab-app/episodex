@@ -313,6 +313,42 @@ func TestGetTorrentHashesBySeries(t *testing.T) {
 	}
 }
 
+func TestGetSeasonNumbersBySeries(t *testing.T) {
+	t.Run("empty for unknown series", func(t *testing.T) {
+		db := newTestDB(t)
+		nums, err := db.GetSeasonNumbersBySeries(99999)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if len(nums) != 0 {
+			t.Errorf("expected 0 nums, got %v", nums)
+		}
+	})
+
+	t.Run("returns ordered season numbers", func(t *testing.T) {
+		db := newTestDB(t)
+		seriesID := createTestSeries(t, db)
+		for _, n := range []int{3, 1, 2} {
+			if _, err := db.UpsertSeason(&Season{SeriesID: seriesID, SeasonNumber: n}); err != nil {
+				t.Fatalf("upsert: %v", err)
+			}
+		}
+		nums, err := db.GetSeasonNumbersBySeries(seriesID)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		want := []int{1, 2, 3}
+		if len(nums) != len(want) {
+			t.Fatalf("expected %v, got %v", want, nums)
+		}
+		for i, w := range want {
+			if nums[i] != w {
+				t.Errorf("nums[%d]: expected %d, got %d", i, w, nums[i])
+			}
+		}
+	})
+}
+
 func TestDeleteSeason(t *testing.T) {
 	t.Run("deletes season and cascades media_files", func(t *testing.T) {
 		db := newTestDB(t)
@@ -398,6 +434,292 @@ func TestDeleteSeason(t *testing.T) {
 			t.Errorf("expected 0 rows affected, got %d", affected)
 		}
 	})
+}
+
+func TestDeleteSeasonAndTombstone(t *testing.T) {
+	t.Run("deletes season and writes tombstone atomically", func(t *testing.T) {
+		db := newTestDB(t)
+		seriesID := createTestSeries(t, db)
+
+		if _, err := db.UpsertSeason(&Season{SeriesID: seriesID, SeasonNumber: 1}); err != nil {
+			t.Fatalf("upsert: %v", err)
+		}
+		if _, err := db.Exec(`
+			INSERT INTO media_files (series_id, season_number, file_path, file_name, file_size, file_hash)
+			VALUES (?, 1, '/tmp/s1e1.mkv', 's1e1.mkv', 100, 'h1')
+		`, seriesID); err != nil {
+			t.Fatalf("insert media file: %v", err)
+		}
+
+		affected, err := db.DeleteSeasonAndTombstone(seriesID, 1)
+		if err != nil {
+			t.Fatalf("DeleteSeasonAndTombstone: %v", err)
+		}
+		if affected != 1 {
+			t.Errorf("expected 1 row affected, got %d", affected)
+		}
+
+		got, err := db.GetSeasonBySeriesAndNumber(seriesID, 1)
+		if err != nil {
+			t.Fatalf("get deleted season: %v", err)
+		}
+		if got != nil {
+			t.Error("expected season row to be deleted")
+		}
+
+		ok, err := db.IsSeasonDeleted(seriesID, 1)
+		if err != nil {
+			t.Fatalf("IsSeasonDeleted: %v", err)
+		}
+		if !ok {
+			t.Error("expected tombstone to be recorded")
+		}
+
+		var mfCount int
+		if err := db.QueryRow(`SELECT COUNT(*) FROM media_files WHERE series_id = ? AND season_number = ?`, seriesID, 1).Scan(&mfCount); err != nil {
+			t.Fatalf("count media files: %v", err)
+		}
+		if mfCount != 0 {
+			t.Errorf("expected media_files to cascade-delete, got %d", mfCount)
+		}
+	})
+
+	t.Run("missing season returns 0 rows and no tombstone", func(t *testing.T) {
+		db := newTestDB(t)
+		seriesID := createTestSeries(t, db)
+
+		affected, err := db.DeleteSeasonAndTombstone(seriesID, 99)
+		if err != nil {
+			t.Fatalf("DeleteSeasonAndTombstone: %v", err)
+		}
+		if affected != 0 {
+			t.Errorf("expected 0 rows affected, got %d", affected)
+		}
+
+		ok, err := db.IsSeasonDeleted(seriesID, 99)
+		if err != nil {
+			t.Fatalf("IsSeasonDeleted: %v", err)
+		}
+		if ok {
+			t.Error("expected no tombstone for missing season")
+		}
+	})
+
+	t.Run("refreshes existing tombstone timestamp", func(t *testing.T) {
+		db := newTestDB(t)
+		seriesID := createTestSeries(t, db)
+
+		if _, err := db.UpsertSeason(&Season{SeriesID: seriesID, SeasonNumber: 1}); err != nil {
+			t.Fatalf("upsert: %v", err)
+		}
+		if err := db.MarkSeasonDeleted(seriesID, 1); err != nil {
+			t.Fatalf("mark: %v", err)
+		}
+
+		affected, err := db.DeleteSeasonAndTombstone(seriesID, 1)
+		if err != nil {
+			t.Fatalf("DeleteSeasonAndTombstone: %v", err)
+		}
+		if affected != 1 {
+			t.Errorf("expected 1 row affected, got %d", affected)
+		}
+
+		var count int
+		if err := db.QueryRow(`SELECT COUNT(*) FROM deleted_seasons WHERE series_id = ? AND season_number = ?`, seriesID, 1).Scan(&count); err != nil {
+			t.Fatalf("count tombstones: %v", err)
+		}
+		if count != 1 {
+			t.Errorf("expected exactly one tombstone row, got %d", count)
+		}
+	})
+}
+
+func TestSeasonTombstone(t *testing.T) {
+	t.Run("mark and read tombstone", func(t *testing.T) {
+		db := newTestDB(t)
+		seriesID := createTestSeries(t, db)
+
+		ok, err := db.IsSeasonDeleted(seriesID, 3)
+		if err != nil {
+			t.Fatalf("IsSeasonDeleted: %v", err)
+		}
+		if ok {
+			t.Error("expected no tombstone initially")
+		}
+
+		if err := db.MarkSeasonDeleted(seriesID, 3); err != nil {
+			t.Fatalf("MarkSeasonDeleted: %v", err)
+		}
+
+		ok, err = db.IsSeasonDeleted(seriesID, 3)
+		if err != nil {
+			t.Fatalf("IsSeasonDeleted after mark: %v", err)
+		}
+		if !ok {
+			t.Error("expected tombstone after mark")
+		}
+	})
+
+	t.Run("mark is idempotent", func(t *testing.T) {
+		db := newTestDB(t)
+		seriesID := createTestSeries(t, db)
+
+		if err := db.MarkSeasonDeleted(seriesID, 1); err != nil {
+			t.Fatalf("first mark: %v", err)
+		}
+		if err := db.MarkSeasonDeleted(seriesID, 1); err != nil {
+			t.Fatalf("second mark: %v", err)
+		}
+
+		var count int
+		if err := db.QueryRow(`SELECT COUNT(*) FROM deleted_seasons WHERE series_id = ? AND season_number = ?`, seriesID, 1).Scan(&count); err != nil {
+			t.Fatalf("count tombstones: %v", err)
+		}
+		if count != 1 {
+			t.Errorf("expected 1 tombstone row, got %d", count)
+		}
+	})
+
+	t.Run("clear removes tombstone", func(t *testing.T) {
+		db := newTestDB(t)
+		seriesID := createTestSeries(t, db)
+
+		if err := db.MarkSeasonDeleted(seriesID, 5); err != nil {
+			t.Fatalf("mark: %v", err)
+		}
+		if err := db.ClearSeasonTombstone(seriesID, 5); err != nil {
+			t.Fatalf("clear: %v", err)
+		}
+
+		ok, err := db.IsSeasonDeleted(seriesID, 5)
+		if err != nil {
+			t.Fatalf("IsSeasonDeleted: %v", err)
+		}
+		if ok {
+			t.Error("expected tombstone gone after clear")
+		}
+	})
+
+	t.Run("clear missing tombstone is a no-op", func(t *testing.T) {
+		db := newTestDB(t)
+		seriesID := createTestSeries(t, db)
+
+		if err := db.ClearSeasonTombstone(seriesID, 7); err != nil {
+			t.Fatalf("clear missing: %v", err)
+		}
+	})
+
+	t.Run("series delete cascades tombstones", func(t *testing.T) {
+		db := newTestDB(t)
+		seriesID := createTestSeries(t, db)
+
+		if err := db.MarkSeasonDeleted(seriesID, 1); err != nil {
+			t.Fatalf("mark s1: %v", err)
+		}
+		if err := db.MarkSeasonDeleted(seriesID, 2); err != nil {
+			t.Fatalf("mark s2: %v", err)
+		}
+
+		if _, err := db.Exec(`DELETE FROM series WHERE id = ?`, seriesID); err != nil {
+			t.Fatalf("delete series: %v", err)
+		}
+
+		var count int
+		if err := db.QueryRow(`SELECT COUNT(*) FROM deleted_seasons WHERE series_id = ?`, seriesID).Scan(&count); err != nil {
+			t.Fatalf("count tombstones: %v", err)
+		}
+		if count != 0 {
+			t.Errorf("expected tombstones to cascade, got %d remaining", count)
+		}
+	})
+}
+
+func TestSyncSeriesAndChildren_SkipsTombstonedSeason(t *testing.T) {
+	db := newTestDB(t)
+	seriesID := createTestSeries(t, db)
+	tvdbID := 99999
+
+	// User deletes season 2 (DB row gone, tombstone recorded).
+	if err := db.MarkSeasonDeleted(seriesID, 2); err != nil {
+		t.Fatalf("mark tombstone: %v", err)
+	}
+
+	// TVDB sync runs and tries to write seasons 1, 2, 3.
+	series := &Series{Title: "Test Show", TotalSeasons: 3, AiredSeasons: 3}
+	seasons := []Season{
+		{SeriesID: seriesID, SeasonNumber: 1, AiredEpisodes: 10},
+		{SeriesID: seriesID, SeasonNumber: 2, AiredEpisodes: 8},
+		{SeriesID: seriesID, SeasonNumber: 3, AiredEpisodes: 6},
+	}
+
+	if err := db.SyncSeriesAndChildren(seriesID, tvdbID, series, seasons, nil); err != nil {
+		t.Fatalf("sync: %v", err)
+	}
+
+	// Seasons 1 and 3 should exist; season 2 must NOT have been resurrected.
+	var s1Count, s2Count, s3Count int
+	if err := db.QueryRow(`SELECT COUNT(*) FROM seasons WHERE series_id = ? AND season_number = 1`, seriesID).Scan(&s1Count); err != nil {
+		t.Fatalf("count s1: %v", err)
+	}
+	if err := db.QueryRow(`SELECT COUNT(*) FROM seasons WHERE series_id = ? AND season_number = 2`, seriesID).Scan(&s2Count); err != nil {
+		t.Fatalf("count s2: %v", err)
+	}
+	if err := db.QueryRow(`SELECT COUNT(*) FROM seasons WHERE series_id = ? AND season_number = 3`, seriesID).Scan(&s3Count); err != nil {
+		t.Fatalf("count s3: %v", err)
+	}
+	if s1Count != 1 {
+		t.Errorf("expected season 1 created, got count=%d", s1Count)
+	}
+	if s2Count != 0 {
+		t.Errorf("expected tombstoned season 2 NOT resurrected, got count=%d", s2Count)
+	}
+	if s3Count != 1 {
+		t.Errorf("expected season 3 created, got count=%d", s3Count)
+	}
+}
+
+func TestSyncSeriesAndChildren_SkipsTombstonedUpdateOfExistingSeason(t *testing.T) {
+	// A season that exists AND has a tombstone (defensive: shouldn't normally
+	// happen, but guard against accidentally refreshing metadata for a
+	// tombstoned season). Verifies upsertSeasonTx checks the tombstone before
+	// the existing-row branch as well.
+	db := newTestDB(t)
+	seriesID := createTestSeries(t, db)
+	tvdbID := 99999
+
+	originalName := "Original"
+	if _, err := db.UpsertSeason(&Season{
+		SeriesID: seriesID, SeasonNumber: 1, AiredEpisodes: 5, Name: &originalName,
+	}); err != nil {
+		t.Fatalf("seed season: %v", err)
+	}
+	if err := db.MarkSeasonDeleted(seriesID, 1); err != nil {
+		t.Fatalf("mark tombstone: %v", err)
+	}
+
+	newName := "New From TVDB"
+	series := &Series{Title: "Test Show", TotalSeasons: 1, AiredSeasons: 1}
+	seasons := []Season{
+		{SeriesID: seriesID, SeasonNumber: 1, AiredEpisodes: 99, Name: &newName},
+	}
+
+	if err := db.SyncSeriesAndChildren(seriesID, tvdbID, series, seasons, nil); err != nil {
+		t.Fatalf("sync: %v", err)
+	}
+
+	got, err := db.GetSeasonBySeriesAndNumber(seriesID, 1)
+	if err != nil {
+		t.Fatalf("get season: %v", err)
+	}
+	if got == nil {
+		t.Fatal("season unexpectedly disappeared")
+	}
+	if got.Name == nil || *got.Name != originalName {
+		t.Errorf("expected name to remain %q, got %v", originalName, got.Name)
+	}
+	if got.AiredEpisodes != 5 {
+		t.Errorf("expected aired_episodes to remain 5, got %d", got.AiredEpisodes)
+	}
 }
 
 func TestSeasonAiredEpisodes_WithEpisodes(t *testing.T) {

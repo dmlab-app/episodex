@@ -150,6 +150,19 @@ func (db *DB) initTables() error {
 		dismissed INTEGER DEFAULT 0
 	);
 
+	-- Tombstones for user-deleted seasons.
+	-- Prevents TVDB sync (upsertSeasonTx) from resurrecting a season the user
+	-- explicitly removed. Cleared when the scanner re-discovers files for the
+	-- same (series_id, season_number), since presence of files signals the user
+	-- wants the season back. CASCADE on series delete keeps the table clean.
+	CREATE TABLE IF NOT EXISTS deleted_seasons (
+		series_id INTEGER NOT NULL,
+		season_number INTEGER NOT NULL,
+		deleted_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+		PRIMARY KEY (series_id, season_number),
+		FOREIGN KEY (series_id) REFERENCES series(id) ON DELETE CASCADE
+	);
+
 	-- Кеш найденных торрентов для следующего сезона
 	CREATE TABLE IF NOT EXISTS next_season_cache (
 		series_id INTEGER NOT NULL,

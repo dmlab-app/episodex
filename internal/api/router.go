@@ -4,7 +4,6 @@ package api
 import (
 	"database/sql"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -631,6 +630,18 @@ func (s *Server) handleDeleteSeries(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Block deletion while any season of this series is mid audio-processing,
+	// AND fence the scanner out of upserting any new season for this series for
+	// the duration of the delete. Snapshotting per-season locks alone leaves a
+	// race: a concurrent scan can lock a previously unknown season number after
+	// our snapshot, upsert it, and the row would survive past the snapshot while
+	// its folder is left untouched on disk.
+	if !s.procLock.TryLockSeries(id) {
+		s.respondError(w, http.StatusConflict, "a season of this series is currently being processed")
+		return
+	}
+	defer s.procLock.UnlockSeries(id)
+
 	// Collect file paths, folder paths, and torrent hashes before DB deletion
 	// (CASCADE will remove records). Fail if lookups error — proceeding would
 	// orphan files on disk.
@@ -658,12 +669,7 @@ func (s *Server) handleDeleteSeries(w http.ResponseWriter, r *http.Request) {
 	if s.qbitClient != nil {
 		for _, hash := range torrentHashes {
 			if err := s.qbitClient.DeleteTorrent(hash); err != nil {
-				if errors.Is(err, qbittorrent.ErrTorrentNotFound) {
-					slog.Info("Torrent already gone from qBit", "hash", hash)
-					torrentsRemoved++
-				} else {
-					slog.Warn("Failed to delete torrent from qBit", "hash", hash, "error", err)
-				}
+				slog.Warn("Failed to delete torrent from qBit", "hash", hash, "error", err)
 			} else {
 				torrentsRemoved++
 				slog.Info("Removed torrent from qBit", "hash", hash)
@@ -703,6 +709,17 @@ func (s *Server) handleDeleteSeries(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	// Clear processed_files rows BEFORE deleting the series row so a re-download
+	// of the same series is not incorrectly skipped by IsFileProcessed (which keys
+	// on file_path only). processed_files.series_id is ON DELETE SET NULL, so doing
+	// this after the series DELETE would orphan series_id and a retry could no
+	// longer target these rows by series_id — fail fast and let the caller retry.
+	if err := s.db.DeleteProcessedFilesBySeries(id); err != nil {
+		slog.Error("Failed to clear processed_files for series", "id", id, "error", err)
+		s.respondError(w, http.StatusInternalServerError, "failed to clear processed files")
+		return
+	}
+
 	query := "DELETE FROM series WHERE id = ?"
 	result, err := s.db.Exec(query, id)
 	if err != nil {
@@ -739,8 +756,10 @@ func (s *Server) handleDeleteSeries(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// isWithinMediaPath checks that a file path is inside the configured media library root.
-// Returns true if no media path is configured (boundary check disabled).
+// isWithinMediaPath checks that a file path is a strict descendant of the configured
+// media library root. Returns true if no media path is configured (boundary check
+// disabled). The root path itself is intentionally rejected so that callers using
+// os.RemoveAll cannot wipe the entire library if a path is misconfigured.
 func (s *Server) isWithinMediaPath(filePath string) bool {
 	if s.mediaPath == "" {
 		return true
@@ -760,11 +779,12 @@ func (s *Server) isWithinMediaPath(filePath string) bool {
 			return false
 		}
 	}
-	// When absMedia is the filesystem root ("/"), every absolute path is inside it.
+	// When absMedia is the filesystem root ("/"), every absolute path other
+	// than "/" itself is a strict descendant.
 	if absMedia == string(filepath.Separator) {
-		return filepath.IsAbs(absFile)
+		return filepath.IsAbs(absFile) && absFile != absMedia
 	}
-	return strings.HasPrefix(absFile, absMedia+string(filepath.Separator)) || absFile == absMedia
+	return strings.HasPrefix(absFile, absMedia+string(filepath.Separator))
 }
 
 func (s *Server) handleMatchSeries(w http.ResponseWriter, r *http.Request) {
@@ -1093,13 +1113,23 @@ func (s *Server) handleGetSeasonTracker(w http.ResponseWriter, r *http.Request) 
 
 	trackerURL, torrentHash := s.resolveTrackerFromQbit(*season.FolderPath)
 
-	// Save to database if found
+	// Save to database if found. Take procLock around the cache write so we
+	// can't backfill torrent_hash for a season that a delete handler has
+	// already snapshotted as NULL (which would orphan the torrent in qBit when
+	// the delete proceeds without a hash to clean up). If the lock is held,
+	// skip the cache write — the tracker_url is still returned to the caller
+	// and will be re-resolved on the next request.
 	if trackerURL != "" || torrentHash != "" {
-		if _, err := s.db.Exec(`
-			UPDATE seasons SET tracker_url = ?, torrent_hash = ?, updated_at = CURRENT_TIMESTAMP
-			WHERE series_id = ? AND season_number = ?
-		`, nilIfEmpty(trackerURL), nilIfEmpty(torrentHash), id, num); err != nil {
-			slog.Error("Failed to save tracker info", "series_id", id, "season", num, "error", err)
+		if s.procLock.TryLock(id, int64(num)) {
+			if _, err := s.db.Exec(`
+				UPDATE seasons SET tracker_url = ?, torrent_hash = ?, updated_at = CURRENT_TIMESTAMP
+				WHERE series_id = ? AND season_number = ?
+			`, nilIfEmpty(trackerURL), nilIfEmpty(torrentHash), id, num); err != nil {
+				slog.Error("Failed to save tracker info", "series_id", id, "season", num, "error", err)
+			}
+			s.procLock.Unlock(id, int64(num))
+		} else {
+			slog.Info("Skipping tracker cache write — season busy", "series_id", id, "season", num)
 		}
 	}
 
@@ -1950,6 +1980,19 @@ func (s *Server) handleDeleteSeason(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Acquire procLock BEFORE reading the season snapshot so concurrent writers
+	// (audio processor, tracker checker redownload) cannot mutate torrent_hash
+	// or folder_path between our read and the actual delete. Without this
+	// ordering, a checker redownload that lands between snapshot and DB delete
+	// would leave the new torrent orphaned in qBit (we'd delete the old hash
+	// from our snapshot, and then drop the season row that pointed to the new
+	// hash).
+	if !s.procLock.TryLock(sid, int64(snum)) {
+		s.respondError(w, http.StatusConflict, "season is currently being processed")
+		return
+	}
+	defer s.procLock.Unlock(sid, int64(snum))
+
 	season, err := s.db.GetSeasonBySeriesAndNumber(sid, snum)
 	if err != nil {
 		slog.Error("Failed to fetch season for deletion", "series_id", sid, "season", snum, "error", err)
@@ -1961,29 +2004,29 @@ func (s *Server) handleDeleteSeason(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// 1. Remove qBit torrent (best-effort).
-	torrentRemoved := false
-	if season.TorrentHash != nil && *season.TorrentHash != "" && s.qbitClient != nil {
-		if err := s.qbitClient.DeleteTorrent(*season.TorrentHash); err != nil {
-			if errors.Is(err, qbittorrent.ErrTorrentNotFound) {
-				slog.Info("Torrent already gone from qBit", "hash", *season.TorrentHash)
-				torrentRemoved = true
-			} else {
-				slog.Warn("Failed to delete torrent from qBit", "hash", *season.TorrentHash, "error", err)
-			}
-		} else {
-			torrentRemoved = true
-			slog.Info("Removed torrent from qBit", "hash", *season.TorrentHash)
-		}
-	}
-
-	// 2. Remove media files inside MEDIA_PATH (best-effort).
+	// 1. Read media file paths BEFORE any destructive operation. If this read
+	// fails we return 500 without having removed anything, so the user's retry
+	// is meaningful. Doing the qBit delete first would orphan the torrent
+	// (gone from qBit) while the season row still references its hash.
 	filePaths, err := s.db.GetMediaFilePathsBySeason(sid, snum)
 	if err != nil {
 		slog.Error("Failed to get media file paths for season", "series_id", sid, "season", snum, "error", err)
 		s.respondError(w, http.StatusInternalServerError, "failed to look up media files for deletion")
 		return
 	}
+
+	// 2. Remove qBit torrent (best-effort).
+	torrentRemoved := false
+	if season.TorrentHash != nil && *season.TorrentHash != "" && s.qbitClient != nil {
+		if err := s.qbitClient.DeleteTorrent(*season.TorrentHash); err != nil {
+			slog.Warn("Failed to delete torrent from qBit", "hash", *season.TorrentHash, "error", err)
+		} else {
+			torrentRemoved = true
+			slog.Info("Removed torrent from qBit", "hash", *season.TorrentHash)
+		}
+	}
+
+	// 3. Remove media files inside MEDIA_PATH (best-effort).
 	filesRemoved := 0
 	for _, fp := range filePaths {
 		if !s.isWithinMediaPath(fp) {
@@ -2000,7 +2043,7 @@ func (s *Server) handleDeleteSeason(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// 3. Remove the season folder recursively (folder may contain non-tracked files).
+	// 4. Remove the season folder recursively (folder may contain non-tracked files).
 	folderRemoved := false
 	if season.FolderPath != nil && *season.FolderPath != "" {
 		fp := *season.FolderPath
@@ -2016,8 +2059,23 @@ func (s *Server) handleDeleteSeason(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// 4. DB delete (CASCADE removes media_files via composite FK).
-	rows, err := s.db.DeleteSeason(sid, snum)
+	// 5. Clear processed_files rows BEFORE deleting the season so a re-download
+	// of the same season is not incorrectly skipped by IsFileProcessed (which keys
+	// on file_path only). Run before the season DELETE so a retry after a transient
+	// failure can re-target these rows; otherwise the season row would already be
+	// gone and the retry would 404.
+	if err := s.db.DeleteProcessedFilesBySeason(sid, snum); err != nil {
+		slog.Error("Failed to clear processed_files", "series_id", sid, "season", snum, "error", err)
+		s.respondError(w, http.StatusInternalServerError, "failed to clear processed files")
+		return
+	}
+
+	// 6. Atomically delete the season row and write the tombstone in one
+	// transaction. CASCADE removes media_files. The tombstone must be durable
+	// alongside the delete: without it TVDB sync (upsertSeasonTx) resurrects
+	// the season as metadata-only, and the client cannot retry the delete
+	// because the season row is already gone.
+	rows, err := s.db.DeleteSeasonAndTombstone(sid, snum)
 	if err != nil {
 		slog.Error("Failed to delete season from DB", "series_id", sid, "season", snum, "error", err)
 		s.respondError(w, http.StatusInternalServerError, "failed to delete season")
@@ -2028,7 +2086,7 @@ func (s *Server) handleDeleteSeason(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// 5. Clear next_season_cache row (non-fatal).
+	// 7. Clear next_season_cache row (non-fatal).
 	if err := s.db.DeleteNextSeasonCacheBySeason(sid, snum); err != nil {
 		slog.Warn("Failed to clear next_season_cache", "series_id", sid, "season", snum, "error", err)
 	}

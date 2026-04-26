@@ -385,7 +385,7 @@ async function deleteSeries() {
 }
 
 async function deleteSeason() {
-    if (!state.currentSeriesId || !state.currentSeasonNum) return;
+    if (!state.currentSeriesId || state.currentSeasonNum == null) return;
     const series = state.series.find(s => s.id === state.currentSeriesId);
     const title = series?.title || '';
     const num = state.currentSeasonNum;
@@ -424,6 +424,7 @@ async function showSeasonDetailPage(seriesId, seasonNum) {
     document.getElementById('progress-container').style.display = 'none';
     document.getElementById('tracker-link-container').style.display = 'none';
     document.getElementById('tracker-link').removeAttribute('href');
+    document.getElementById('delete-season-btn').style.display = 'none';
 
     updateNav('series');
 
@@ -471,6 +472,10 @@ async function loadSeasonDetail(seriesId, seasonNum) {
             document.getElementById('season-files-box').style.display = 'none';
             return;
         }
+
+        // Show Delete button only for owned seasons (avoid wiping DB metadata
+        // for never-downloaded seasons reachable via direct URL navigation).
+        document.getElementById('delete-season-btn').style.display = '';
 
         // Load audio tracks
         const audioData = await api.get(`/api/series/${seriesId}/seasons/${seasonNum}/audio`);

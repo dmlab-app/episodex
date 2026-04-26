@@ -24,7 +24,7 @@ var (
 	reSeasonS          = regexp.MustCompile(`(?i)[Ss](\d{1,2})`)
 	reSeasonStandalone = regexp.MustCompile(`(?i)\bS(\d{1,2})\b`)
 	reSeasonWord       = regexp.MustCompile(`(?i)[Ss]eason\s*(\d{1,2})`)
-	reSeasonRu         = regexp.MustCompile(`(?i)сезон\s*(\d{1,2})`)     // "Сезон 2"
+	reSeasonRu         = regexp.MustCompile(`(?i)сезон\s*(\d{1,2})`)            // "Сезон 2"
 	reSeasonRuRev      = regexp.MustCompile(`(?i)(\d{1,2})[-\s]*[ий]?\s*сезон`) // "2 сезон", "2-й сезон"
 	reSeasonEnd        = regexp.MustCompile(`(?i)\s*[Ss]\d{1,2}$`)
 	reSeasonWordEnd    = regexp.MustCompile(`(?i)\s*[Ss]eason\s*\d{1,2}$`)
@@ -83,6 +83,7 @@ type Scanner struct {
 	db        *database.DB
 	tvdb      *tvdb.Client
 	mediaPath string
+	procLock  *database.ProcessingLock
 	scanMu    sync.Mutex
 }
 
@@ -93,12 +94,15 @@ type SeriesInfo struct {
 	Season int
 }
 
-// New creates a new Scanner
-func New(db *database.DB, tvdbClient *tvdb.Client, mediaPath string) *Scanner {
+// New creates a new Scanner. procLock may be nil in tests; in production it is
+// shared with the API delete handlers and tracker checker so concurrent
+// operations on the same (series, season) are serialized.
+func New(db *database.DB, tvdbClient *tvdb.Client, mediaPath string, procLock *database.ProcessingLock) *Scanner {
 	return &Scanner{
 		db:        db,
 		tvdb:      tvdbClient,
 		mediaPath: mediaPath,
+		procLock:  procLock,
 	}
 }
 
@@ -443,9 +447,26 @@ func hasVideoFiles(path string) bool {
 
 // processSeriesInfo adds or updates series in database using TVDB for identification
 func (s *Scanner) processSeriesInfo(info SeriesInfo) error {
+	// Fail fast if the folder is already gone (e.g. delete handler ran between
+	// the filesystem walk and now). Without this, the slow TVDB lookup below
+	// can finish well after the folder is gone and we would create a series row
+	// only to fail the post-lock stat — leaving an empty resurrected series
+	// with no seasons.
+	if _, err := os.Stat(info.Path); os.IsNotExist(err) {
+		slog.Info("Scan: folder no longer exists at start, skipping",
+			"path", info.Path, "title", info.Title, "season", info.Season)
+		return nil
+	}
+
 	var seriesID int64
 	var tvdbID int
 	var seriesTitle string
+	// Tracks whether this call inserted a fresh series row. If the post-lock
+	// stat below finds the folder gone, we must roll the insert back — otherwise
+	// a delete that completed between our INSERT and TryLock leaves a ghost
+	// series row whose folder no longer exists. The series-wide lock keyed on
+	// the old series.id can't protect a row whose new id didn't exist yet.
+	var seriesCreated bool
 
 	// Try to find series in TVDB if client is available
 	if s.tvdb != nil {
@@ -490,6 +511,7 @@ func (s *Scanner) processSeriesInfo(info SeriesInfo) error {
 						return err
 					}
 					seriesID, _ = result.LastInsertId()
+					seriesCreated = true
 					slog.Info("Created new series from TVDB",
 						"title", details.Name,
 						"tvdb_id", tvdbID,
@@ -551,6 +573,7 @@ func (s *Scanner) processSeriesInfo(info SeriesInfo) error {
 					return err
 				}
 				seriesID, _ = result.LastInsertId()
+				seriesCreated = true
 
 				// Create alert about series not found in TVDB (deduplicate)
 				msg := "Series '" + info.Title + "' not found in TVDB database"
@@ -565,6 +588,49 @@ func (s *Scanner) processSeriesInfo(info SeriesInfo) error {
 				slog.Info("Added new series without TVDB", "title", info.Title, "id", seriesID)
 			}
 		}
+	}
+
+	// Serialize against the API delete handler and tracker redownloads. Without
+	// this, a delete that runs concurrently with the scan can finish between our
+	// filesystem walk and this upsert, and we would resurrect the season row
+	// from a stale snapshot. The re-stat below closes the remaining window
+	// between lock acquisition and the upsert itself.
+	if s.procLock != nil {
+		if !s.procLock.TryLock(seriesID, int64(info.Season)) {
+			slog.Info("Scan: season is locked by another op, skipping upsert",
+				"series_id", seriesID, "season", info.Season, "path", info.Path)
+			return nil
+		}
+		defer s.procLock.Unlock(seriesID, int64(info.Season))
+	}
+
+	if _, err := os.Stat(info.Path); os.IsNotExist(err) {
+		slog.Info("Scan: folder no longer exists, skipping upsert",
+			"path", info.Path, "series_id", seriesID, "season", info.Season)
+		// Roll back a series row we just inserted whose folder vanished before
+		// we could attach a season to it. The NOT EXISTS guard avoids deleting
+		// a series that some other concurrent op managed to attach a season to.
+		if seriesCreated {
+			res, derr := s.db.Exec(`
+				DELETE FROM series
+				WHERE id = ? AND NOT EXISTS (SELECT 1 FROM seasons WHERE series_id = ?)
+			`, seriesID, seriesID)
+			if derr != nil {
+				slog.Warn("Failed to roll back orphan series after vanished folder",
+					"series_id", seriesID, "error", derr)
+			} else if rows, _ := res.RowsAffected(); rows > 0 {
+				slog.Info("Rolled back orphan series after vanished folder",
+					"series_id", seriesID, "path", info.Path)
+			}
+		}
+		return nil
+	}
+
+	// Files for this season are present on disk — clear any tombstone so
+	// subsequent TVDB syncs are allowed to populate metadata for it again.
+	// Run before the upsert so the new row is treated as live, not deleted.
+	if err := s.db.ClearSeasonTombstone(seriesID, info.Season); err != nil {
+		slog.Warn("Failed to clear season tombstone", "series_id", seriesID, "season", info.Season, "error", err)
 	}
 
 	// Upsert the season — avoids race condition with concurrent TVDB sync

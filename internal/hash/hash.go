@@ -94,4 +94,3 @@ func ComputeFileHash(filePath string) (*FileHash, error) {
 		FilePath: filePath,
 	}, nil
 }
-

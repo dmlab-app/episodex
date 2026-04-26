@@ -27,14 +27,16 @@ type Checker struct {
 	db       *database.DB
 	registry *Registry
 	qbit     QbitClient
+	procLock *database.ProcessingLock
 }
 
 // NewChecker creates a new Checker instance.
-func NewChecker(db *database.DB, registry *Registry, qbit QbitClient) *Checker {
+func NewChecker(db *database.DB, registry *Registry, qbit QbitClient, procLock *database.ProcessingLock) *Checker {
 	return &Checker{
 		db:       db,
 		registry: registry,
 		qbit:     qbit,
+		procLock: procLock,
 	}
 }
 
@@ -133,7 +135,11 @@ func (c *Checker) checkSeason(season *database.Season) CheckResult {
 		return result
 	}
 
-	// Check if torrent was updated (new audio track, re-encode, etc.)
+	// Detect tracker timestamp change (e.g. new audio track, re-encode). The
+	// timestamp is persisted only after redownload runs to completion (or
+	// determines the torrent is unchanged) — see redownload(). Persisting here
+	// would suppress retries when redownload skips for transient reasons such
+	// as a held procLock or a network error.
 	trackerUpdated := false
 	if lastUpdated != "" {
 		storedUpdated := ""
@@ -142,10 +148,6 @@ func (c *Checker) checkSeason(season *database.Season) CheckResult {
 		}
 		if storedUpdated != lastUpdated {
 			trackerUpdated = true
-			// Save new update timestamp
-			if err := c.db.UpdateTrackerUpdatedAt(season.ID, lastUpdated); err != nil {
-				slog.Warn("Tracker check: failed to save tracker_updated_at", "error", err)
-			}
 		}
 	}
 
@@ -168,7 +170,7 @@ func (c *Checker) checkSeason(season *database.Season) CheckResult {
 		return result
 	}
 
-	redownloaded, err := c.redownload(season, client)
+	redownloaded, err := c.redownload(season, client, lastUpdated)
 	if err != nil {
 		result.Error = fmt.Errorf("redownload: %w", err)
 		slog.Error("Tracker check: redownload failed", "season_id", season.ID, "error", err)
@@ -179,8 +181,53 @@ func (c *Checker) checkSeason(season *database.Season) CheckResult {
 	return result
 }
 
-func (c *Checker) redownload(season *database.Season, client Client) (bool, error) {
+func (c *Checker) redownload(season *database.Season, client Client, lastUpdated string) (bool, error) {
+	// Serialize against delete handlers and audio processing: hold procLock for
+	// the entire write phase (AddTorrent + UpdateTorrentHash + DeleteTorrent of
+	// the old hash). Without this, a delete handler can read torrent_hash, then
+	// we install a new torrent and overwrite torrent_hash, then delete drops the
+	// season row — leaving the new torrent orphaned in qBit.
+	if c.procLock != nil {
+		if !c.procLock.TryLock(season.SeriesID, int64(season.SeasonNumber)) {
+			slog.Info("Tracker check: skipping redownload, season is locked",
+				"season_id", season.ID)
+			return false, nil
+		}
+		defer c.procLock.Unlock(season.SeriesID, int64(season.SeasonNumber))
+	}
+
+	// Re-verify the season still exists after acquiring the lock. Without this,
+	// a delete that completed between snapshot read and lock acquisition would
+	// let us install a torrent and silently no-op UpdateTorrentHash on a row
+	// that's already gone — leaving the new torrent orphaned in qBit.
+	fresh, err := c.db.GetSeasonBySeriesAndNumber(season.SeriesID, season.SeasonNumber)
+	if err != nil {
+		return false, fmt.Errorf("verify season: %w", err)
+	}
+	if fresh == nil {
+		slog.Info("Tracker check: season was deleted, skipping redownload",
+			"series_id", season.SeriesID, "season", season.SeasonNumber)
+		return false, nil
+	}
+	season = fresh
+
+	// Re-derive trackerURL from the post-lock snapshot. Another op may have
+	// rewritten tracker_url/torrent_hash while we waited for the lock; using the
+	// stale URL would download a different page and overwrite the fresh hash,
+	// orphaning the just-installed torrent in qBit.
+	if season.TrackerURL == nil || *season.TrackerURL == "" {
+		slog.Info("Tracker check: tracker_url cleared after lock, skipping redownload",
+			"series_id", season.SeriesID, "season", season.SeasonNumber)
+		return false, nil
+	}
 	trackerURL := *season.TrackerURL
+	if !client.CanHandle(trackerURL) {
+		freshClient, clientErr := c.registry.GetClient(trackerURL)
+		if clientErr != nil {
+			return false, fmt.Errorf("no tracker client for refreshed URL %s: %w", trackerURL, clientErr)
+		}
+		client = freshClient
+	}
 
 	// Download new .torrent file
 	torrentData, err := client.DownloadTorrent(trackerURL)
@@ -196,6 +243,9 @@ func (c *Checker) redownload(season *database.Season, client Client) (bool, erro
 	if season.TorrentHash != nil && *season.TorrentHash == newHash {
 		slog.Debug("Tracker check: torrent unchanged, skipping redownload",
 			"season_id", season.ID, "hash", newHash)
+		// Persist the new tracker timestamp so we don't keep retrying for a
+		// page-level change that doesn't affect the actual torrent.
+		c.persistTrackerTimestamp(season.ID, lastUpdated)
 		return false, nil
 	}
 
@@ -256,10 +306,24 @@ func (c *Checker) redownload(season *database.Season, client Client) (bool, erro
 		}
 	}
 
+	// Persist tracker timestamp only after a successful redownload. Doing this
+	// earlier would mark the update as handled even when redownload skips (lock
+	// held) or errors out, suppressing retries on the next run.
+	c.persistTrackerTimestamp(season.ID, lastUpdated)
+
 	slog.Info("Tracker check: redownload complete",
 		"season_id", season.ID, "new_hash", newHash)
 
 	return true, nil
+}
+
+func (c *Checker) persistTrackerTimestamp(seasonID int64, lastUpdated string) {
+	if lastUpdated == "" {
+		return
+	}
+	if err := c.db.UpdateTrackerUpdatedAt(seasonID, lastUpdated); err != nil {
+		slog.Warn("Tracker check: failed to save tracker_updated_at", "error", err)
+	}
 }
 
 func (c *Checker) skipProcessedFilesWithRetry(hash string, season *database.Season) error {

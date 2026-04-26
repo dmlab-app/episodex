@@ -70,8 +70,10 @@ func main() {
 		slog.Warn("TVDB API key not configured, TVDB features will be disabled")
 	}
 
-	// Initialize scanner with TVDB client
-	mediaScanner := scanner.New(db, tvdbClient, cfg.MediaPath)
+	// Initialize scanner with TVDB client. procLock is shared with delete
+	// handlers and the tracker checker so concurrent ops on the same (series,
+	// season) are serialized.
+	mediaScanner := scanner.New(db, tvdbClient, cfg.MediaPath, procLock)
 
 	// Initialize scheduler
 	sch := scheduler.New()
@@ -151,7 +153,7 @@ func main() {
 		slog.Warn("Tracker clients configured but qBittorrent not set — tracker checker disabled")
 	}
 	if qbitClient != nil && len(trackerRegistry.Clients()) > 0 {
-		trackerChecker := tracker.NewChecker(db, trackerRegistry, qbitClient)
+		trackerChecker := tracker.NewChecker(db, trackerRegistry, qbitClient, procLock)
 		sch.AddTask(scheduler.Task{
 			Name:     "tracker_check",
 			Schedule: &scheduler.IntervalSchedule{Interval: time.Duration(cfg.TrackerCheckIntervalHours) * time.Hour},

@@ -1217,7 +1217,9 @@ func TestHandleDeleteSeries_RemovesFilesAndFolders(t *testing.T) {
 
 	// Verify DB records are gone
 	var count int
-	db.QueryRow(`SELECT COUNT(*) FROM series WHERE id = ?`, seriesID).Scan(&count)
+	if err := db.QueryRow(`SELECT COUNT(*) FROM series WHERE id = ?`, seriesID).Scan(&count); err != nil {
+		t.Fatalf("scan series count: %v", err)
+	}
 	if count != 0 {
 		t.Errorf("expected series to be deleted from DB, got count=%d", count)
 	}
@@ -1250,7 +1252,9 @@ func TestHandleDeleteSeries_SucceedsWhenFilesAlreadyMissing(t *testing.T) {
 
 	// Verify DB records are gone
 	var count int
-	db.QueryRow(`SELECT COUNT(*) FROM series WHERE id = ?`, seriesID).Scan(&count)
+	if err := db.QueryRow(`SELECT COUNT(*) FROM series WHERE id = ?`, seriesID).Scan(&count); err != nil {
+		t.Fatalf("scan series count: %v", err)
+	}
 	if count != 0 {
 		t.Errorf("expected series to be deleted from DB, got count=%d", count)
 	}
@@ -1307,6 +1311,18 @@ func TestHandleDeleteSeries_RemovesTorrentsAndCache(t *testing.T) {
 		t.Fatalf("seed cache: %v", err)
 	}
 
+	// Seed processed_files rows that should be cleared on series deletion. Without
+	// cleanup these rows linger (FK is ON DELETE SET NULL), and IsFileProcessed
+	// would silently skip a re-downloaded series at the same paths.
+	if err := db.InsertProcessedFile(ep1, seriesID, 1, "rus"); err != nil {
+		t.Fatalf("seed processed_files: %v", err)
+	}
+	// Seed an unrelated series's processed_files row to confirm it's untouched.
+	otherID := seedSeries(t, db, "Other", 1)
+	if err := db.InsertProcessedFile("/elsewhere/ep.mkv", otherID, 1, "rus"); err != nil {
+		t.Fatalf("seed other processed_files: %v", err)
+	}
+
 	req := httptest.NewRequest(http.MethodDelete, fmt.Sprintf("/api/series/%d", seriesID), http.NoBody)
 	w := httptest.NewRecorder()
 	srv.router.ServeHTTP(w, req)
@@ -1348,14 +1364,34 @@ func TestHandleDeleteSeries_RemovesTorrentsAndCache(t *testing.T) {
 
 	// next_season_cache cleared.
 	var cacheCount int
-	db.QueryRow(`SELECT COUNT(*) FROM next_season_cache WHERE series_id = ?`, seriesID).Scan(&cacheCount)
+	if err := db.QueryRow(`SELECT COUNT(*) FROM next_season_cache WHERE series_id = ?`, seriesID).Scan(&cacheCount); err != nil {
+		t.Fatalf("scan cache count: %v", err)
+	}
 	if cacheCount != 0 {
 		t.Errorf("expected next_season_cache cleared, got count=%d", cacheCount)
 	}
 
+	// processed_files for the deleted series cleared (so re-download is not skipped).
+	var pfCount int
+	if err := db.QueryRow(`SELECT COUNT(*) FROM processed_files WHERE file_path = ?`, ep1).Scan(&pfCount); err != nil {
+		t.Fatalf("scan processed_files count: %v", err)
+	}
+	if pfCount != 0 {
+		t.Errorf("expected processed_files for deleted series cleared, got count=%d", pfCount)
+	}
+	// Other series's processed_files row untouched.
+	if err := db.QueryRow(`SELECT COUNT(*) FROM processed_files WHERE series_id = ?`, otherID).Scan(&pfCount); err != nil {
+		t.Fatalf("scan other processed_files count: %v", err)
+	}
+	if pfCount != 1 {
+		t.Errorf("expected other series processed_files untouched, got count=%d", pfCount)
+	}
+
 	// DB row gone.
 	var seriesCount int
-	db.QueryRow(`SELECT COUNT(*) FROM series WHERE id = ?`, seriesID).Scan(&seriesCount)
+	if err := db.QueryRow(`SELECT COUNT(*) FROM series WHERE id = ?`, seriesID).Scan(&seriesCount); err != nil {
+		t.Fatalf("scan series count: %v", err)
+	}
 	if seriesCount != 0 {
 		t.Errorf("expected series row gone, got count=%d", seriesCount)
 	}
@@ -1460,9 +1496,18 @@ func TestHandleDeleteSeries_QbitErrorOnOneContinues(t *testing.T) {
 		t.Errorf("expected 2 attempted DELETE calls, got %v", deleted)
 	}
 
+	// Disk cleanup must still happen for both seasons despite the qBit error.
+	for _, dir := range []string{s01, s02} {
+		if _, err := os.Stat(dir); !os.IsNotExist(err) {
+			t.Errorf("expected season folder %s removed despite qBit error, err=%v", dir, err)
+		}
+	}
+
 	// DB row still gone (qBit failure must not abort series delete).
 	var count int
-	db.QueryRow(`SELECT COUNT(*) FROM series WHERE id = ?`, seriesID).Scan(&count)
+	if err := db.QueryRow(`SELECT COUNT(*) FROM series WHERE id = ?`, seriesID).Scan(&count); err != nil {
+		t.Fatalf("scan series count: %v", err)
+	}
 	if count != 0 {
 		t.Errorf("expected series row gone despite qBit error, count=%d", count)
 	}
@@ -1485,14 +1530,22 @@ func TestIsWithinMediaPath(t *testing.T) {
 	if srv.isWithinMediaPath("/other/file.mkv") {
 		t.Error("expected /other/file.mkv to be outside /media")
 	}
+	// The media root itself must NOT count as "within" — otherwise a misconfigured
+	// folder_path equal to MEDIA_PATH would let RemoveAll wipe the entire library.
+	if srv.isWithinMediaPath("/media") {
+		t.Error("expected media root /media to be rejected (strict descendant only)")
+	}
 
-	// Root media path "/" — should allow all absolute paths
+	// Root media path "/" — should allow all absolute paths except "/" itself
 	srv.mediaPath = "/"
 	if !srv.isWithinMediaPath("/media/file.mkv") {
 		t.Error("root mediaPath: expected /media/file.mkv to be within /")
 	}
 	if !srv.isWithinMediaPath("/any/deep/path.mkv") {
 		t.Error("root mediaPath: expected /any/deep/path.mkv to be within /")
+	}
+	if srv.isWithinMediaPath("/") {
+		t.Error("root mediaPath: expected / itself to be rejected")
 	}
 }
 
@@ -2552,6 +2605,15 @@ func TestHandleDeleteSeason_HappyPathWithTorrent(t *testing.T) {
 		t.Fatalf("seed cache: %v", err)
 	}
 
+	// Seed processed_files rows: one for the deleted season (must be cleared) and
+	// one for the surviving season (must remain).
+	if err := db.InsertProcessedFile(ep1, seriesID, 1, "rus"); err != nil {
+		t.Fatalf("seed processed_files s1: %v", err)
+	}
+	if err := db.InsertProcessedFile(ep3, seriesID, 2, "rus"); err != nil {
+		t.Fatalf("seed processed_files s2: %v", err)
+	}
+
 	req := httptest.NewRequest(http.MethodDelete, fmt.Sprintf("/api/series/%d/seasons/1", seriesID), http.NoBody)
 	w := httptest.NewRecorder()
 	srv.router.ServeHTTP(w, req)
@@ -2592,24 +2654,46 @@ func TestHandleDeleteSeason_HappyPathWithTorrent(t *testing.T) {
 
 	// DB row gone.
 	var count int
-	db.QueryRow(`SELECT COUNT(*) FROM seasons WHERE series_id = ? AND season_number = 1`, seriesID).Scan(&count)
+	if err := db.QueryRow(`SELECT COUNT(*) FROM seasons WHERE series_id = ? AND season_number = 1`, seriesID).Scan(&count); err != nil {
+		t.Fatalf("scan season count: %v", err)
+	}
 	if count != 0 {
 		t.Errorf("expected season row gone, got count=%d", count)
 	}
 	// Other season row remains.
-	db.QueryRow(`SELECT COUNT(*) FROM seasons WHERE series_id = ? AND season_number = 2`, seriesID).Scan(&count)
+	if err := db.QueryRow(`SELECT COUNT(*) FROM seasons WHERE series_id = ? AND season_number = 2`, seriesID).Scan(&count); err != nil {
+		t.Fatalf("scan season count: %v", err)
+	}
 	if count != 1 {
 		t.Errorf("expected season 2 to remain, got count=%d", count)
 	}
 	// media_files for season 1 cascaded.
-	db.QueryRow(`SELECT COUNT(*) FROM media_files WHERE series_id = ? AND season_number = 1`, seriesID).Scan(&count)
+	if err := db.QueryRow(`SELECT COUNT(*) FROM media_files WHERE series_id = ? AND season_number = 1`, seriesID).Scan(&count); err != nil {
+		t.Fatalf("scan media_files count: %v", err)
+	}
 	if count != 0 {
 		t.Errorf("expected media_files for season 1 cascaded, got count=%d", count)
 	}
 	// next_season_cache cleared.
-	db.QueryRow(`SELECT COUNT(*) FROM next_season_cache WHERE series_id = ? AND season_number = 1`, seriesID).Scan(&count)
+	if err := db.QueryRow(`SELECT COUNT(*) FROM next_season_cache WHERE series_id = ? AND season_number = 1`, seriesID).Scan(&count); err != nil {
+		t.Fatalf("scan cache count: %v", err)
+	}
 	if count != 0 {
 		t.Errorf("expected next_season_cache cleared, got count=%d", count)
+	}
+	// processed_files for season 1 cleared so re-download isn't skipped.
+	if err := db.QueryRow(`SELECT COUNT(*) FROM processed_files WHERE series_id = ? AND season_number = 1`, seriesID).Scan(&count); err != nil {
+		t.Fatalf("scan processed_files s1 count: %v", err)
+	}
+	if count != 0 {
+		t.Errorf("expected processed_files for season 1 cleared, got count=%d", count)
+	}
+	// processed_files for season 2 untouched.
+	if err := db.QueryRow(`SELECT COUNT(*) FROM processed_files WHERE series_id = ? AND season_number = 2`, seriesID).Scan(&count); err != nil {
+		t.Fatalf("scan processed_files s2 count: %v", err)
+	}
+	if count != 1 {
+		t.Errorf("expected processed_files for season 2 to remain, got count=%d", count)
 	}
 }
 
@@ -2692,7 +2776,9 @@ func TestHandleDeleteSeason_QbitErrorContinues(t *testing.T) {
 		t.Errorf("expected folder removed despite qBit error: %v", err)
 	}
 	var count int
-	db.QueryRow(`SELECT COUNT(*) FROM seasons WHERE series_id = ? AND season_number = 1`, seriesID).Scan(&count)
+	if err := db.QueryRow(`SELECT COUNT(*) FROM seasons WHERE series_id = ? AND season_number = 1`, seriesID).Scan(&count); err != nil {
+		t.Fatalf("scan season count: %v", err)
+	}
 	if count != 0 {
 		t.Errorf("expected DB row removed despite qBit error, count=%d", count)
 	}
@@ -2774,5 +2860,155 @@ func TestHandleDeleteSeason_SkipsFilesOutsideMediaPath(t *testing.T) {
 	}
 	if _, err := os.Stat(outsideFile); err != nil {
 		t.Errorf("expected outside file preserved, err=%v", err)
+	}
+}
+
+func TestHandleDeleteSeason_RecordsTombstone(t *testing.T) {
+	var deleted []string
+	qbit := setupQbitMockWithDelete(t, http.StatusOK, &deleted)
+	srv, db := setupTestServerWithQbit(t, qbit)
+
+	mediaDir := t.TempDir()
+	srv.mediaPath = mediaDir
+	s01 := filepath.Join(mediaDir, "Show.S01")
+	if err := os.Mkdir(s01, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	seriesID := seedSeries(t, db, "Show", 1)
+	seedSeason(t, db, seriesID, 1, s01, true, nil)
+
+	req := httptest.NewRequest(http.MethodDelete, fmt.Sprintf("/api/series/%d/seasons/1", seriesID), http.NoBody)
+	w := httptest.NewRecorder()
+	srv.router.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+
+	tombstoned, err := db.IsSeasonDeleted(seriesID, 1)
+	if err != nil {
+		t.Fatalf("IsSeasonDeleted: %v", err)
+	}
+	if !tombstoned {
+		t.Error("expected tombstone recorded after season delete")
+	}
+}
+
+func TestHandleDeleteSeason_TombstonePreventsTVDBResurrection(t *testing.T) {
+	// Regression test: after deleting a season, a SyncSeriesAndChildren run
+	// (e.g. from auto-sync after CheckForTVDBUpdates) must not recreate it.
+	var deleted []string
+	qbit := setupQbitMockWithDelete(t, http.StatusOK, &deleted)
+	srv, db := setupTestServerWithQbit(t, qbit)
+
+	mediaDir := t.TempDir()
+	srv.mediaPath = mediaDir
+	s01 := filepath.Join(mediaDir, "Show.S01")
+	if err := os.Mkdir(s01, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	seriesID := seedSeries(t, db, "Show", 2)
+	// Series row needs a tvdb_id so SyncSeriesAndChildren's WHERE guard passes.
+	tvdbID := 12345
+	if _, err := db.Exec(`UPDATE series SET tvdb_id = ? WHERE id = ?`, tvdbID, seriesID); err != nil {
+		t.Fatalf("set tvdb_id: %v", err)
+	}
+	seedSeason(t, db, seriesID, 1, s01, true, nil)
+	seedSeason(t, db, seriesID, 2, "", true, nil)
+
+	// Delete season 1.
+	req := httptest.NewRequest(http.MethodDelete, fmt.Sprintf("/api/series/%d/seasons/1", seriesID), http.NoBody)
+	w := httptest.NewRecorder()
+	srv.router.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("delete: expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+
+	// Simulate TVDB sync returning all seasons including the deleted one.
+	syncedSeries := &database.Series{Title: "Show", TotalSeasons: 2, AiredSeasons: 2}
+	syncedSeasons := []database.Season{
+		{SeriesID: seriesID, SeasonNumber: 1, AiredEpisodes: 10},
+		{SeriesID: seriesID, SeasonNumber: 2, AiredEpisodes: 8},
+	}
+	if err := db.SyncSeriesAndChildren(seriesID, tvdbID, syncedSeries, syncedSeasons, nil); err != nil {
+		t.Fatalf("sync: %v", err)
+	}
+
+	var s1Count, s2Count int
+	if err := db.QueryRow(`SELECT COUNT(*) FROM seasons WHERE series_id = ? AND season_number = 1`, seriesID).Scan(&s1Count); err != nil {
+		t.Fatalf("count s1: %v", err)
+	}
+	if err := db.QueryRow(`SELECT COUNT(*) FROM seasons WHERE series_id = ? AND season_number = 2`, seriesID).Scan(&s2Count); err != nil {
+		t.Fatalf("count s2: %v", err)
+	}
+	if s1Count != 0 {
+		t.Errorf("deleted season 1 was resurrected by TVDB sync (count=%d)", s1Count)
+	}
+	if s2Count != 1 {
+		t.Errorf("expected season 2 to remain after sync, got count=%d", s2Count)
+	}
+}
+
+func TestHandleDeleteSeason_BlockedWhileProcessing(t *testing.T) {
+	srv, db := setupTestServer(t)
+
+	seriesID := seedSeries(t, db, "Show", 1)
+	seedSeason(t, db, seriesID, 1, t.TempDir(), true, nil)
+
+	if !srv.procLock.TryLock(seriesID, 1) {
+		t.Fatal("failed to seed lock")
+	}
+	defer srv.procLock.Unlock(seriesID, 1)
+
+	req := httptest.NewRequest(http.MethodDelete, fmt.Sprintf("/api/series/%d/seasons/1", seriesID), http.NoBody)
+	w := httptest.NewRecorder()
+	srv.router.ServeHTTP(w, req)
+
+	if w.Code != http.StatusConflict {
+		t.Fatalf("expected 409, got %d: %s", w.Code, w.Body.String())
+	}
+
+	// Season row must still exist.
+	season, err := db.GetSeasonBySeriesAndNumber(seriesID, 1)
+	if err != nil {
+		t.Fatalf("lookup: %v", err)
+	}
+	if season == nil {
+		t.Fatal("season should still exist after blocked delete")
+	}
+}
+
+func TestHandleDeleteSeries_BlockedWhileProcessing(t *testing.T) {
+	srv, db := setupTestServer(t)
+
+	seriesID := seedSeries(t, db, "Show", 2)
+	seedSeason(t, db, seriesID, 1, t.TempDir(), true, nil)
+	seedSeason(t, db, seriesID, 2, t.TempDir(), true, nil)
+
+	if !srv.procLock.TryLock(seriesID, 2) {
+		t.Fatal("failed to seed lock")
+	}
+	defer srv.procLock.Unlock(seriesID, 2)
+
+	req := httptest.NewRequest(http.MethodDelete, fmt.Sprintf("/api/series/%d", seriesID), http.NoBody)
+	w := httptest.NewRecorder()
+	srv.router.ServeHTTP(w, req)
+
+	if w.Code != http.StatusConflict {
+		t.Fatalf("expected 409, got %d: %s", w.Code, w.Body.String())
+	}
+
+	// Series row must still exist; partial locks must have been released.
+	var count int
+	if err := db.QueryRow(`SELECT COUNT(*) FROM series WHERE id = ?`, seriesID).Scan(&count); err != nil {
+		t.Fatalf("count series: %v", err)
+	}
+	if count != 1 {
+		t.Fatalf("expected series preserved, got count=%d", count)
+	}
+	if srv.procLock.IsLocked(seriesID, 1) {
+		t.Error("season 1 lock should have been released after 409")
 	}
 }

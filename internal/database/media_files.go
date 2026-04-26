@@ -213,6 +213,23 @@ func (db *DB) DeleteProcessedFilesBySeason(seriesID int64, seasonNumber int) err
 	return nil
 }
 
+// DeleteProcessedFilesBySeries deletes all processed file records for a series.
+// Needed on series deletion because processed_files.series_id is ON DELETE SET NULL,
+// not CASCADE — leftover rows would let IsFileProcessed (keyed on file_path) silently
+// skip a re-downloaded series.
+func (db *DB) DeleteProcessedFilesBySeries(seriesID int64) error {
+	result, err := db.Exec(`DELETE FROM processed_files WHERE series_id = ?`, seriesID)
+	if err != nil {
+		return fmt.Errorf("failed to delete processed files: %w", err)
+	}
+
+	affected, _ := result.RowsAffected()
+	if affected > 0 {
+		slog.Info("Deleted processed files", "series_id", seriesID, "count", affected)
+	}
+	return nil
+}
+
 // IsFileProcessed returns true if the file path exists in processed_files.
 func (db *DB) IsFileProcessed(filePath string) (bool, error) {
 	var exists bool
