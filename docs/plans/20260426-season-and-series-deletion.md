@@ -114,17 +114,17 @@ Update existing `handleDeleteSeries` at `internal/api/router.go:625` so series d
 
 ### Task 4: Frontend — Delete Season button on season detail page
 
-- [ ] add a Delete button in `web/templates/index.html` season detail page (lines 214-305), styled with `btn btn-danger` matching the existing series delete button. Place it in a sensible location — likely next to the season title / tracker link block, or in a footer action row.
-- [ ] add `id="delete-season-btn"` and a click handler in `web/static/app.js`.
-- [ ] implement `deleteSeason()` in `web/static/app.js` mirroring `deleteSeries()`:
+- [x] add a Delete button in `web/templates/index.html` season detail page (lines 214-305), styled with `btn btn-danger` matching the existing series delete button. Place it in a sensible location — likely next to the season title / tracker link block, or in a footer action row.
+- [x] add `id="delete-season-btn"` and a click handler in `web/static/app.js`.
+- [x] implement `deleteSeason()` in `web/static/app.js` mirroring `deleteSeries()`:
   - read current `state.currentSeriesId` and the season number from the rendered view (or store on state when opening a season).
   - native `confirm()` with Russian text: `Удалить сезон ${num} сериала "${title}"? Файлы, папка и раздача в qBittorrent будут удалены. Это действие необратимо.`
   - `await api.delete(`/api/series/${seriesId}/seasons/${num}`)`.
   - on success: `showToast('Season deleted')` and `navigate('/series/${seriesId}')` (back to series detail).
   - on error: `showToast(...)`.
-- [ ] update the series-level delete confirmation message (optional but consistent) to mention qBit removal: `Удалить "${title}" со всеми файлами и раздачами? Это действие необратимо.`
-- [ ] no JS unit tests in this project — verification is manual.
-- [ ] run `docker-compose up -d --build` and smoke-test in browser before moving on.
+- [x] update the series-level delete confirmation message (optional but consistent) to mention qBit removal: `Удалить "${title}" со всеми файлами и раздачами? Это действие необратимо.`
+- [x] no JS unit tests in this project — verification is manual.
+- [x] run `docker-compose up -d --build` and smoke-test in browser before moving on. (build/up done; in-browser smoke test deferred to Post-Completion manual verification — not automatable here)
 
 ### Task 5: Verify acceptance criteria
 

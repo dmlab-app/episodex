@@ -372,7 +372,8 @@ function renderSeasons(series, seasons) {
 async function deleteSeries() {
     if (!state.currentSeriesId) return;
     const series = state.series.find(s => s.id === state.currentSeriesId);
-    if (!confirm(`Delete "${series?.title}" and all its files from disk? This cannot be undone.`)) return;
+    const title = series?.title || '';
+    if (!confirm(`Удалить "${title}" со всеми файлами и раздачами? Это действие необратимо.`)) return;
 
     try {
         await api.delete(`/api/series/${state.currentSeriesId}`);
@@ -380,6 +381,22 @@ async function deleteSeries() {
         navigate('/series');
     } catch (e) {
         showToast(`Failed to delete series: ${e.message || e}`, 'error');
+    }
+}
+
+async function deleteSeason() {
+    if (!state.currentSeriesId || !state.currentSeasonNum) return;
+    const series = state.series.find(s => s.id === state.currentSeriesId);
+    const title = series?.title || '';
+    const num = state.currentSeasonNum;
+    if (!confirm(`Удалить сезон ${num} сериала "${title}"? Файлы, папка и раздача в qBittorrent будут удалены. Это действие необратимо.`)) return;
+
+    try {
+        await api.delete(`/api/series/${state.currentSeriesId}/seasons/${num}`);
+        showToast('Season deleted');
+        navigate(`/series/${state.currentSeriesId}`);
+    } catch (e) {
+        showToast(`Failed to delete season: ${e.message || e}`, 'error');
     }
 }
 
@@ -1522,6 +1539,7 @@ document.addEventListener('DOMContentLoaded', () => {
     document.getElementById('check-updates-btn')?.addEventListener('click', checkUpdates);
     document.getElementById('refresh-recommendations-btn')?.addEventListener('click', refreshRecommendations);
     document.getElementById('delete-series-btn')?.addEventListener('click', deleteSeries);
+    document.getElementById('delete-season-btn')?.addEventListener('click', deleteSeason);
     document.getElementById('fix-match-btn')?.addEventListener('click', () => {
         if (state.currentSeriesId) openMatchModal(state.currentSeriesId);
     });
@@ -1560,6 +1578,7 @@ window.setDefaultTrack = setDefaultTrack;
 window.addSeries = addSeries;
 window.dismissAlert = dismissAlert;
 window.deleteSeries = deleteSeries;
+window.deleteSeason = deleteSeason;
 window.openMatchModal = openMatchModal;
 window.closeMatchModal = closeMatchModal;
 window.matchSeries = matchSeries;
